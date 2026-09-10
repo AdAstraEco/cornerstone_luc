@@ -3,7 +3,7 @@
 # Approach B (one k8s Job per tile) runs the real stage unchanged inside the pod, so this
 # image just needs the resolved jdluc environment. We build from uv.lock so the image is
 # pinned to exactly what a laptop run resolves -- the same "lean venv, no conda" choice the
-# architecture doc makes. The k8s Job sets the command (infra/run_tile.py <tile_id>).
+# architecture doc makes. The k8s Job sets the command (infra/run_phase.py, see phase-job.yaml).
 #
 # Build + push (do NOT run without Dan's OK). IMAGE comes from infra/cluster.env:
 #   source infra/cluster.env
@@ -48,4 +48,4 @@ ARG JDLUC_GIT_REMOTE_URL=unknown
 ENV JDLUC_GIT_VERSION=${JDLUC_GIT_VERSION} \
     JDLUC_GIT_REMOTE_URL=${JDLUC_GIT_REMOTE_URL}
 
-# No ENTRYPOINT: the Job sets `python infra/run_tile.py --stage <stage> <tile_id>`.
+# No ENTRYPOINT: the Job sets `python infra/run_phase.py --phase <phase> <ISO_3166>...`.

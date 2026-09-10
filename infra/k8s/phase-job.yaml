@@ -1,0 +1,73 @@
+# One k8s Indexed Job == one PHASE of one AOI run (docs/scale-out.md).
+#
+# This is a TEMPLATE, not a ready manifest: infra/run_aoi.py renders it once per phase,
+# substituting the per-phase placeholders (JOB_NAME / PHASE / ARGS / COMPLETIONS /
+# PARALLELISM / resources / POD_DEADLINE_SECONDS) and the infra placeholders (NAMESPACE /
+# SERVICE_ACCOUNT / NODE_POOL / SECRET_NAME / IMAGE) it reads from infra/cluster.env, then
+# applies each to the target namespace. There is NO scheduler and NO change to jdluc: each
+# pod runs the real stages (infra/run_phase.py), whose @storage.cache_to_* writes straight
+# to GCS. Node-pool autoscaling is the scaling knob -- parallelism x autoscaler.
+#
+# DO NOT apply this file by hand (the placeholders are unrendered). Drive it via
+# infra/run_aoi.py; see infra/k8s/README.md.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${JOB_NAME}
+  namespace: ${NAMESPACE}
+  labels: {app: cornerstone, phase: "${PHASE}", run-id: "${RUN_ID}"}
+spec:
+  # Indexed: pod i gets JOB_COMPLETION_INDEX=i and maps it to the i'th tile of the AOI's
+  # sorted tile list, recomputed in-pod from the country args. No tile list to plumb.
+  completionMode: Indexed
+  completions: ${COMPLETIONS}
+  parallelism: ${PARALLELISM}
+  # Retries are per index, so one poisoned tile can't burn the whole Job's budget; and
+  # maxFailedIndexes == completions means a failed index never cancels the tiles already
+  # in flight. The driver is what stops the run: it refuses to start the next phase.
+  # (Both fields are GA as of k8s 1.33.)
+  backoffLimitPerIndex: 1
+  maxFailedIndexes: ${COMPLETIONS}
+  ttlSecondsAfterFinished: 1800  # fail-safe: auto-delete job+pods 30 min after finish (pass OR fail)
+  template:
+    metadata:
+      labels: {app: cornerstone, phase: "${PHASE}", run-id: "${RUN_ID}"}
+    spec:
+      restartPolicy: Never
+      # Per-POD, not per-Job: a Job-level deadline covers every index, so a 51-tile run at
+      # parallelism 8 would trip it. This is the "one hung tile can't hold a node" fail-safe.
+      activeDeadlineSeconds: ${POD_DEADLINE_SECONDS}
+      # Workload-Identity-bound KSA -> GCS. Same KSA the celery workers use; no new IAM.
+      serviceAccountName: ${SERVICE_ACCOUNT}
+      # Compute lands on the highmem pool (e2-highmem-8: 8 vCPU / 64 GiB), which autoscales
+      # 0->N as these pods schedule; ingest and reduce can take a cheaper pool (see
+      # NODE_POOL_INGEST / NODE_POOL_REDUCE in cluster.env). The highmem pool carries a
+      # worker=true:NoSchedule taint (shared with the celery workers), so we must tolerate
+      # it or the autoscaler won't even add a node; on an untainted pool this is a no-op.
+      nodeSelector:
+        cloud.google.com/gke-nodepool: ${NODE_POOL}
+      tolerations:
+        - {key: worker, operator: Equal, value: "true", effect: NoSchedule}
+      containers:
+        - name: phase
+          image: ${IMAGE}
+          # The image tag is reused across rebuilds, so force a fresh pull rather than risk
+          # a node running a stale cached image. (In prod, pin a digest instead.)
+          imagePullPolicy: Always
+          command: ["python", "infra/run_phase.py"]
+          # Rendered as a JSON array by run_aoi.py, e.g.
+          #   ["--phase","compute","--skip-ingest","--methodology-name","STATISTICAL","HND"]
+          args: ${ARGS}
+          resources:
+            requests: {cpu: "${CPU_REQUEST}", memory: "${MEMORY_REQUEST}"}
+            limits: {cpu: "${CPU_LIMIT}", memory: "${MEMORY_LIMIT}"}
+          volumeMounts:
+            # Config.from_dot_env reads a FILE (not process env), so mount the .env Secret
+            # at /app/.env. That is also where NUMBER_OF_DASK_WORKERS -- the size of the
+            # inner per-tile LocalCluster -- has to be set; keep it <= the cpu limit here.
+            - {name: dotenv, mountPath: /app/.env, subPath: .env, readOnly: true}
+      volumes:
+        - name: dotenv
+          # Quoted because an unquoted placeholder inside a flow mapping isn't parseable
+          # YAML (the braces are flow indicators); in block context it is fine.
+          secret: {secretName: "${SECRET_NAME}"}

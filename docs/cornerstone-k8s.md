@@ -25,7 +25,7 @@ Crucially this needs **no code change**: the stage already spins its own in-proc
 We fan tiles out as plain k8s `Job`s in the `dan` namespace, using only privileges Dan already has. This is the minimal instrument for the feasibility question — it adds no long-running scheduler to operate and keeps the thing under test (the repo) isolated from any distribution-framework of our own.
 
 - **One image** ([`infra/Dockerfile`](../infra/Dockerfile)) built from `uv.lock`, so the pod resolves exactly what a laptop run resolves.
-- **A Job template** ([`infra/k8s/tile-job.yaml`](../infra/k8s/tile-job.yaml)) rendered once per tile by [`infra/run-tiles.py`](../infra/run-tiles.py), which resolves the tiles a country touches and `kubectl apply`s one Job each. `restartPolicy: Never`, `backoffLimit: 1`, `ttlSecondsAfterFinished` for self-cleanup.
+- **A Job template** rendered once per tile by a submitter script, which resolves the tiles a country touches and `kubectl apply`s one Job each. `restartPolicy: Never`, `backoffLimit: 1`, `ttlSecondsAfterFinished` for self-cleanup. (Since superseded: those two files are now the Indexed-Job template [`infra/k8s/phase-job.yaml`](../infra/k8s/phase-job.yaml) and the phase driver [`infra/run_aoi.py`](../infra/run_aoi.py) — see [`scale-out.md`](scale-out.md).)
 - **The scaling knob is submission + autoscaling**: submit N Jobs and the highmem node pool (`e2-highmem-8`, autoscaling 0→N) runs as many concurrently as it has room for. No `kubectl scale` of a worker pool.
 - **GCS access via Workload Identity**: pods run as an existing KSA (already annotated to the GSA the Celery workers use). **No new IAM.** Cluster-specific names live in `infra/cluster.env` (see `infra/cluster.env.example`), not in tracked files.
 - **In-pod parallelism** stays as-is: the stage's own `LocalCluster` (sized by `NUMBER_OF_DASK_WORKERS`) uses the pod's cores for the per-tile compute. Parallelism *across* tiles = number of Job pods; parallelism *within* a tile = the inner threads.
@@ -44,7 +44,7 @@ An earlier draft of this cornerstone stood up a remote Dask scheduler + worker D
 
 ## Milestones (each a go/no-go)
 
-- **M0 — plumbing.** Build/push image; `run-tiles.py HND --dry-run` renders manifests; one real Job runs a trivial "open one COG from GCS" path on a pod. Proves image + Workload Identity + the `.env` Secret + connectivity.
+- **M0 — plumbing.** Build/push image; `run_aoi.py HND --dry-run` renders manifests; one real Job runs a trivial "open one COG from GCS" path on a pod. Proves image + Workload Identity + the `.env` Secret + connectivity.
 - **M1 — one real tile, correct.** Submit `--stage harmonize` for one HND tile; diff the output zarr against a known-good single-host run within tolerance. Proves the real graph + VRT/GCS I/O + correctness. **This is the headline artifact.**
 - **M2 — scale.** Submit all HND tiles; let the node pool run them concurrently; record wall-clock and cost per tile, and extrapolate to a continent (North America is 51 tiles). The evaluation deliverable.
 
