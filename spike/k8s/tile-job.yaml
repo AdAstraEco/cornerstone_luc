@@ -33,6 +33,9 @@ spec:
       containers:
         - name: tile
           image: ${IMAGE}
+          # Spike reuses the :spike tag across rebuilds, so force a fresh pull rather than
+          # risk a node running a stale cached image. (In prod, pin a digest instead.)
+          imagePullPolicy: Always
           # Run the whole stage for this one tile. The stage spins its own in-process
           # LocalCluster (jdluc.storage, sized by NUMBER_OF_DASK_WORKERS) for the
           # per-tile threaded compute -- so one pod == one laptop run of one tile.

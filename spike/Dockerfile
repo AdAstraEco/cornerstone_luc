@@ -14,6 +14,12 @@ FROM ghcr.io/astral-sh/uv:python3.14-bookworm-slim
 
 WORKDIR /app
 
+# rasterio/GDAL wheels vendor GDAL but still dynamically link a few base libs the slim image
+# omits (libexpat.so.1, used by GDAL's XML parsing). Install them; keep the layer minimal.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libexpat1 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Resolve deps first for layer caching; --frozen makes the build fail loudly rather than
 # silently re-resolving if uv.lock is stale, keeping the image pinned to the lockfile.
 COPY pyproject.toml uv.lock ./
@@ -21,7 +27,7 @@ RUN uv sync --frozen --no-install-project --no-dev
 
 # Then the source (.dockerignore keeps this lean; no .git needed -- the cache key uses
 # func.__module__). jdluc is pure-Python over wheels (rasterio/rioxarray ship GDAL), so no
-# apt GDAL is needed.
+# apt GDAL package is needed -- only the base shared lib installed above.
 COPY . .
 RUN uv sync --frozen --no-dev
 
