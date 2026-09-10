@@ -13,7 +13,7 @@ __pycache__/
 
 # Env
 .env
-# Cloud spike config with real values; the spike/cloud.env.example template stays tracked.
-spike/*.env
+# Cloud/infra config with real values; the infra/*.env.example templates stay tracked.
+infra/*.env
 
 .cache/

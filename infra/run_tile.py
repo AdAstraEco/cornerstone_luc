@@ -1,16 +1,16 @@
-"""SPIKE (docs/spike-dask-k8s.md): run ONE stage for ONE tile, in one pod.
+"""cornerstone (docs/cornerstone-k8s.md): run ONE stage for ONE tile, in one pod.
 
 This is the entire per-tile unit of work for the Job-per-tile fanout (approach B).
-The k8s Job (spike/k8s/tile-job.yaml) sets this as its command with a tile id; the pod
+The k8s Job (infra/k8s/tile-job.yaml) sets this as its command with a tile id; the pod
 runs the real pipeline stage, whose ``@storage.cache_to_zarr`` decorator materializes the
 output straight to GCS as a side effect. There is no dask scheduler and no remote client:
 ``emit.workflow`` spins its own in-process ``LocalCluster`` (see ``jdluc.storage``) for the
 per-tile threaded compute -- exactly as it does on a laptop. That "run the repo unmodified"
-property is the point; the only new code is this thin CLI shim, which lives under spike/.
+property is the point; the only new code is this thin CLI shim, which lives under infra/.
 
 Run inside the container (the Job does this for you)::
 
-    python spike/run_tile.py --stage emit 40N_090W
+    python infra/run_tile.py --stage emit 40N_090W
 
 A failed stage propagates -- the process exits non-zero and the Job records the failure,
 which is a datapoint (one tile's Job), not a whole-run crash.

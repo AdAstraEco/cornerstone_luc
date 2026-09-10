@@ -1,26 +1,26 @@
-"""SPIKE (docs/spike-dask-k8s.md): fan tiles out as one k8s Job per tile (approach B).
+"""cornerstone (docs/cornerstone-k8s.md): fan tiles out as one k8s Job per tile (approach B).
 
 Resolves the 10-degree tiles a set of countries' boundaries touch, then submits one k8s
-Job per tile to the target namespace by rendering ``spike/k8s/tile-job.yaml``. The cluster
+Job per tile to the target namespace by rendering ``infra/k8s/tile-job.yaml``. The cluster
 runs as many concurrently as the node pool's autoscaler provides -- that IS the scaling knob.
 There is no dask scheduler to stand up and no change to ``jdluc``: each pod runs the real
-stage via ``spike/run_tile.py``.
+stage via ``infra/run_tile.py``.
 
-Infra identifiers (namespace, image, node pool, ...) are read from ``spike/infra.env`` (see
-``spike/infra.env.example``), so nothing cluster-specific is hard-coded here.
+Infra identifiers (namespace, image, node pool, ...) are read from ``infra/cluster.env`` (see
+``infra/cluster.env.example``), so nothing cluster-specific is hard-coded here.
 
     # one-time: copy the template and fill in your cluster's values
-    cp spike/infra.env.example spike/infra.env    # then edit
+    cp infra/cluster.env.example infra/cluster.env    # then edit
 
     # M0: render the manifests and list what would run, but submit nothing
-    uv run python spike/run-tiles.py HND --dry-run
+    uv run python infra/run-tiles.py HND --dry-run
 
     # M2: submit one emit Job per tile HND touches
-    source spike/infra.env
-    uv run python spike/run-tiles.py HND --stage emit
+    source infra/cluster.env
+    uv run python infra/run-tiles.py HND --stage emit
 
-Watch:     kubectl -n "$K8S_NAMESPACE" get jobs -l app=jdluc-tile -w
-Teardown:  kubectl -n "$K8S_NAMESPACE" delete jobs -l app=jdluc-tile
+Watch:     kubectl -n "$K8S_NAMESPACE" get jobs -l app=cornerstone -w
+Teardown:  kubectl -n "$K8S_NAMESPACE" delete jobs -l app=cornerstone
 """
 
 import argparse
@@ -36,10 +36,10 @@ from jdluc.datasets import worldbank_jurisdictions
 logger = logging.getLogger(__name__)
 
 STAGE_NAMES = ("harmonize", "emit")
-INFRA_ENV_PATH = pathlib.Path(__file__).parent / "infra.env"
+INFRA_ENV_PATH = pathlib.Path(__file__).parent / "cluster.env"
 TEMPLATE_PATH = pathlib.Path(__file__).parent / "k8s" / "tile-job.yaml"
 
-# Job-template placeholder -> the infra.env / environment variable that fills it.
+# Job-template placeholder -> the cluster.env / environment variable that fills it.
 TEMPLATE_TO_INFRA_VAR = {
     "NAMESPACE": "K8S_NAMESPACE",
     "SERVICE_ACCOUNT": "K8S_SERVICE_ACCOUNT",
@@ -50,9 +50,9 @@ TEMPLATE_TO_INFRA_VAR = {
 
 
 def load_infra_env() -> dict[str, str]:
-    """Read ``spike/infra.env`` (``KEY=value`` / ``export KEY=value``), overlaid by os.environ.
+    """Read ``infra/cluster.env`` (``KEY=value`` / ``export KEY=value``), overlaid by os.environ.
 
-    The file is gitignored; the process environment wins, so ``source spike/infra.env`` (or
+    The file is gitignored; the process environment wins, so ``source infra/cluster.env`` (or
     CI-injected vars) overrides it. Returns only the keys the template needs.
     """
     values: dict[str, str] = {}
@@ -62,6 +62,7 @@ def load_infra_env() -> dict[str, str]:
             if not line or line.startswith("#") or "=" not in line:
                 continue
             key, _, raw = line.partition("=")
+            raw = re.sub(r"\s+#.*$", "", raw)  # strip inline comments (the .example uses them)
             values[key.strip()] = raw.strip().strip("'\"")
     wanted = set(TEMPLATE_TO_INFRA_VAR.values())
     values.update({k: v for k, v in os.environ.items() if k in wanted})
@@ -69,9 +70,9 @@ def load_infra_env() -> dict[str, str]:
 
 
 def job_name(stage: str, tile_id: str) -> str:
-    """A DNS-1123-safe Job name, e.g. ('emit', '40N_090W') -> 'jdluc-tile-emit-40n-090w'."""
+    """A DNS-1123-safe Job name, e.g. ('emit', '40N_090W') -> 'cornerstone-emit-40n-090w'."""
     safe_tile = re.sub(r"[^a-z0-9]+", "-", tile_id.lower()).strip("-")
-    return f"jdluc-tile-{stage}-{safe_tile}"
+    return f"cornerstone-{stage}-{safe_tile}"
 
 
 def get_tile_ids(iso_3166s: list[str]) -> list[str]:
@@ -111,7 +112,7 @@ def main() -> int:
         "iso_3166s",
         nargs=argparse.ONE_OR_MORE,
         type=worldbank_jurisdictions.iso_3166_str,
-        help="cover exactly the tiles these countries' boundaries touch (spike default: HND)",
+        help="cover exactly the tiles these countries' boundaries touch (cornerstone default: HND)",
     )
     parser.add_argument("--stage", choices=STAGE_NAMES, default="emit")
     parser.add_argument(
@@ -126,8 +127,8 @@ def main() -> int:
         missing = [v for v in TEMPLATE_TO_INFRA_VAR.values() if not infra.get(v)]
         if missing:
             parser.error(
-                f"missing infra values {missing}; copy spike/infra.env.example to "
-                "spike/infra.env and fill it in (or `source` it), or pass --dry-run"
+                f"missing infra values {missing}; copy infra/cluster.env.example to "
+                "infra/cluster.env and fill it in (or `source` it), or pass --dry-run"
             )
 
     tile_ids = get_tile_ids(iso_3166s=args.iso_3166s)
@@ -158,7 +159,7 @@ def main() -> int:
     if not args.dry_run:
         logger.info(
             f"submitted {len(tile_ids)} job(s). "
-            f"Watch: kubectl -n {namespace} get jobs -l app=jdluc-tile -w"
+            f"Watch: kubectl -n {namespace} get jobs -l app=cornerstone -w"
         )
     return 0
 
