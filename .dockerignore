@@ -1,8 +1,8 @@
 # Keep the build context lean. See spike/Dockerfile.
-#
-# IMPORTANT: do NOT ignore .git -- jdluc.storage's cache key derives the stage's module
-# path via git.Repo(search_parent_directories=True), so the repo must be present in the
-# image or every @cache_to_zarr stage raises.
+
+# No git history in the runtime image: storage.py's cache key now uses func.__module__,
+# not a git.Repo() lookup, so .git is no longer needed at runtime.
+.git/
 
 # The host venv must not shadow the image's uv-synced /app/.venv.
 .venv/

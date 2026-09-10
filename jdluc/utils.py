@@ -3,6 +3,7 @@ import datetime
 import enum
 import functools
 import logging
+import os
 import threading
 import typing
 
@@ -38,9 +39,15 @@ def save_remote_url_to_local_path(
                     fp.write(chunk)
 
 
+# These stamp provenance into ingested COG metadata. At runtime in a container the source
+# tree has no .git (see .dockerignore / spike/Dockerfile), so fall back to values baked in
+# at build time (JDLUC_GIT_*), else a sentinel -- never crash ingest over a provenance tag.
 @functools.cache
 def get_git_version(default_branch_name: str = "main") -> str:
-    repo = git.Repo(__file__, search_parent_directories=True)
+    try:
+        repo = git.Repo(__file__, search_parent_directories=True)
+    except git.InvalidGitRepositoryError:
+        return os.environ.get("JDLUC_GIT_VERSION", "unknown")
     if (branch_name := repo.active_branch.name) == default_branch_name:
         return f"{branch_name:s}-{repo.head.commit.hexsha[:8]:s}"
     else:
@@ -49,7 +56,10 @@ def get_git_version(default_branch_name: str = "main") -> str:
 
 @functools.cache
 def get_git_remote_url(default_remote_name: str = "origin") -> str:
-    repo = git.Repo(__file__, search_parent_directories=True)
+    try:
+        repo = git.Repo(__file__, search_parent_directories=True)
+    except git.InvalidGitRepositoryError:
+        return os.environ.get("JDLUC_GIT_REMOTE_URL", "unknown")
     (remote,) = (
         remote for remote in repo.remotes if remote.name == default_remote_name
     )

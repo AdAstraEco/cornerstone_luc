@@ -19,9 +19,9 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-install-project --no-dev
 
-# Then the source (.dockerignore keeps this lean but MUST retain .git -- storage.py's cache
-# key resolves the module path via git). jdluc is pure-Python over wheels (rasterio/rioxarray
-# ship GDAL), so no apt GDAL is needed.
+# Then the source (.dockerignore keeps this lean; no .git needed -- the cache key uses
+# func.__module__). jdluc is pure-Python over wheels (rasterio/rioxarray ship GDAL), so no
+# apt GDAL is needed.
 COPY . .
 RUN uv sync --frozen --no-dev
 
@@ -33,5 +33,12 @@ ENV PATH="/app/.venv/bin:${PATH}"
 ENV CPL_VSIL_CURL_ALLOWED_EXTENSIONS=".tif,.vrt" \
     GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR" \
     GDAL_CACHEMAX="512"
+
+# Provenance baked at build time (the image has no .git). utils.get_git_* read these to tag
+# ingested COGs; the build command passes them from the host repo. Default to "unknown".
+ARG JDLUC_GIT_VERSION=unknown
+ARG JDLUC_GIT_REMOTE_URL=unknown
+ENV JDLUC_GIT_VERSION=${JDLUC_GIT_VERSION} \
+    JDLUC_GIT_REMOTE_URL=${JDLUC_GIT_REMOTE_URL}
 
 # No ENTRYPOINT: the Job sets `python spike/run_tile.py --stage <stage> <tile_id>`.
