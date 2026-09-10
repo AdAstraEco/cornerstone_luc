@@ -1,0 +1,20 @@
+# Keep the build context lean. See spike/Dockerfile.
+#
+# IMPORTANT: do NOT ignore .git -- jdluc.storage's cache key derives the stage's module
+# path via git.Repo(search_parent_directories=True), so the repo must be present in the
+# image or every @cache_to_zarr stage raises.
+
+# The host venv must not shadow the image's uv-synced /app/.venv.
+.venv/
+
+# Local secrets: the image gets its .env from a mounted k8s Secret at runtime, not baked in.
+.env
+
+# Caches / build noise.
+**/__pycache__/
+*.pyc
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.cache/
+.DS_Store
