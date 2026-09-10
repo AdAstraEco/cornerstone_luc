@@ -33,11 +33,12 @@ RUN uv sync --frozen --no-dev
 
 ENV PATH="/app/.venv/bin:${PATH}"
 
-# GDAL/rasterio tuning for /vsigs reads of COGs/VRTs. storage.write_dask_dataset_to_zarr also
-# sets these via rasterio.Env at compute time; setting them as pod env too is belt-and-braces
-# so the pod behaves like a local run. Keep roughly in sync with storage.py.
-ENV CPL_VSIL_CURL_ALLOWED_EXTENSIONS=".tif,.vrt" \
-    GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR" \
+# GDAL/rasterio tuning for /vsigs reads of COGs/VRTs over GCS (auth via Workload Identity).
+# NB: do NOT set CPL_VSIL_CURL_ALLOWED_EXTENSIONS globally here -- with an allowlist GDAL
+# treats any other extension (e.g. the .fgb boundary files) as "does not exist", breaking the
+# vector reads. storage.write_dask_dataset_to_zarr scopes that allowlist to the raster
+# zarr-write via rasterio.Env, which is the correct place for it.
+ENV GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR" \
     GDAL_CACHEMAX="512"
 
 # Provenance baked at build time (the image has no .git). utils.get_git_* read these to tag

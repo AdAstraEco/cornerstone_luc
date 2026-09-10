@@ -18,7 +18,8 @@ metadata:
   labels: {app: jdluc-tile, stage: "${STAGE}"}
 spec:
   backoffLimit: 1               # one retry; a persistent failure is a finding, not noise
-  ttlSecondsAfterFinished: 3600 # let finished jobs (and their pods) clean themselves up
+  activeDeadlineSeconds: 3600   # fail-safe: hard 1h cap so a hung tile can't hold a node
+  ttlSecondsAfterFinished: 600  # fail-safe: auto-delete job+pod 10 min after finish (pass OR fail)
   template:
     metadata:
       labels: {app: jdluc-tile, stage: "${STAGE}"}
@@ -27,9 +28,13 @@ spec:
       # Workload-Identity-bound KSA -> GCS. Same KSA the celery workers use; no new IAM.
       serviceAccountName: ${SERVICE_ACCOUNT}
       # Memory-heavy tiles -> the highmem pool (e2-highmem-8: 8 vCPU / 64 GiB), which
-      # autoscales 0->N as these Job pods schedule.
+      # autoscales 0->N as these Job pods schedule. The pool carries a worker=true:NoSchedule
+      # taint (shared with the celery workers), so we must tolerate it or the autoscaler
+      # won't even add a node.
       nodeSelector:
         cloud.google.com/gke-nodepool: ${NODE_POOL}
+      tolerations:
+        - {key: worker, operator: Equal, value: "true", effect: NoSchedule}
       containers:
         - name: tile
           image: ${IMAGE}
