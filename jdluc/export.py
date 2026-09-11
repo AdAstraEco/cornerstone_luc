@@ -116,8 +116,8 @@ def _metadata() -> dict[str, str]:
 
 def _output_uri(tile_id: str) -> str:
     return storage.join_uri(
-        root=config.Config.from_dot_env().scratch_root,
-        prefix=f"emissions-cog/{tile_id:s}.tif",
+        root=config.Config.from_dot_env().export_root,
+        prefix=f"{tile_id:s}.tif",
     )
 
 
@@ -143,8 +143,8 @@ def _write_geotiff(stacked: xarray.DataArray, path_to_geotiff: str) -> None:
 def workflow(tile_id: str, output_uri: str | None = None) -> str:
     """Read ``emit``'s cached scratch output for ``tile_id`` and write an emissions COG.
 
-    ``output_uri`` defaults to ``{scratch_root}/emissions-cog/{tile_id}.tif``; pass an
-    explicit URI (e.g. a local path) to eyeball the artifact without touching scratch.
+    ``output_uri`` defaults to ``{export_root}/{tile_id}.tif``; pass an explicit URI
+    (e.g. a local path) to eyeball the artifact without touching the export root.
     Returns the written URI.
     """
     logger.info(f"Reading emit scratch output for {tile_id=:s} (cache hit expected)")
@@ -348,8 +348,8 @@ def mosaic(source_uris: collections.abc.Sequence[str], output_uri: str) -> str:
 
 def _mosaic_output_uri(name: str) -> str:
     return storage.join_uri(
-        root=config.Config.from_dot_env().scratch_root,
-        prefix=f"emissions-cog/mosaics/{name:s}.vrt",
+        root=config.Config.from_dot_env().export_root,
+        prefix=f"mosaics/{name:s}.vrt",
     )
 
 
