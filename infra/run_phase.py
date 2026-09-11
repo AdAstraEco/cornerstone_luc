@@ -38,6 +38,8 @@ import enum
 import logging
 import os
 
+import resource_monitor
+
 from jdluc import (
     attribute,
     config,
@@ -322,34 +324,41 @@ def main() -> int:
             )
     logger.info(f"phase {phase!s} for {iso_3166s} {tile_id=} {methodology.name=:s}")
 
-    match phase:
-        case Phase.INGEST_WORLD | Phase.INGEST_TILES:
-            return run_ingest(
-                concurrency=int(args.concurrency),
-                dataset_names=get_dataset_names_for_phase(
-                    methodology=methodology, phase=phase
-                ),
-                # A whole-world dataset ignores the tile set, so ingest-world's pod passes
-                # the AOI's whole list and ingest.workflow collapses it.
-                tile_ids=[tile_id] if tile_id else get_tile_ids(iso_3166s=iso_3166s),
-            )
-        case Phase.COMPUTE:
-            assert tile_id
-            run_compute(
-                crop_names=attribute.get_crop_names(methodology=methodology),
-                iso_3166s=iso_3166s,
-                methodology=methodology,
-                skip_glad_crop_filter=args.skip_glad_crop_filter,
-                skip_ingest=args.skip_ingest,
-                tile_id=tile_id,
-            )
-        case Phase.REDUCE:
-            run_reduce(
-                crop_names=attribute.get_crop_names(methodology=methodology),
-                iso_3166s=iso_3166s,
-                methodology=methodology,
-                skip_glad_crop_filter=args.skip_glad_crop_filter,
-            )
+    # Sample this pod's own resource use (disk-write throttling, memory, CPU) to its logs,
+    # so we can see which resource capped without infra tooling -- see resource_monitor.py
+    # and docs/gke-disk-io-findings.md.
+    monitor_label = f"{phase!s}:{tile_id or '-'.join(iso_3166s)}"
+    with resource_monitor.monitor(label=monitor_label):
+        match phase:
+            case Phase.INGEST_WORLD | Phase.INGEST_TILES:
+                return run_ingest(
+                    concurrency=int(args.concurrency),
+                    dataset_names=get_dataset_names_for_phase(
+                        methodology=methodology, phase=phase
+                    ),
+                    # A whole-world dataset ignores the tile set, so ingest-world's pod passes
+                    # the AOI's whole list and ingest.workflow collapses it.
+                    tile_ids=[tile_id]
+                    if tile_id
+                    else get_tile_ids(iso_3166s=iso_3166s),
+                )
+            case Phase.COMPUTE:
+                assert tile_id
+                run_compute(
+                    crop_names=attribute.get_crop_names(methodology=methodology),
+                    iso_3166s=iso_3166s,
+                    methodology=methodology,
+                    skip_glad_crop_filter=args.skip_glad_crop_filter,
+                    skip_ingest=args.skip_ingest,
+                    tile_id=tile_id,
+                )
+            case Phase.REDUCE:
+                run_reduce(
+                    crop_names=attribute.get_crop_names(methodology=methodology),
+                    iso_3166s=iso_3166s,
+                    methodology=methodology,
+                    skip_glad_crop_filter=args.skip_glad_crop_filter,
+                )
     logger.info(f"Done: phase {phase!s}{f' for {tile_id:s}' if tile_id else ''}")
     return 0
 

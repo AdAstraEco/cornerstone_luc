@@ -58,16 +58,40 @@ spec:
           # Rendered as a JSON array by run_aoi.py, e.g.
           #   ["--phase","compute","--skip-ingest","--methodology-name","STATISTICAL","HND"]
           args: ${ARGS}
+          env:
+            # Redirect all local temp (Python tempfile honours TMPDIR; GDAL honours
+            # CPL_TMPDIR) onto the per-pod pd-ssd mounted at /localtmp below, keeping the
+            # ingest COG-conversion temps off the shared node boot disk. This is the fix for
+            # the balance_dirty_pages write-throttle -- see docs/gke-disk-io-findings.md.
+            - {name: TMPDIR, value: /localtmp}
+            - {name: CPL_TMPDIR, value: /localtmp}
           resources:
-            requests: {cpu: "${CPU_REQUEST}", memory: "${MEMORY_REQUEST}"}
-            limits: {cpu: "${CPU_LIMIT}", memory: "${MEMORY_LIMIT}"}
+            # ephemeral-storage here guards only the container's OWN overlay (logs, anything
+            # not under /localtmp): a small deterministic per-pod eviction guard, so a stray
+            # writer takes itself down rather than the node. The real scratch is the
+            # /localtmp pd-ssd, sized by ${LOCALTMP_SIZE}.
+            requests: {cpu: "${CPU_REQUEST}", memory: "${MEMORY_REQUEST}", ephemeral-storage: "2Gi"}
+            limits: {cpu: "${CPU_LIMIT}", memory: "${MEMORY_LIMIT}", ephemeral-storage: "8Gi"}
           volumeMounts:
             # Config.from_dot_env reads a FILE (not process env), so mount the .env Secret
             # at /app/.env. That is also where NUMBER_OF_DASK_WORKERS -- the size of the
             # inner per-tile LocalCluster -- has to be set; keep it <= the cpu limit here.
             - {name: dotenv, mountPath: /app/.env, subPath: .env, readOnly: true}
+            - {name: localtmp, mountPath: /localtmp}
       volumes:
         - name: dotenv
           # Quoted because an unquoted placeholder inside a flow mapping isn't parseable
           # YAML (the braces are flow indicators); in block context it is fine.
           secret: {secretName: "${SECRET_NAME}"}
+        # Per-pod pd-ssd scratch, provisioned when the pod schedules and deleted with it (a
+        # generic ephemeral volume). Isolated per pod, so co-scheduled pods no longer contend
+        # on one shared boot disk, and capacity is accounted so an over-run fails this pod
+        # alone. `premium-rwo` is GKE's built-in pd-ssd StorageClass (WaitForFirstConsumer),
+        # so no separate StorageClass object is needed. Works on any machine family incl. e2.
+        - name: localtmp
+          ephemeral:
+            volumeClaimTemplate:
+              spec:
+                accessModes: ["ReadWriteOnce"]
+                storageClassName: premium-rwo
+                resources: {requests: {storage: "${LOCALTMP_SIZE}"}}
