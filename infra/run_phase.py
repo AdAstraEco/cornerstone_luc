@@ -16,6 +16,10 @@ The phases, in the order the driver (``infra/run_aoi.py``) submits them:
 ``reduce``
     One pod: ``trace.workflow`` for the whole AOI, which drives ``attribute.workflow``'s
     cross-tile merge. Every per-tile partial is warm by then, so this is a groupby-sum.
+``export``
+    One pod per tile: ``export.workflow`` serialises ``emit``'s cached scratch output to an
+    emissions COG (docs/rooster-emissions-cog-spike.md). Additive and terminal -- nothing
+    downstream reads it -- so it runs last and reads ``emit``'s warm cache with no recompute.
 
 Chaining inside a pod is safe because every stage is wrapped in ``@storage.cache_to_*``:
 a pod that dies mid-chain resumes from its last completed stage on retry, and rerunning a
@@ -45,6 +49,7 @@ from jdluc import (
     config,
     datasets,
     emit,
+    export,
     harmonize,
     ingest,
     jurisdictional_direct,
@@ -73,11 +78,12 @@ class Phase(enum.StrEnum):
     INGEST_TILES = "ingest-tiles"
     COMPUTE = "compute"
     REDUCE = "reduce"
+    EXPORT = "export"
 
     @property
     def is_per_tile(self) -> bool:
         """Does the driver fan this phase out over the AOI's tiles (vs one pod for the AOI)?"""
-        return self in (Phase.INGEST_TILES, Phase.COMPUTE)
+        return self in (Phase.INGEST_TILES, Phase.COMPUTE, Phase.EXPORT)
 
 
 def get_dataset_names(methodology: attribute.Methodology) -> tuple[DatasetName, ...]:
@@ -263,6 +269,18 @@ def run_reduce(
     logger.info(f"traced {len(df):d} (jurisdiction, crop) rows")
 
 
+def run_export(tile_id: str) -> None:
+    """Serialise this tile's ``emit`` scratch output to an emissions COG.
+
+    Additive and terminal (docs/rooster-emissions-cog-spike.md): it reads ``emit``'s cached
+    zarr -- warm after ``compute`` -- and writes one COG, with no recompute and no edits to any
+    other stage. Methodology-agnostic, since ``emit`` sits below the attribute legs, so it takes
+    only the tile.
+    """
+    uri = export.workflow(tile_id=tile_id)
+    logger.info(f"exported emissions COG to {uri:s}")
+
+
 def main() -> int:
     logging.basicConfig(
         level=logging.INFO,
@@ -359,6 +377,9 @@ def main() -> int:
                     methodology=methodology,
                     skip_glad_crop_filter=args.skip_glad_crop_filter,
                 )
+            case Phase.EXPORT:
+                assert tile_id
+                run_export(tile_id=tile_id)
     logger.info(f"Done: phase {phase!s}{f' for {tile_id:s}' if tile_id else ''}")
     return 0
 
