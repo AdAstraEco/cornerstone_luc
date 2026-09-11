@@ -164,6 +164,18 @@ PHASE_TO_SPEC = {
         pod_deadline_seconds=2 * 3600,
         secret_var="K8S_SECRET_COMPUTE",
     ),
+    # One AOI-wide pod: reads each tile COG's header and writes a small union VRT -- no pixels
+    # materialised, so this is the lightest phase of all. Cheap reduce pool, GCS access only.
+    run_phase.Phase.MOSAIC: PhaseSpec(
+        cpu_limit="2",
+        cpu_request="1",
+        localtmp_size="10Gi",
+        memory_limit="8Gi",
+        memory_request="2Gi",
+        node_pool_var="NODE_POOL_REDUCE",
+        pod_deadline_seconds=1 * 3600,
+        secret_var="K8S_SECRET_COMPUTE",
+    ),
 }
 
 

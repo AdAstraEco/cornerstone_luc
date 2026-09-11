@@ -24,11 +24,16 @@ Band schema (all EPSG:4326, float32, nan-nodata):
 """
 
 import argparse
+import collections.abc
+import dataclasses
 import logging
+import math
 import os
 import tempfile
+import xml.etree.ElementTree as ElementTree
 
 import numpy
+import rasterio
 import xarray
 
 from jdluc import config, emit, geo, storage, utils
@@ -166,6 +171,201 @@ def workflow(tile_id: str, output_uri: str | None = None) -> str:
 
     logger.info(f"Wrote emissions COG for {tile_id=:s} to {uri=:s}")
     return uri
+
+
+# --- Slice 3: AOI mosaic (read-time VRT over the per-tile COGs) ----------------------------------
+# The per-tile COGs share the GLAD 10-degree grid, so an AOI-wide view is a *virtual* mosaic: a tiny
+# VRT that references the tiles by GDAL path and is read lazily. We build the VRT XML by hand (pure
+# rasterio + stdlib) because the image ships GDAL only as the rasterio/rioxarray wheels -- no
+# `gdalbuildvrt` CLI, no `osgeo` -- and materialising a full mosaic would blow the pod's memory.
+
+_NUMPY_TO_GDAL_DTYPE = {"float32": "Float32"}
+
+
+@dataclasses.dataclass(frozen=True)
+class _MosaicSource:
+    """One tile placed on the mosaic grid: its GDAL path and pixel offset within the mosaic."""
+
+    gdal_path: str
+    x_off: int
+    y_off: int
+    width: int
+    height: int
+
+
+def _format_geo_value(value: float) -> str:
+    return repr(value)
+
+
+def _nodata_token(no_data: float | None) -> str:
+    """A comparable stand-in for a tile's nodata, so ``nan == nan`` when checking grid agreement."""
+    if no_data is None:
+        return "none"
+    return "nan" if math.isnan(no_data) else repr(no_data)
+
+
+def build_vrt_xml(
+    *,
+    width: int,
+    height: int,
+    origin_x: float,
+    origin_y: float,
+    pixel_x: float,
+    pixel_y: float,
+    crs_wkt: str,
+    band_names: collections.abc.Sequence[str],
+    gdal_dtype: str,
+    no_data: float,
+    sources: collections.abc.Sequence[_MosaicSource],
+) -> str:
+    """Assemble a multi-band GDAL VRT that tiles ``sources`` onto one mosaic grid. Pure/testable."""
+    root = ElementTree.Element(
+        "VRTDataset", rasterXSize=str(width), rasterYSize=str(height)
+    )
+    ElementTree.SubElement(root, "SRS").text = crs_wkt
+    ElementTree.SubElement(root, "GeoTransform").text = ", ".join(
+        _format_geo_value(v) for v in (origin_x, pixel_x, 0.0, origin_y, 0.0, -pixel_y)
+    )
+    for band_index, band_name in enumerate(band_names, start=1):
+        band = ElementTree.SubElement(
+            root, "VRTRasterBand", dataType=gdal_dtype, band=str(band_index)
+        )
+        if band_name:
+            ElementTree.SubElement(band, "Description").text = band_name
+        ElementTree.SubElement(band, "NoDataValue").text = _format_geo_value(no_data)
+        for source in sources:
+            simple = ElementTree.SubElement(band, "SimpleSource")
+            ElementTree.SubElement(
+                simple, "SourceFilename", relativeToVRT="0"
+            ).text = source.gdal_path
+            ElementTree.SubElement(simple, "SourceBand").text = str(band_index)
+            ElementTree.SubElement(
+                simple,
+                "SrcRect",
+                xOff="0",
+                yOff="0",
+                xSize=str(source.width),
+                ySize=str(source.height),
+            )
+            ElementTree.SubElement(
+                simple,
+                "DstRect",
+                xOff=str(source.x_off),
+                yOff=str(source.y_off),
+                xSize=str(source.width),
+                ySize=str(source.height),
+            )
+            ElementTree.SubElement(simple, "NODATA").text = _format_geo_value(no_data)
+    return ElementTree.tostring(root, encoding="unicode")
+
+
+def mosaic(source_uris: collections.abc.Sequence[str], output_uri: str) -> str:
+    """Write a read-time VRT over the per-tile emission COGs in ``source_uris`` to ``output_uri``.
+
+    Absent tiles are skipped and logged (ocean/edge tiles legitimately have no COG), never silently.
+    The tiles must share one grid (pixel size, CRS, band schema); the mosaic spans their union.
+    """
+    present = [uri for uri in source_uris if storage.path_exists(uri=uri)]
+    if dropped := [uri for uri in source_uris if uri not in present]:
+        logger.warning(
+            f"mosaic: skipping {len(dropped):d} absent tile COG(s): {dropped}"
+        )
+    if not present:
+        raise FileNotFoundError(f"mosaic: none of {list(source_uris)} exist")
+
+    grids = []
+    baseline: tuple | None = (
+        None  # the comparable grid/schema signature of the first tile
+    )
+    meta: tuple | None = None  # (pixel_x, pixel_y, crs_wkt, dtype, no_data, band_names)
+    for uri in present:
+        with rasterio.open(storage.to_gdal_path(uri)) as dataset:
+            transform = dataset.transform
+            pixel_x, pixel_y = abs(transform.a), abs(transform.e)
+            crs_wkt, dtype, no_data = (
+                dataset.crs.to_wkt(),
+                dataset.dtypes[0],
+                dataset.nodata,
+            )
+            names = tuple(name or "" for name in dataset.descriptions)
+            signature = (
+                pixel_x,
+                pixel_y,
+                crs_wkt,
+                dtype,
+                _nodata_token(no_data),
+                names,
+            )
+            if baseline is None:
+                baseline = signature
+                meta = (pixel_x, pixel_y, crs_wkt, dtype, no_data, names)
+            elif signature != baseline:
+                raise ValueError(
+                    f"mosaic: {uri} does not share the grid/schema of {present[0]}"
+                )
+            grids.append((uri, transform, dataset.width, dataset.height))
+
+    assert meta is not None
+    pixel_x, pixel_y, crs_wkt, dtype, no_data, band_names = meta
+    west = min(transform.c for _, transform, _, _ in grids)
+    north = max(transform.f for _, transform, _, _ in grids)
+    east = max(transform.c + w * pixel_x for _, transform, w, _ in grids)
+    south = min(transform.f - h * pixel_y for _, transform, _, h in grids)
+    mosaic_width = round((east - west) / pixel_x)
+    mosaic_height = round((north - south) / pixel_y)
+
+    sources = [
+        _MosaicSource(
+            gdal_path=storage.to_gdal_path(uri),
+            x_off=round((transform.c - west) / pixel_x),
+            y_off=round((north - transform.f) / pixel_y),
+            width=width,
+            height=height,
+        )
+        for uri, transform, width, height in grids
+    ]
+    xml = build_vrt_xml(
+        width=mosaic_width,
+        height=mosaic_height,
+        origin_x=west,
+        origin_y=north,
+        pixel_x=pixel_x,
+        pixel_y=pixel_y,
+        crs_wkt=crs_wkt,
+        band_names=band_names,
+        gdal_dtype=_NUMPY_TO_GDAL_DTYPE[str(dtype)],
+        no_data=float(no_data) if no_data is not None else math.nan,
+        sources=sources,
+    )
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path_to_vrt = os.path.join(tmpdir, "mosaic.vrt")
+        with open(path_to_vrt, "w") as handle:
+            handle.write(xml)
+        storage.put_file(local_path=path_to_vrt, uri=output_uri)
+    logger.info(f"mosaicked {len(present):d} tile(s) into {output_uri=:s}")
+    return output_uri
+
+
+def _mosaic_output_uri(name: str) -> str:
+    return storage.join_uri(
+        root=config.Config.from_dot_env().scratch_root,
+        prefix=f"emissions-cog/mosaics/{name:s}.vrt",
+    )
+
+
+def mosaic_workflow(
+    tile_ids: collections.abc.Sequence[str],
+    name: str,
+    output_uri: str | None = None,
+) -> str:
+    """VRT-mosaic the per-tile emission COGs for ``tile_ids`` (by their scratch paths) into one AOI
+    view named ``name``. ``output_uri`` defaults to a ``.vrt`` under scratch. Returns the URI."""
+    return mosaic(
+        source_uris=[_output_uri(tile_id=tile_id) for tile_id in tile_ids],
+        output_uri=output_uri
+        if output_uri is not None
+        else _mosaic_output_uri(name=name),
+    )
 
 
 def main() -> int:
