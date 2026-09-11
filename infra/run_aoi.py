@@ -90,6 +90,10 @@ class PhaseSpec:
 
     cpu_limit: str
     cpu_request: str
+    # Size of the per-pod pd-ssd scratch volume (/localtmp): must hold this phase's peak
+    # coexisting local temps. Ingest converts ~8 GB-class COGs (x --concurrency); compute and
+    # reduce stream results to GCS and only need room for Dask spill / GDAL cache.
+    localtmp_size: str
     memory_limit: str
     memory_request: str
     node_pool_var: str
@@ -102,6 +106,7 @@ PHASE_TO_SPEC = {
     run_phase.Phase.INGEST_WORLD: PhaseSpec(
         cpu_limit="4",
         cpu_request="2",
+        localtmp_size="100Gi",
         memory_limit="24Gi",
         memory_request="4Gi",
         node_pool_var="NODE_POOL_INGEST",
@@ -109,10 +114,12 @@ PHASE_TO_SPEC = {
         secret_var="K8S_SECRET",
     ),
     # Also network-bound, but one tile's worth: cheap pool, modest memory. Carries the
-    # source-API credentials -- the only phase that needs them.
+    # source-API credentials -- the only phase that needs them. localtmp holds ~8 GB-class
+    # COG temps x --concurrency concurrent conversions, with headroom.
     run_phase.Phase.INGEST_TILES: PhaseSpec(
         cpu_limit="4",
         cpu_request="2",
+        localtmp_size="100Gi",
         memory_limit="24Gi",
         memory_request="4Gi",
         node_pool_var="NODE_POOL_INGEST",
@@ -120,10 +127,12 @@ PHASE_TO_SPEC = {
         secret_var="K8S_SECRET",
     ),
     # ~one tile per e2-highmem-8 node (peak ~39 GiB observed), leaving headroom for system
-    # pods, and a deadline that tolerates a data-dense farmland tile.
+    # pods, and a deadline that tolerates a data-dense farmland tile. Results stream to GCS,
+    # so localtmp only needs room for Dask spill / the GDAL block cache.
     run_phase.Phase.COMPUTE: PhaseSpec(
         cpu_limit="8",
         cpu_request="6",
+        localtmp_size="20Gi",
         memory_limit="60Gi",
         memory_request="48Gi",
         node_pool_var="NODE_POOL",
@@ -134,6 +143,7 @@ PHASE_TO_SPEC = {
     run_phase.Phase.REDUCE: PhaseSpec(
         cpu_limit="4",
         cpu_request="2",
+        localtmp_size="10Gi",
         memory_limit="32Gi",
         memory_request="8Gi",
         node_pool_var="NODE_POOL_REDUCE",
@@ -245,6 +255,7 @@ def render_manifest(
         "CPU_LIMIT": spec.cpu_limit,
         "CPU_REQUEST": spec.cpu_request,
         "JOB_NAME": job_name(iso_3166s=iso_3166s, phase=phase, run_id=run_id),
+        "LOCALTMP_SIZE": spec.localtmp_size,
         "MEMORY_LIMIT": spec.memory_limit,
         "MEMORY_REQUEST": spec.memory_request,
         "PARALLELISM": str(min(parallelism, completions)),
