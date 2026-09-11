@@ -150,6 +150,20 @@ PHASE_TO_SPEC = {
         pod_deadline_seconds=2 * 3600,
         secret_var="K8S_SECRET_COMPUTE",
     ),
+    # Reads one tile's already-computed emit zarr (cache hit, no recompute) and streams a
+    # multi-band COG out to scratch. Light: dask writes the raster in chunks, so memory stays
+    # modest; localtmp only holds the one tile's staged GeoTIFF + COG (TMPDIR=/localtmp). Needs
+    # only GCS access, not the source-API Secret, so it runs on the cheap reduce pool.
+    run_phase.Phase.EXPORT: PhaseSpec(
+        cpu_limit="4",
+        cpu_request="2",
+        localtmp_size="20Gi",
+        memory_limit="24Gi",
+        memory_request="8Gi",
+        node_pool_var="NODE_POOL_REDUCE",
+        pod_deadline_seconds=2 * 3600,
+        secret_var="K8S_SECRET_COMPUTE",
+    ),
 }
 
 
