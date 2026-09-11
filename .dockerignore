@@ -1,0 +1,24 @@
+# Keep the build context lean. See spike/Dockerfile.
+
+# No git history in the runtime image: storage.py's cache key now uses func.__module__,
+# not a git.Repo() lookup, so .git is no longer needed at runtime.
+.git/
+
+# The host venv must not shadow the image's uv-synced /app/.venv.
+.venv/
+
+# Exact-patch pin (e.g. 3.14.5) the base image's uv can't fetch; requires-python (>=3.14,<3.15)
+# is satisfied by the base image's own 3.14.x, so let uv use that.
+.python-version
+
+# Local secrets: the image gets its .env from a mounted k8s Secret at runtime, not baked in.
+.env
+
+# Caches / build noise.
+**/__pycache__/
+*.pyc
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.cache/
+.DS_Store

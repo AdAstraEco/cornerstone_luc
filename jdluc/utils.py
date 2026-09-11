@@ -3,10 +3,10 @@ import datetime
 import enum
 import functools
 import logging
+import os
 import threading
 import typing
 
-import git
 import requests
 import xarray
 
@@ -38,22 +38,35 @@ def save_remote_url_to_local_path(
                     fp.write(chunk)
 
 
+# These stamp provenance into ingested COG metadata. In a container the source tree has no
+# .git and the git binary may be absent, so import git lazily and fall back to build-time env
+# (JDLUC_GIT_*) then a sentinel on ANY failure -- never crash ingest over a provenance tag.
+# (GitPython's top-level import itself raises when the git executable is missing, so the
+# import must live inside the try.)
 @functools.cache
 def get_git_version(default_branch_name: str = "main") -> str:
-    repo = git.Repo(__file__, search_parent_directories=True)
-    if (branch_name := repo.active_branch.name) == default_branch_name:
-        return f"{branch_name:s}-{repo.head.commit.hexsha[:8]:s}"
-    else:
+    try:
+        import git
+
+        repo = git.Repo(__file__, search_parent_directories=True)
+        branch_name = repo.active_branch.name
+        if branch_name == default_branch_name:
+            return f"{branch_name:s}-{repo.head.commit.hexsha[:8]:s}"
         return branch_name
+    except Exception:
+        return os.environ.get("JDLUC_GIT_VERSION", "unknown")
 
 
 @functools.cache
 def get_git_remote_url(default_remote_name: str = "origin") -> str:
-    repo = git.Repo(__file__, search_parent_directories=True)
-    (remote,) = (
-        remote for remote in repo.remotes if remote.name == default_remote_name
-    )
-    return next(iter(remote.urls))
+    try:
+        import git
+
+        repo = git.Repo(__file__, search_parent_directories=True)
+        (remote,) = (r for r in repo.remotes if r.name == default_remote_name)
+        return next(iter(remote.urls))
+    except Exception:
+        return os.environ.get("JDLUC_GIT_REMOTE_URL", "unknown")
 
 
 def get_utc_timestamp() -> str:
