@@ -19,7 +19,11 @@ The phases, in the order the driver (``infra/run_aoi.py``) submits them:
 ``export``
     One pod per tile: ``export.workflow`` serialises ``emit``'s cached scratch output to an
     emissions COG (docs/rooster-emissions-cog-spike.md). Additive and terminal -- nothing
-    downstream reads it -- so it runs last and reads ``emit``'s warm cache with no recompute.
+    downstream reads it -- so it runs after ``reduce`` and reads ``emit``'s warm cache with no
+    recompute.
+``mosaic``
+    One pod: ``export.mosaic_workflow`` stitches the per-tile emission COGs into one AOI-wide
+    read-time VRT. A tiny XML over the tiles (lazy, no materialisation); runs after ``export``.
 
 Chaining inside a pod is safe because every stage is wrapped in ``@storage.cache_to_*``:
 a pod that dies mid-chain resumes from its last completed stage on retry, and rerunning a
@@ -79,6 +83,7 @@ class Phase(enum.StrEnum):
     COMPUTE = "compute"
     REDUCE = "reduce"
     EXPORT = "export"
+    MOSAIC = "mosaic"
 
     @property
     def is_per_tile(self) -> bool:
@@ -281,6 +286,19 @@ def run_export(tile_id: str) -> None:
     logger.info(f"exported emissions COG to {uri:s}")
 
 
+def run_mosaic(iso_3166s: collections.abc.Sequence[str]) -> None:
+    """Stitch the AOI's per-tile emission COGs into one read-time VRT (one pod, after ``export``).
+
+    Mirrors ``reduce``'s shape: a single AOI-wide pod over the same sorted tile list. Absent tiles
+    (ocean/edge, or an export the AOI never produced) are skipped. Methodology-agnostic.
+    """
+    uri = export.mosaic_workflow(
+        tile_ids=get_tile_ids(iso_3166s=iso_3166s),
+        name="-".join(sorted(iso_3166s)),
+    )
+    logger.info(f"mosaicked AOI emissions VRT to {uri:s}")
+
+
 def main() -> int:
     logging.basicConfig(
         level=logging.INFO,
@@ -380,6 +398,8 @@ def main() -> int:
             case Phase.EXPORT:
                 assert tile_id
                 run_export(tile_id=tile_id)
+            case Phase.MOSAIC:
+                run_mosaic(iso_3166s=iso_3166s)
     logger.info(f"Done: phase {phase!s}{f' for {tile_id:s}' if tile_id else ''}")
     return 0
 
