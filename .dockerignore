@@ -11,8 +11,12 @@
 # is satisfied by the base image's own 3.14.x, so let uv use that.
 .python-version
 
-# Local secrets: the image gets its .env from a mounted k8s Secret at runtime, not baked in.
+# Local secrets: pods get their .env from a mounted k8s Secret at runtime, never baked in.
+# This MUST also cover infra/cloud.env (API keys) and infra/cluster.env (cluster identifiers),
+# or `COPY . .` would bake them into the shared image. `*.env` matches those but not the
+# `*.env.example` templates, which stay.
 .env
+**/*.env
 
 # Caches / build noise.
 **/__pycache__/
