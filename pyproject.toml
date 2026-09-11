@@ -75,6 +75,7 @@ forbidden_modules = [
 name = "ETL"
 type = "layers"
 layers = [
+    "jdluc.export",
     "jdluc.trace",
     "jdluc.attribute",
     "jdluc.jurisdictional_direct | jdluc.statistical",
