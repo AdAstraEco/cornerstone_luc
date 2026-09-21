@@ -32,7 +32,7 @@ The roots live under the `cornerstone/` prefix of the bucket in `cluster.env`: `
 kubectl -n "$K8S_NAMESPACE" create secret generic "$K8S_SECRET" --from-file=.env=infra/cloud.env
 ```
 
-All five fields must be **present** or `Config.from_dot_env()` raises: `INGEST_ROOT`, `SCRATCH_ROOT`, `NUMBER_OF_DASK_WORKERS` (the *inner* per-pod dask worker count — keep it ≤ the pod's cpu limit), `USDA_NASS_API_KEY`, `HARVARD_DATAVERSE_GUESTBOOK_JSON`.
+All six fields must be **present** or `Config.from_dot_env()` raises: `INGEST_ROOT`, `SCRATCH_ROOT`, `EXPORT_ROOT` (where the emissions COGs / mosaic VRTs are written — a terminal deliverable, sibling to scratch), `NUMBER_OF_DASK_WORKERS` (the *inner* per-pod dask worker count — keep it ≤ the pod's cpu limit), `USDA_NASS_API_KEY`, `HARVARD_DATAVERSE_GUESTBOOK_JSON`.
 
 Only the two ingest phases actually *use* the API keys. To keep them off the compute nodes, create a second Secret whose key fields are present but blank, and point `K8S_SECRET_COMPUTE` at it:
 

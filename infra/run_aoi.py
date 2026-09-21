@@ -150,6 +150,37 @@ PHASE_TO_SPEC = {
         pod_deadline_seconds=2 * 3600,
         secret_var="K8S_SECRET_COMPUTE",
     ),
+    # Reads one tile's already-computed emit zarr (cache hit, no recompute) and streams a
+    # multi-band COG out to scratch. Memory stays modest (dask writes in chunks), but disk is
+    # the real constraint: cog_translate first writes an UNCOMPRESSED tiled intermediate (for
+    # overviews + random-access windows) before compressing the final COG -- ~33 GB for a
+    # 5-band-float32 10-degree tile. So localtmp must comfortably exceed that; 100Gi leaves
+    # headroom and clears GDAL's disk precheck, which we keep ON as a fast-fail guard (better
+    # to refuse up front than die at 97% mid-write). It's ephemeral (deleted with the pod), so
+    # the headroom is essentially free. Needs only GCS access, not the source-API Secret, so it
+    # runs on the cheap reduce pool.
+    run_phase.Phase.EXPORT: PhaseSpec(
+        cpu_limit="4",
+        cpu_request="2",
+        localtmp_size="100Gi",
+        memory_limit="24Gi",
+        memory_request="8Gi",
+        node_pool_var="NODE_POOL_REDUCE",
+        pod_deadline_seconds=2 * 3600,
+        secret_var="K8S_SECRET_COMPUTE",
+    ),
+    # One AOI-wide pod: reads each tile COG's header and writes a small union VRT -- no pixels
+    # materialised, so this is the lightest phase of all. Cheap reduce pool, GCS access only.
+    run_phase.Phase.MOSAIC: PhaseSpec(
+        cpu_limit="2",
+        cpu_request="1",
+        localtmp_size="10Gi",
+        memory_limit="8Gi",
+        memory_request="2Gi",
+        node_pool_var="NODE_POOL_REDUCE",
+        pod_deadline_seconds=1 * 3600,
+        secret_var="K8S_SECRET_COMPUTE",
+    ),
 }
 
 
