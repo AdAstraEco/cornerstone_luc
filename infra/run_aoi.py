@@ -151,13 +151,18 @@ PHASE_TO_SPEC = {
         secret_var="K8S_SECRET_COMPUTE",
     ),
     # Reads one tile's already-computed emit zarr (cache hit, no recompute) and streams a
-    # multi-band COG out to scratch. Light: dask writes the raster in chunks, so memory stays
-    # modest; localtmp only holds the one tile's staged GeoTIFF + COG (TMPDIR=/localtmp). Needs
-    # only GCS access, not the source-API Secret, so it runs on the cheap reduce pool.
+    # multi-band COG out to scratch. Memory stays modest (dask writes in chunks), but disk is
+    # the real constraint: cog_translate first writes an UNCOMPRESSED tiled intermediate (for
+    # overviews + random-access windows) before compressing the final COG -- ~33 GB for a
+    # 5-band-float32 10-degree tile. So localtmp must comfortably exceed that; 100Gi leaves
+    # headroom and clears GDAL's disk precheck, which we keep ON as a fast-fail guard (better
+    # to refuse up front than die at 97% mid-write). It's ephemeral (deleted with the pod), so
+    # the headroom is essentially free. Needs only GCS access, not the source-API Secret, so it
+    # runs on the cheap reduce pool.
     run_phase.Phase.EXPORT: PhaseSpec(
         cpu_limit="4",
         cpu_request="2",
-        localtmp_size="20Gi",
+        localtmp_size="100Gi",
         memory_limit="24Gi",
         memory_request="8Gi",
         node_pool_var="NODE_POOL_REDUCE",
