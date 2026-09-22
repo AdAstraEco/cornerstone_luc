@@ -1,4 +1,4 @@
-# cornerstone (docs/cornerstone-k8s.md): ONE k8s Job == ONE tile (approach B).
+# cornerstone (docs/orbae/cornerstone-k8s.md): ONE k8s Job == ONE tile (approach B).
 #
 # This is a TEMPLATE, not a ready manifest. infra/run-tiles.py renders it once per tile,
 # substituting the per-tile placeholders (JOB_NAME / STAGE / TILE_ID) and the infra

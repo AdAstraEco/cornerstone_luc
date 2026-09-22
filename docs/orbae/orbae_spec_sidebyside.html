@@ -1,0 +1,586 @@
+<!doctype html><html><head><meta charset="utf-8">
+<title>Emissions layer spec vs Cornerstone LUC — side by side</title>
+<style>
+@page { size: A4 landscape; margin: 13mm 12mm 14mm;
+  @bottom-right { content: counter(page); } }
+* { box-sizing: border-box; }
+body { font: 9.1pt/1.42 Georgia,"Times New Roman",serif; color:#1b1b1b; margin:0; }
+h1 { font:600 19pt/1.2 -apple-system,"Helvetica Neue",sans-serif; margin:0 0 2mm; letter-spacing:-.2px;}
+.sub { font:9pt/1.45 -apple-system,"Helvetica Neue",sans-serif; color:#5c5c5c; margin:0 0 4mm;}
+.sub code { font:8.4pt ui-monospace,Menlo,monospace; }
+h2 { font:600 11.5pt/1.25 -apple-system,"Helvetica Neue",sans-serif; margin:0 0 1mm;
+     padding-bottom:1.2mm; border-bottom:1.4px solid #1b1b1b; letter-spacing:-.1px;
+     display:flex; align-items:baseline; justify-content:space-between; gap:6mm;}
+.mini { font:8.2pt/1 -apple-system,sans-serif; color:#8a8a8a; white-space:nowrap; }
+.mini span { margin-left:3.2mm; }
+.mini b { font-size:9.4pt; margin-right:.8mm; }
+.blurb { font:italic 8.8pt/1.4 Georgia,serif; color:#4a4a4a; margin:0 0 2.6mm; max-width:200mm;}
+section { margin:0 0 6mm; break-inside:auto; }
+section:first-of-type { margin-top:1mm; }
+.grid { display:grid; grid-template-columns:20mm 1fr 1fr; column-gap:5mm; }
+.hdr { font:600 7.4pt/1.2 -apple-system,sans-serif; text-transform:uppercase;
+  letter-spacing:.7px; color:#6b6b6b; padding-bottom:1.4mm; border-bottom:.6px solid #cfcfcf;
+  margin-bottom:2mm; }
+.row { display:contents; }
+.row > * { break-inside:avoid; padding:1.8mm 0 2.4mm; border-top:.6px solid #e4e4e4; }
+.k { text-align:center; border-top-color:#e4e4e4 !important; }
+.id { font:700 8.6pt/1 -apple-system,sans-serif; color:var(--c); letter-spacing:.3px; }
+.gl { font-size:10.5pt; line-height:1.5; }
+.lbl { font:600 6.4pt/1.1 -apple-system,sans-serif; text-transform:uppercase;
+  letter-spacing:.5px; color:var(--c); }
+.c p { margin:0; hyphens:auto; }
+.spec p { color:#111; }
+.repo p { color:#111; }
+.c code { font:8.1pt ui-monospace,Menlo,monospace; background:#f2f2f0;
+  padding:0 .6mm; border-radius:2px; }
+.ref { font:7.4pt/1.35 ui-monospace,Menlo,monospace; color:#7a7a7a; margin-top:1.4mm;
+  word-break:break-word; }
+.tally { display:flex; gap:6mm; flex-wrap:wrap; font:8.6pt/1 -apple-system,sans-serif;
+  margin:0 0 2mm; align-items:center;}
+.lg b { font-size:10pt; } .lg i { font-style:normal; color:#8a8a8a; }
+.bar { display:flex; height:2.6mm; border-radius:1.3mm; overflow:hidden; margin:0 0 5mm;
+  background:#eee; }
+.note { font:8.6pt/1.45 -apple-system,sans-serif; color:#4a4a4a; border-left:2.4px solid #d5d5d5;
+  padding-left:3mm; margin:0 0 5mm; max-width:215mm;}
+</style></head><body>
+<h1>Emissions layer specification vs. Cornerstone LUC — side by side</h1>
+<p class="sub">Ordered by the specification's own sequence &middot; repo state <code>8130655</code>
+&middot; spec as committed in <code>0db3abd</code> &middot; generated 22 September 2026</p>
+<div class="tally"><span class="lg"><b style="color:#1a7f45">✅</b> Aligned <i>17</i></span><span class="lg"><b style="color:#b07d00">🤝</b> Convergent <i>2</i></span><span class="lg"><b style="color:#c2610a">◐</b> Partial <i>6</i></span><span class="lg"><b style="color:#c0322b">❌</b> Disagree <i>24</i></span><span class="lg"><b style="color:#5a6b82">🛠️</b> Unbuilt <i>7</i></span><span class="lg" style="color:#8a8a8a">&nbsp;&nbsp;56 points compared</span></div>
+<div class="bar"><span style="width:30.3571%;background:#1a7f45"></span><span style="width:3.5714%;background:#b07d00"></span><span style="width:10.7143%;background:#c2610a"></span><span style="width:42.8571%;background:#c0322b"></span><span style="width:12.5000%;background:#5a6b82"></span></div>
+<p class="note"><b>How to read this.</b> The left column carries an identifier and how closely the two
+methods agree on that point. The middle column quotes the specification; the right column quotes the
+repo's own documentation where it speaks to the same point, and says so plainly where it does not.
+Code references are <i>indicative</i> — they point at the place to look, not at every line involved.
+<b>Partial</b> means aligned in substance but differing in a detail worth naming.</p>
+<section>
+  <h2>§1 · Key principles<span class="mini"><span><b style="color:#1a7f45">✅</b>1</span><span><b style="color:#c2610a">◐</b>3</span><span><b style="color:#c0322b">❌</b>3</span></span></h2>
+  <p class="blurb">The spec&#x27;s framing commitments. These are where alignment is easiest to assert and hardest to verify, so each is paired with the passage in the repo docs that bears on it.</p>
+  <div class="grid">
+    <div class="hdr k">&nbsp;</div>
+    <div class="hdr">Emissions&nbsp;layer specification</div>
+    <div class="hdr">Cornerstone LUC — repo documentation &amp; code</div>
+    <div class="row">
+  <div class="k" style="--c:#c2610a">
+    <div class="id">P1</div>
+    <div class="gl">◐</div>
+    <div class="lbl">Partial</div>
+  </div>
+  <div class="c spec"><p>Preserve the conversion evidence base. Keep the detection and recording of conversions separate from decisions about which conversions are relevant to a particular downstream use.</p><div class="ref">spec §1</div></div>
+  <div class="c repo"><p>The layers themselves are not [disjoint]: every layer that claims a pixel is recorded, so a contested pixel stays visible in the emitted <code>destination-dataset</code> band even though only one layer resolves it.</p><div class="ref">methodology.md:130 · emit.py:353–361</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#c0322b">
+    <div class="id">P2</div>
+    <div class="gl">❌</div>
+    <div class="lbl">Disagree</div>
+  </div>
+  <div class="c spec"><p>Unfiltered first. Every land conversion we detect goes into the layer, no matter what the land became afterwards. … (Cornerstone's proof of concept, which only kept conversions ending in cropland and buildup, etc., is the pattern to avoid.)</p><div class="ref">spec §1</div></div>
+  <div class="c repo"><p>A pixel matching none of these emits nothing — there is no default row to fire on it. … Buckets 3 to 5 are published per pixel as <code>dropped-emissions</code>, deliberately outside <code>emissions-per-hectare</code> so that no total silently contains carbon charged to nobody.</p><div class="ref">methodology.md:140, 182 · emit.py:434</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#c2610a">
+    <div class="id">P3</div>
+    <div class="gl">◐</div>
+    <div class="lbl">Partial</div>
+  </div>
+  <div class="c spec"><p>No crop information inside the layer. Crop masks, yields and farm polygons stay outside. Because the layer does not know which crop grows where, it carries the soil-carbon result for all three crop groups … side by side.</p><div class="ref">spec §1</div></div>
+  <div class="c repo"><p>The emissions core (<code>emit.py</code>) computes per-pixel, per-span LUC emissions on the GLAD tile grid, <b>independent of any crop</b>. This single layer feeds both attribution legs.</p><div class="ref">methodology.md:122</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#c0322b">
+    <div class="id">P4</div>
+    <div class="gl">❌</div>
+    <div class="lbl">Disagree</div>
+  </div>
+  <div class="c spec"><p>Every intermediate result is a real, named product. The layer is built in a handful of steps, and each step leaves behind a stored result with a fixed set of columns and a check that it passed. Each step works only from the result of the step before it.</p><div class="ref">spec §1</div></div>
+  <div class="c repo"><p>The pipeline is a linear chain of five stages, each consuming the previous stage's output. … Stage outputs are cached under <code>SCRATCH_ROOT</code> by a pair of decorators in <code>storage.py</code>.</p><div class="ref">architecture.md:33, 108 · emit.py:612</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#1a7f45">
+    <div class="id">P5</div>
+    <div class="gl">✅</div>
+    <div class="lbl">Aligned</div>
+  </div>
+  <div class="c spec"><p>Work on total emissions as long as possible — in order to simplify aggregation.</p><div class="ref">spec §1</div></div>
+  <div class="c repo"><p>All fluxes are first computed as if the conversion were instantaneous, then allocated over time … The per-pixel result is a discounted sum of span conversion emissions plus the current year's peatland occupation emissions, scaled by pixel area.</p><div class="ref">methodology.md:165, 167</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#c2610a">
+    <div class="id">P6</div>
+    <div class="gl">◐</div>
+    <div class="lbl">Partial</div>
+  </div>
+  <div class="c spec"><p>No reference year until the very end. Where and when land was converted, and how much carbon that was released, are computed without any reference year, assessment window or amortization rule. Those are applied as a final, cheap step — so one computation serves every year and every amortization scheme.</p><div class="ref">spec §1</div></div>
+  <div class="c repo"><p>The repo docs do not discuss reference-year parameterisation. In code, <code>ASSESSMENT_YEAR = 2020</code> is a module constant that gates destination resolution, bounds the lookback, and is absent from the cache key.</p><div class="ref">emit.py:203, 257–270 · storage.py:191–208</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#c0322b">
+    <div class="id">P7</div>
+    <div class="gl">❌</div>
+    <div class="lbl">Disagree</div>
+  </div>
+  <div class="c spec"><p>Avoid cleaning rules that create artificial changes in the results for different reference years. The consistent use of TCL and GPW … in a way that does not make LUC GHG results dependent on the rules.</p><div class="ref">spec §1</div></div>
+  <div class="c repo"><p>… the destination is only ever tested at the assessment year. Requiring the destination layer to confirm the conversion in the same year — or even inside the same five-year span — discards the large majority of identified forest losses.</p><div class="ref">methodology.md:142</div></div>
+</div>
+  </div>
+</section><section>
+  <h2>§2 · Requirements<span class="mini"><span><b style="color:#b07d00">🤝</b>1</span><span><b style="color:#c0322b">❌</b>5</span></span></h2>
+  <p class="blurb">The spec&#x27;s stated must-haves. Several are restatements of the principles; the rows below carry only what the requirement adds.</p>
+  <div class="grid">
+    <div class="hdr k">&nbsp;</div>
+    <div class="hdr">Emissions&nbsp;layer specification</div>
+    <div class="hdr">Cornerstone LUC — repo documentation &amp; code</div>
+    <div class="row">
+  <div class="k" style="--c:#c0322b">
+    <div class="id">R1</div>
+    <div class="gl">❌</div>
+    <div class="lbl">Disagree</div>
+  </div>
+  <div class="c spec"><p>No filtering of conversion events with crop masks. The core layer must retain every event produced by the approved conversion-detection process, irrespective of destination land use.</p><div class="ref">spec §2</div></div>
+  <div class="c repo"><p>Buckets 3 and 4 are conformance gaps rather than scoping preferences — LSRS Requirement 11 names tree crops and plantation forest explicitly.</p><div class="ref">methodology.md:184</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#c0322b">
+    <div class="id">R2</div>
+    <div class="gl">❌</div>
+    <div class="lbl">Disagree</div>
+  </div>
+  <div class="c spec"><p>Scenario-specific results per crop type … for every supported land-use / crop-type category — annual, perennial, paddy rice, pastureland, and forestry — without assigning a category to a location using crop masks.</p><div class="ref">spec §2</div></div>
+  <div class="c repo"><p>Mineral soils — the IPCC 2019 Tier 1 stock-change method … using land-use-change factors keyed on the destination and climate domain.</p><div class="ref">methodology.md:160 · emit.py:426–430</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#c0322b">
+    <div class="id">R3</div>
+    <div class="gl">❌</div>
+    <div class="lbl">Disagree</div>
+  </div>
+  <div class="c spec"><p>Emissions breakdown/resolution: Emissions must be computed by ecosystem converted (forest, natural grassland, pasture), by carbon pool (biomass, mineral soil, peat) and by gas (CO₂, CH₄, N₂O).</p><div class="ref">spec §2</div></div>
+  <div class="c repo"><p>Ecosystem and pool are both published. Gas is not: the repo docs describe no gas dimension anywhere, and <code>emit.py</code> carries tCO₂e throughout.</p><div class="ref">methodology.md:152–161 · emit.py:554–588</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#c0322b">
+    <div class="id">R4</div>
+    <div class="gl">❌</div>
+    <div class="lbl">Disagree</div>
+  </div>
+  <div class="c spec"><p>Peat: The core layer must embed emissions from peat occupation to all peat pixels — whether converted or not. On top of these emissions from occupation we assign emissions from conversion if we have a converting pixel.</p><div class="ref">spec §2</div></div>
+  <div class="c repo"><p>… a flat annual occupation emission that continues for as long as the peatland stays under cultivation.</p><div class="ref">methodology.md:161 · emit.py:472–480, 681–686</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#c0322b">
+    <div class="id">R5</div>
+    <div class="gl">❌</div>
+    <div class="lbl">Disagree</div>
+  </div>
+  <div class="c spec"><p>The core layer is derived from a consistent conversion-event period. For fixed source-data versions and processing rules, changing the assessment reference year must not change the underlying conversion-event records or their unamortized emissions.</p><div class="ref">spec §2</div></div>
+  <div class="c repo"><p>The repo docs make no claim of reference-year invariance. In code the destination predicates read at <code>ASSESSMENT_YEAR</code>, so moving it changes which conversions exist.</p><div class="ref">emit.py:257, 262, 270</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#b07d00">
+    <div class="id">R6</div>
+    <div class="gl">🤝</div>
+    <div class="lbl">Convergent</div>
+  </div>
+  <div class="c spec"><p>The core must retain unamortized event-level emissions by ecosystem converted, carbon pool, gas, and supported land-use scenario. Aggregated totals must be derived from those components.</p><div class="ref">spec §2</div></div>
+  <div class="c repo"><p>Per-span <code>emissions</code>, <code>soil-emissions</code> and <code>vegetation-emissions</code> bands are written <b>undiscounted</b>; each attribution leg applies the ramp itself. Unamortized by span, not by event; no gas axis.</p><div class="ref">emit.py:694–730 · statistical.py:268 · jurisdictional_direct.py:149</div></div>
+</div>
+  </div>
+</section><section>
+  <h2>Step 1a · Event sources<span class="mini"><span><b style="color:#1a7f45">✅</b>2</span><span><b style="color:#c2610a">◐</b>1</span><span><b style="color:#c0322b">❌</b>2</span></span></h2>
+  <p class="blurb">Where and when something could have happened. Post-migration this is the most aligned stretch of the whole comparison.</p>
+  <div class="grid">
+    <div class="hdr k">&nbsp;</div>
+    <div class="hdr">Emissions&nbsp;layer specification</div>
+    <div class="hdr">Cornerstone LUC — repo documentation &amp; code</div>
+    <div class="row">
+  <div class="k" style="--c:#1a7f45">
+    <div class="id">E1</div>
+    <div class="gl">✅</div>
+    <div class="lbl">Aligned</div>
+  </div>
+  <div class="c spec"><p>Tree cover loss. Global Forest Watch tree cover loss (Hansen, GFC-2025-v1.13), which gives the year of loss per pixel for 2001 to 2025.</p><div class="ref">spec 1a</div></div>
+  <div class="c repo"><p>Hansen tree-cover loss gives the year a pixel lost its forest, and is the only dated layer.</p><div class="ref">methodology.md:126 · datasets/gnw_tcl.py</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#c0322b">
+    <div class="id">E2</div>
+    <div class="gl">❌</div>
+    <div class="lbl">Disagree</div>
+  </div>
+  <div class="c spec"><p>A pixel is treated as forest only where tree canopy cover in the year 2000 exceeds ten per cent. Pixels that show a loss but sit below that canopy threshold are not deleted — they are kept and marked.</p><div class="ref">spec 1a</div></div>
+  <div class="c repo"><p>Not discussed in the repo docs. The ingest reads one band, <code>lossyear</code>; <code>treecover2000</code> is never fetched, so the threshold cannot be evaluated without an ingest change.</p><div class="ref">datasets/gnw_tcl.py:32</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#1a7f45">
+    <div class="id">E3</div>
+    <div class="gl">✅</div>
+    <div class="lbl">Aligned</div>
+  </div>
+  <div class="c spec"><p>Global Pasture Watch, version 2, annual, 2000 to 2024. We use two classes: pasture, and natural grassland — into which the shrubland and rangeland category is merged.</p><div class="ref">spec 1a</div></div>
+  <div class="c repo"><p>Global Pasture Watch gives an annual grassland class — cultivated, natural/semi-natural, or open shrubland. … rangeland (natural or open shrubland) or pasture (cultivated grassland).</p><div class="ref">methodology.md:126, 128 · emit.py:325–335</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#c2610a">
+    <div class="id">E4</div>
+    <div class="gl">◐</div>
+    <div class="lbl">Partial</div>
+  </div>
+  <div class="c spec"><p>Where a pixel leaves the same class more than once across the series, only one conversion is relevant, and it is the last one. The first occurrence is retained alongside as an audit attribute, because the peat pulse in step 2.2 needs it.</p><div class="ref">spec 1a</div></div>
+  <div class="c repo"><p>… the grassland class the pixel most recently left … whichever departure is the later. The last-wins rule matches; the first departure is not retained, so the spec's audit attribute has no counterpart.</p><div class="ref">methodology.md:128 · emit.py:286–291</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#c0322b">
+    <div class="id">E5</div>
+    <div class="gl">❌</div>
+    <div class="lbl">Disagree</div>
+  </div>
+  <div class="c spec"><p>Peat. Peatland presence from Xu et al. (2018), PEATMAP. … (The Global Forest Watch peat composite is a second-version input, not this one.)</p><div class="ref">spec 1a</div></div>
+  <div class="c repo"><p>Two static per-pixel attributes are also catalogued: a binary peatland flag and the IPCC climate domain. The flag is the Global Nature Watch peatlands layer — the composite the spec defers.</p><div class="ref">methodology.md:144 · datasets/gnw_global_peatlands.py</div></div>
+</div>
+  </div>
+</section><section>
+  <h2>Step 1b · Value sources<span class="mini"><span><b style="color:#1a7f45">✅</b>5</span><span><b style="color:#c0322b">❌</b>2</span><span><b style="color:#5a6b82">🛠️</b>2</span></span></h2>
+  <p class="blurb">The numbers the emissions are based on. Broadly aligned on the biomass side; the divergence is concentrated in the climate-zone map and everything keyed to it.</p>
+  <div class="grid">
+    <div class="hdr k">&nbsp;</div>
+    <div class="hdr">Emissions&nbsp;layer specification</div>
+    <div class="hdr">Cornerstone LUC — repo documentation &amp; code</div>
+    <div class="row">
+  <div class="k" style="--c:#1a7f45">
+    <div class="id">V1</div>
+    <div class="gl">✅</div>
+    <div class="lbl">Aligned</div>
+  </div>
+  <div class="c spec"><p>Forest Biomass. Above-ground biomass for the year 2000 (Harris et al.).</p><div class="ref">spec 1b</div></div>
+  <div class="c repo"><p>Above-ground biomass — Harris et al. (2021) for forests.</p><div class="ref">methodology.md:152</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#1a7f45">
+    <div class="id">V2</div>
+    <div class="gl">✅</div>
+    <div class="lbl">Aligned</div>
+  </div>
+  <div class="c spec"><p>Below-ground biomass (Huang et al.); where it is absent, below-ground biomass is taken as twenty-five per cent of above-ground biomass, the same fallback the Cornerstone proof of concept uses.</p><div class="ref">spec 1b</div></div>
+  <div class="c repo"><p>Root (below-ground) biomass — Huang et al. (2021), with a root-to-shoot-ratio fallback where Huang data is missing.</p><div class="ref">methodology.md:153 · emit.py:54–68</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#1a7f45">
+    <div class="id">V3</div>
+    <div class="gl">✅</div>
+    <div class="lbl">Aligned</div>
+  </div>
+  <div class="c spec"><p>Soil carbon. Soil organic carbon stock for the top thirty centimetres, from SoilGrids (ISRIC).</p><div class="ref">spec 1b</div></div>
+  <div class="c repo"><p>… the IPCC 2019 Tier 1 stock-change method (Vol 4, Ch 5) applied to the SoilGrids 0–30 cm stock.</p><div class="ref">methodology.md:160</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#c0322b">
+    <div class="id">V4</div>
+    <div class="gl">❌</div>
+    <div class="lbl">Disagree</div>
+  </div>
+  <div class="c spec"><p>Climate zone … The AdAstra climate-zone map (FAO Global Ecological Zones). It carries, per zone: the soil-carbon loss factors by crop group; the natural-grassland and pastureland biomass stocks; and peat drainage rates.</p><div class="ref">spec 1b</div></div>
+  <div class="c repo"><p>… the IPCC climate domain. Ten IPCC zones including tropical wet, moist, dry and montane — the spec's map collapses tropical moist and wet into one.</p><div class="ref">methodology.md:144 · datasets/ipcc_climate_zones.py</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#5a6b82">
+    <div class="id">V5</div>
+    <div class="gl">🛠️</div>
+    <div class="lbl">Unbuilt</div>
+  </div>
+  <div class="c spec"><p>Woody top-up. Country-level woody biomass carbon (CTrees), added to the climate-zone pastureland stock. It is not in the climate-zone map and is joined by country.</p><div class="ref">spec 1b</div></div>
+  <div class="c repo"><p>… a climate-domain lookup derived from the BLUE bookkeeping model (Hansis et al., 2015) for grassland/shrubland. No country-level woody term exists.</p><div class="ref">methodology.md:152 · emit.py:114–125</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#1a7f45">
+    <div class="id">V6</div>
+    <div class="gl">✅</div>
+    <div class="lbl">Aligned</div>
+  </div>
+  <div class="c spec"><p>Dead organic matter. Dead wood and litter as fractions of above-ground biomass, by climate zone, following the Cornerstone proof of concept (CDM AR-TOOL-12).</p><div class="ref">spec 1b</div></div>
+  <div class="c repo"><p>Dead organic matter (dead wood + litter) — forests only, estimated as a fraction of above-ground biomass following UNFCCC CDM AR-TOOL-12.</p><div class="ref">methodology.md:154 · emit.py:71–95</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#c0322b">
+    <div class="id">V7</div>
+    <div class="gl">❌</div>
+    <div class="lbl">Disagree</div>
+  </div>
+  <div class="c spec"><p>Peat emission factors. Emission factors per climate zone and land use, with the split into carbon dioxide, methane and nitrous oxide, from Orbae Methodology v2.3 (IPCC 2013 Wetlands Supplement, Tier 1).</p><div class="ref">spec 1b</div></div>
+  <div class="c repo"><p>The same IPCC table is tabulated in the supplement by zone and land use — but it is used to <i>derive</i> two flat cross-zone parameters, not carried as a keyed lookup. See M6.</p><div class="ref">peatland_methodology_supplement.md:57–67</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#5a6b82">
+    <div class="id">V8</div>
+    <div class="gl">🛠️</div>
+    <div class="lbl">Unbuilt</div>
+  </div>
+  <div class="c spec"><p>Gas shares. Regional contribution shares of carbon dioxide, methane and nitrous oxide in land-conversion emissions, from Fitts et al. (2025).</p><div class="ref">spec 1b</div></div>
+  <div class="c repo"><p>No counterpart. The repo docs describe no gas disaggregation.</p></div>
+</div><div class="row">
+  <div class="k" style="--c:#1a7f45">
+    <div class="id">V9</div>
+    <div class="gl">✅</div>
+    <div class="lbl">Aligned</div>
+  </div>
+  <div class="c spec"><p>Pixel area. Computed from latitude, not assumed constant.</p><div class="ref">spec 1b</div></div>
+  <div class="c repo"><p>… scaled by pixel area — computed per row from the latitude cosine and published as <code>hectares-per-pixel</code>.</p><div class="ref">methodology.md:167 · emit.py:509–532</div></div>
+</div>
+  </div>
+</section><section>
+  <h2>Step 2.1 · Conversion event<span class="mini"><span><b style="color:#1a7f45">✅</b>2</span><span><b style="color:#c0322b">❌</b>3</span></span></h2>
+  <p class="blurb">Reducing candidates to one event per pixel. The single largest architectural divergence sits in this step, and everything downstream inherits it.</p>
+  <div class="grid">
+    <div class="hdr k">&nbsp;</div>
+    <div class="hdr">Emissions&nbsp;layer specification</div>
+    <div class="hdr">Cornerstone LUC — repo documentation &amp; code</div>
+    <div class="row">
+  <div class="k" style="--c:#1a7f45">
+    <div class="id">C1</div>
+    <div class="gl">✅</div>
+    <div class="lbl">Aligned</div>
+  </div>
+  <div class="c spec"><p>Reduces the candidates from step 1a to exactly one conversion event per pixel.</p><div class="ref">spec 2.1</div></div>
+  <div class="c repo"><p>Source and destination together name one of five conversions … at most one mask holds a pixel, so the sum is that pixel's one member.</p><div class="ref">methodology.md:132 · emit.py:364–376</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#1a7f45">
+    <div class="id">C2</div>
+    <div class="gl">✅</div>
+    <div class="lbl">Aligned</div>
+  </div>
+  <div class="c spec"><p>By materiality, not by date. Forest outranks natural grassland, which outranks pasture. A forest loss in 2020 therefore wins over a grassland loss in 2008 on the same pixel.</p><div class="ref">spec 2.1</div></div>
+  <div class="c repo"><p>A tree-cover loss outranks a grassland departure, so a pixel that lost forest is never also charged grassland carbon.</p><div class="ref">methodology.md:128 · emit.py:349</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#c0322b">
+    <div class="id">C3</div>
+    <div class="gl">❌</div>
+    <div class="lbl">Disagree</div>
+  </div>
+  <div class="c spec"><p>Likewise, a natural grassland loss in 2005 therefore wins over a pastureland loss in 2012.</p><div class="ref">spec 2.1</div></div>
+  <div class="c repo"><p>… whichever departure is the later. Rangeland and pasture are separated <b>by date</b>, not by materiality — the repo docs state the rule only in this clause and nowhere discuss it as a choice.</p><div class="ref">methodology.md:128 · emit.py:349–350</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#c0322b">
+    <div class="id">C4</div>
+    <div class="gl">❌</div>
+    <div class="lbl">Disagree</div>
+  </div>
+  <div class="c spec"><p>No destination class is read at this point. What the land became is not part of the event.</p><div class="ref">spec 2.1</div></div>
+  <div class="c repo"><p>A pixel's destination is read at the assessment year alone, against three layers in a fixed order … cropland outranks pasture, so the resolved destinations are disjoint.</p><div class="ref">methodology.md:130 · emit.py:353–376</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#c0322b">
+    <div class="id">C5</div>
+    <div class="gl">❌</div>
+    <div class="lbl">Disagree</div>
+  </div>
+  <div class="c spec"><p>Output. Per pixel: which ecosystem was converted, the conversion year, how many candidates the pixel had, and whether the cascade had to be applied. The candidate count and the cascade flag stay in the layer so that every choice can be audited afterwards.</p><div class="ref">spec 2.1</div></div>
+  <div class="c repo"><p>… <code>conversion</code>, <code>conversion-year</code> and <code>destination-dataset</code> are published. Candidate count and cascade flag are not, and the source class is unrecoverable where no destination resolved.</p><div class="ref">emit.py:707–711</div></div>
+</div>
+  </div>
+</section><section>
+  <h2>Step 2.2 · Peat event and soil regime<span class="mini"><span><b style="color:#1a7f45">✅</b>1</span><span><b style="color:#c0322b">❌</b>4</span></span></h2>
+  <p class="blurb">The soil regime rule is one of the cleanest alignments in the document. The two peat cases are not.</p>
+  <div class="grid">
+    <div class="hdr k">&nbsp;</div>
+    <div class="hdr">Emissions&nbsp;layer specification</div>
+    <div class="hdr">Cornerstone LUC — repo documentation &amp; code</div>
+    <div class="row">
+  <div class="k" style="--c:#1a7f45">
+    <div class="id">G1</div>
+    <div class="gl">✅</div>
+    <div class="lbl">Aligned</div>
+  </div>
+  <div class="c spec"><p>Soil regime. Organic where peat is present, mineral everywhere else. This is a strict either-or: it decides which soil emissions step 3 computes, and the two are never both computed on the same pixel.</p><div class="ref">spec 2.2</div></div>
+  <div class="c repo"><p>… on peat the drainage pulse replaces that term rather than adding to it.</p><div class="ref">methodology.md:140 · emit.py:426–429</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#c0322b">
+    <div class="id">G2</div>
+    <div class="gl">❌</div>
+    <div class="lbl">Disagree</div>
+  </div>
+  <div class="c spec"><p>Peat with a conversion event … is dated by the first conversion year observed on the pixel — not by the step 2.1 event year. The drainage pulse fires once per pixel, ever.</p><div class="ref">spec 2.2</div></div>
+  <div class="c repo"><p>Fires once per pixel by construction, but dated by the step-2.1 event year. The first departure is not retained, so the spec's rule cannot be computed from the published layer.</p><div class="ref">emit.py:286–291, 389–396</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#c0322b">
+    <div class="id">G3</div>
+    <div class="gl">❌</div>
+    <div class="lbl">Disagree</div>
+  </div>
+  <div class="c spec"><p>Peat without a conversion event becomes peat occupation. It has no year and is treated as ongoing … all peat which can be occupied by a crop (and that includes both, peat with and peat without a conversion event) emits in the refined peat model.</p><div class="ref">spec 2.2</div></div>
+  <div class="c repo"><p>… a flat annual occupation emission that continues for as long as the peatland stays under cultivation. Occupation fires only where a destination resolved, so unclaimed peat emits nothing.</p><div class="ref">methodology.md:161 · emit.py:472–480, 681–686</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#c0322b">
+    <div class="id">G4</div>
+    <div class="gl">❌</div>
+    <div class="lbl">Disagree</div>
+  </div>
+  <div class="c spec"><p>No land cover data is consulted in this step. Whether occupied peat is in fact drained is a land-cover question, and therefore a detached filter in step 5, never part of creation.</p><div class="ref">spec 2.2</div></div>
+  <div class="c repo"><p>Not discussed. In code, occupation is gated on the resolved destination masks, which are land-cover derived by construction.</p><div class="ref">emit.py:681–686</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#c0322b">
+    <div class="id">G5</div>
+    <div class="gl">❌</div>
+    <div class="lbl">Disagree</div>
+  </div>
+  <div class="c spec"><p>Output. Soil regime, peat conversion year, the first conversion year, a flag marking pixels where the pulse year differs from the step 2.1 event year, and the peat occupation mask.</p><div class="ref">spec 2.2</div></div>
+  <div class="c repo"><p>None of these are published as bands. The peat flag is available upstream in the harmonized dataset; the regime itself is implicit in the soil term.</p><div class="ref">emit.py:707–731</div></div>
+</div>
+  </div>
+</section><section>
+  <h2>Step 3 · Emissions per event<span class="mini"><span><b style="color:#1a7f45">✅</b>5</span><span><b style="color:#c0322b">❌</b>3</span><span><b style="color:#5a6b82">🛠️</b>1</span></span></h2>
+  <p class="blurb">Converting each event into emissions. Strong agreement on the biomass model and on how conversion carbon is released; the divergence is in the soil and gas dimensions.</p>
+  <div class="grid">
+    <div class="hdr k">&nbsp;</div>
+    <div class="hdr">Emissions&nbsp;layer specification</div>
+    <div class="hdr">Cornerstone LUC — repo documentation &amp; code</div>
+    <div class="row">
+  <div class="k" style="--c:#1a7f45">
+    <div class="id">M1</div>
+    <div class="gl">✅</div>
+    <div class="lbl">Aligned</div>
+  </div>
+  <div class="c spec"><p>Converts each event into emissions, undiscounted, per pixel, per carbon pool and per gas. This is where the value sources from step 1b are attached.</p><div class="ref">spec 3</div></div>
+  <div class="c repo"><p>Each conversion releases the whole of its source stock: there is no destination stock to subtract, because the five conversions name the pools they release rather than differencing two land classes.</p><div class="ref">methodology.md:156 · emit.py:417–420</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#1a7f45">
+    <div class="id">M2</div>
+    <div class="gl">✅</div>
+    <div class="lbl">Aligned</div>
+  </div>
+  <div class="c spec"><p>Biomass. For forest: above-ground plus below-ground biomass carbon on the pixel. For natural grassland: the climate-zone natural-grassland stock plus the country woody top-up. For pasture: the climate-zone pastureland stock.</p><div class="ref">spec 3</div></div>
+  <div class="c repo"><p>Forest conversions differentiate all three vegetation pools; rangeland and pasture use a single combined vegetation-carbon value. (Rangeland and pasture share one value here; the spec separates them — see V5.)</p><div class="ref">methodology.md:156 · emit.py:445–446</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#1a7f45">
+    <div class="id">M3</div>
+    <div class="gl">✅</div>
+    <div class="lbl">Aligned</div>
+  </div>
+  <div class="c spec"><p>Dead organic matter. Forest only. Dead wood and litter as climate-zone fractions of above-ground biomass.</p><div class="ref">spec 3</div></div>
+  <div class="c repo"><p>… forests only … IPCC Tier 1 treats non-forest dead organic matter as zero, so it is excluded for grassland/shrubland.</p><div class="ref">methodology.md:154</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#c0322b">
+    <div class="id">M4</div>
+    <div class="gl">❌</div>
+    <div class="lbl">Disagree</div>
+  </div>
+  <div class="c spec"><p>Mineral soil organic carbon … Because the destination is not known, this is computed in three parallel variants — annual crops, perennial crops, rice, pasture, forestry — which are carried side by side and never collapsed.</p><div class="ref">spec 3</div></div>
+  <div class="c repo"><p>… using land-use-change factors keyed on the destination and climate domain. One resolved variant, not several. A pasture destination leaves the soil at its grassland reference state, so its land-use and management factors are both 1.0 and the mineral term is accounted and zero rather than absent.</p><div class="ref">methodology.md:160 · emit.py:426–431</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#1a7f45">
+    <div class="id">M5</div>
+    <div class="gl">✅</div>
+    <div class="lbl">Aligned</div>
+  </div>
+  <div class="c spec"><p>Peat conversion pulse. 621 tonnes of carbon dioxide equivalent per hectare, taken from the Cornerstone proof of concept. Organic soil only, and only where a conversion event exists.</p><div class="ref">spec 3</div></div>
+  <div class="c repo"><p>… we set P_LUC by least-squares fit of the GHGP linear ramp to the all-GHG reference curve over years 1 to 20, with E_LM fixed from the previous step. That comes to 621 t CO₂ ha⁻¹.</p><div class="ref">peatland_methodology_supplement.md:160 · emit.py:404</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#c0322b">
+    <div class="id">M6</div>
+    <div class="gl">❌</div>
+    <div class="lbl">Disagree</div>
+  </div>
+  <div class="c spec"><p>Peat occupation. 37.3 … flat, taken from the Cornerstone proof of concept … It applies to every organic-soil pixel, whether or not a conversion was observed there. It carries no climate-zone or land-use dimension, because Cornerstone's value has none.</p><div class="ref">spec 3</div></div>
+  <div class="c repo"><p>First we set E_LM equal to the steady-state of the all-GHG reference curve: the CO₂ floor plus the long-run non-CO₂ asymptote (temperate cropland value). The flatness is argued, not absent: the tropical plantations are under 10 years at median. In contrast, the temperate and boreal peatlands are decades to centuries old … it must be parsed out for time-dependent models.</p><div class="ref">peatland_methodology_supplement.md:158, 68 · emit.py:470</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#1a7f45">
+    <div class="id">M7</div>
+    <div class="gl">✅</div>
+    <div class="lbl">Aligned</div>
+  </div>
+  <div class="c spec"><p>The two peat terms are additive, not alternatives. A converted peat pixel carries both: the occupation flux because the soil is drained, and the pulse because the drainage happened.</p><div class="ref">spec 3</div></div>
+  <div class="c repo"><p>The per-pixel result is a discounted sum of span conversion emissions plus the current year's peatland occupation emissions.</p><div class="ref">methodology.md:167 · emit.py:687–692</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#5a6b82">
+    <div class="id">M8</div>
+    <div class="gl">🛠️</div>
+    <div class="lbl">Unbuilt</div>
+  </div>
+  <div class="c spec"><p>For the non-peat pools, the carbon released is expanded into the three gases using the regional shares of Fitts et al. (2025). Methane is partitioned out of the released carbon, so the carbon mass balance closes exactly.</p><div class="ref">spec 3</div></div>
+  <div class="c repo"><p>No counterpart in the repo docs or code. Everything is tCO₂e from the point of release onward.</p></div>
+</div><div class="row">
+  <div class="k" style="--c:#c0322b">
+    <div class="id">M9</div>
+    <div class="gl">❌</div>
+    <div class="lbl">Disagree</div>
+  </div>
+  <div class="c spec"><p>Global warming potentials. AR5, hundred-year: methane 28, nitrous oxide 265, per Orbae Methodology v2.3.</p><div class="ref">spec 3</div></div>
+  <div class="c repo"><p>All values in t CO₂-eq ha⁻¹ yr⁻¹, converted from t C using × 3.667, and using AR6 GWP values.</p><div class="ref">peatland_methodology_supplement.md:67</div></div>
+</div>
+  </div>
+</section><section>
+  <h2>Step 4 · Reference year<span class="mini"><span><b style="color:#1a7f45">✅</b>1</span><span><b style="color:#b07d00">🤝</b>1</span><span><b style="color:#c2610a">◐</b>1</span><span><b style="color:#c0322b">❌</b>1</span><span><b style="color:#5a6b82">🛠️</b>1</span></span></h2>
+  <p class="blurb">Placing emissions in a reference year. This step is split across a stage boundary in the repo, which is why parts of it are already convergent and parts are not reachable at all.</p>
+  <div class="grid">
+    <div class="hdr k">&nbsp;</div>
+    <div class="hdr">Emissions&nbsp;layer specification</div>
+    <div class="hdr">Cornerstone LUC — repo documentation &amp; code</div>
+    <div class="row">
+  <div class="k" style="--c:#c2610a">
+    <div class="id">Y1</div>
+    <div class="gl">◐</div>
+    <div class="lbl">Partial</div>
+  </div>
+  <div class="c spec"><p>Years since conversion is the reference year minus the conversion year. A pixel is in the window if that difference is between zero and nineteen.</p><div class="ref">spec 4</div></div>
+  <div class="c repo"><p>… the 20-year linearly-discounted lookback prescribed by the GHGP Land Sector and Removals Standard (§7.2.1). Same window; but it is applied at detection, so events outside it are never recorded.</p><div class="ref">methodology.md:165 · emit.py:204–207</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#b07d00">
+    <div class="id">Y2</div>
+    <div class="gl">🤝</div>
+    <div class="lbl">Convergent</div>
+  </div>
+  <div class="c spec"><p>Linear. The weight is twenty minus the years since conversion, divided by 210. Recent conversions weigh most, and the weights sum to exactly one across the twenty years — no carbon is created or destroyed.</p><div class="ref">spec 4</div></div>
+  <div class="c repo"><p>… the GHGP's per-year weights are aggregated into one weight per span as the unbiased mean of that span's candidate conversion years. Both conserve mass. The constants are in fact the interval <i>midpoint</i>, not the mean — the doc misdescribes its own code.</p><div class="ref">methodology.md:165 · emit.py:187–194</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#5a6b82">
+    <div class="id">Y3</div>
+    <div class="gl">🛠️</div>
+    <div class="lbl">Unbuilt</div>
+  </div>
+  <div class="c spec"><p>Three amortisation variants are computed and kept side by side, so the choice stays an output setting and not a baked-in assumption: Linear · Equal · None.</p><div class="ref">spec 4</div></div>
+  <div class="c repo"><p>Linear only. Because the per-span bands are published undiscounted, the other two are derivable downstream without recomputation.</p><div class="ref">emit.py:187–194, 694–730</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#c0322b">
+    <div class="id">Y4</div>
+    <div class="gl">❌</div>
+    <div class="lbl">Disagree</div>
+  </div>
+  <div class="c spec"><p>Events older than the window get a weight of zero. They stay in the layer, marked, rather than being removed.</p><div class="ref">spec 4</div></div>
+  <div class="c repo"><p>Not discussed. The lookback clips the input series before departure years are computed, so out-of-window events are never detected rather than detected and zero-weighted.</p><div class="ref">emit.py:312–323</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#1a7f45">
+    <div class="id">Y5</div>
+    <div class="gl">✅</div>
+    <div class="lbl">Aligned</div>
+  </div>
+  <div class="c spec"><p>Peat occupation is not amortised: it is an annual flow, and it enters the reference year at its full annual value.</p><div class="ref">spec 4</div></div>
+  <div class="c repo"><p>… a discounted sum of span conversion emissions <b>plus</b> the current year's peatland occupation emissions — occupation is added outside the discount.</p><div class="ref">methodology.md:167 · emit.py:687–692</div></div>
+</div>
+  </div>
+</section><section>
+  <h2>Steps 5 and 6 · Filters and export<span class="mini"><span><b style="color:#c2610a">◐</b>1</span><span><b style="color:#c0322b">❌</b>1</span><span><b style="color:#5a6b82">🛠️</b>3</span></span></h2>
+  <p class="blurb">The spec&#x27;s last two steps have the weakest counterpart in the repo: there is no filter layer, and export is per-stage rather than a single long-form product.</p>
+  <div class="grid">
+    <div class="hdr k">&nbsp;</div>
+    <div class="hdr">Emissions&nbsp;layer specification</div>
+    <div class="hdr">Cornerstone LUC — repo documentation &amp; code</div>
+    <div class="row">
+  <div class="k" style="--c:#c0322b">
+    <div class="id">F1</div>
+    <div class="gl">❌</div>
+    <div class="lbl">Disagree</div>
+  </div>
+  <div class="c spec"><p>Nothing, by itself. Each filter is a separate boolean layer, computed but never applied during creation. Applying them is a downstream choice, made explicitly and reversibly.</p><div class="ref">spec 5</div></div>
+  <div class="c repo"><p>No filter stage exists. Filtering happens twice — as the destination requirement inside creation, and as the crop mask inside each attribution leg, differently in each.</p><div class="ref">attribute.py:1–8 · jurisdictional_direct.py:81–93</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#5a6b82">
+    <div class="id">F2</div>
+    <div class="gl">🛠️</div>
+    <div class="lbl">Unbuilt</div>
+  </div>
+  <div class="c spec"><p>The filters currently defined: loss on pixels below the ten per cent canopy threshold; and pixels that leave the same class more than once.</p><div class="ref">spec 5</div></div>
+  <div class="c repo"><p>Neither is computable today: the canopy threshold needs a band that is not ingested (E2), the repeat-departure flag needs a first-departure year that is not retained (E4).</p><div class="ref">datasets/gnw_tcl.py:32 · emit.py:286–291</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#5a6b82">
+    <div class="id">X1</div>
+    <div class="gl">🛠️</div>
+    <div class="lbl">Unbuilt</div>
+  </div>
+  <div class="c spec"><p>Writes the layer out in long form, one row per pixel: coordinates, converted ecosystem, conversion year, soil regime, the three peat masks … every pool-by-gas value … every filter flag unapplied, and the version stamp of every input that contributed.</p><div class="ref">spec 6</div></div>
+  <div class="c repo"><p>Per-tile zarr from <code>emit</code>, per-(jurisdiction, crop) parquet from <code>attribute</code> and <code>trace</code>. No long form, no h3, no per-pixel export product.</p><div class="ref">emit.py:592–609 · architecture.md:67</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#c2610a">
+    <div class="id">X2</div>
+    <div class="gl">◐</div>
+    <div class="lbl">Partial</div>
+  </div>
+  <div class="c spec"><p>… the version stamp of every input that contributed.</p><div class="ref">spec 6</div></div>
+  <div class="c repo"><p>Each ingested COG carries metadata tags (<code>watershed-data-version</code>, <code>watershed-processing-version</code> = git SHA, …). Real provenance, but it stops at ingest and is not propagated into the emitted bands.</p><div class="ref">architecture.md:119</div></div>
+</div><div class="row">
+  <div class="k" style="--c:#5a6b82">
+    <div class="id">X3</div>
+    <div class="gl">🛠️</div>
+    <div class="lbl">Unbuilt</div>
+  </div>
+  <div class="c spec"><p>One result, several delivery formats. The layer is computed once in a particular format (pixel or h3 cells); the cloud-optimized GeoTIFF, Zarr and hexagon-table deliverables are all exports of that same result. Exports only re-grid and subset — they never recompute.</p><div class="ref">spec §2</div></div>
+  <div class="c repo"><p>Zarr on the GLAD grid throughout, parquet at rollup. No h3 anywhere in the repo.</p><div class="ref">architecture.md:67–77</div></div>
+</div>
+  </div>
+</section>
+</body></html>

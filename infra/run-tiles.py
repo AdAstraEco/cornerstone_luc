@@ -1,4 +1,4 @@
-"""cornerstone (docs/cornerstone-k8s.md): fan tiles out as one k8s Job per tile (approach B).
+"""cornerstone (docs/orbae/cornerstone-k8s.md): fan tiles out as one k8s Job per tile (approach B).
 
 Resolves the 10-degree tiles a set of countries' boundaries touch, then submits one k8s
 Job per tile to the target namespace by rendering ``infra/k8s/tile-job.yaml``. The cluster

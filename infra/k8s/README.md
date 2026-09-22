@@ -1,6 +1,6 @@
 # Spike deploy notes
 
-Operational companion to [`docs/cornerstone-k8s.md`](../../docs/cornerstone-k8s.md). **Nothing here has been applied.** Everything targets one namespace of a nonprod-shared GKE cluster and uses only namespace-level privileges. The unit of work is **one k8s Job per tile** (approach B) — no dask scheduler, no change to `jdluc`.
+Operational companion to [`docs/orbae/cornerstone-k8s.md`](../../docs/orbae/cornerstone-k8s.md). **Nothing here has been applied.** Everything targets one namespace of a nonprod-shared GKE cluster and uses only namespace-level privileges. The unit of work is **one k8s Job per tile** (approach B) — no dask scheduler, no change to `jdluc`.
 
 ## Infra config
 
@@ -46,7 +46,7 @@ source infra/cluster.env
 uv run python infra/run-tiles.py HND --dry-run
 
 # M1 -- one real tile end-to-end. Submit the single-tile stage, then diff its output zarr
-# against a known-good local run (see docs/cornerstone-k8s.md for the correctness check).
+# against a known-good local run (see docs/orbae/cornerstone-k8s.md for the correctness check).
 uv run python infra/run-tiles.py HND --stage harmonize
 
 # M2 -- submit every tile HND touches; the node pool autoscales to run them concurrently.

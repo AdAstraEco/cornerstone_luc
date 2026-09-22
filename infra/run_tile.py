@@ -1,4 +1,4 @@
-"""cornerstone (docs/cornerstone-k8s.md): run ONE stage for ONE tile, in one pod.
+"""cornerstone (docs/orbae/cornerstone-k8s.md): run ONE stage for ONE tile, in one pod.
 
 This is the entire per-tile unit of work for the Job-per-tile fanout (approach B).
 The k8s Job (infra/k8s/tile-job.yaml) sets this as its command with a tile id; the pod

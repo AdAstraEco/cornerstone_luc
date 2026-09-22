@@ -1,4 +1,4 @@
-# cornerstone image (docs/cornerstone-k8s.md): the jdluc pipeline, runnable one-tile-per-pod.
+# cornerstone image (docs/orbae/cornerstone-k8s.md): the jdluc pipeline, runnable one-tile-per-pod.
 #
 # Approach B (one k8s Job per tile) runs the real stage unchanged inside the pod, so this
 # image just needs the resolved jdluc environment. We build from uv.lock so the image is
