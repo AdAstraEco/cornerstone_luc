@@ -14,8 +14,8 @@ flowchart LR
   NJ -->|"§4: ratios, roll-ups<br/>+ metadata, static values"| LJ["legacy jdLUC"]
 ```
 
-**Scope.** Out of scope for now: forecasting, backcasting, palm, the jdLUC proxy (CropGrids allocation), and all
-annualised (per-year) columns. Only the annualized-cascade + climate-zone pathway is considered. The legacy residual
+**Scope.** Out of scope for now: forecasting, backcasting, palm, and the jdLUC proxy (CropGrids allocation).
+Annual (per-year) columns are treated separately in §4. Only the annualized-cascade + climate-zone pathway is considered. The legacy residual
 chain and the scalar path are excluded.
 
 ## 1 · Decisions on the emissions data model
@@ -28,7 +28,7 @@ chain and the scalar path are excluded.
 | 1.4 | "most significant" event | A fixed priority, TCL > natural grassland > cultivated grassland (`calculators/pipeline.py:93`). It is conservative: in a conflict it takes the likely-highest-emitting event. |
 | 1.5 | `crop_present` | Stays **bool**. Crop-specific processing (probability → bool, exclusions, composite masks) sits behind this interface. |
 | 1.6 | harvests per year | Folded into `yield` in crop data. It can be carried as metadata if a user needs it. |
-| 1.7 | **layer 2 additions** | Copy the **y-20 cropland bit** (or the whole y-20 bitmask) and **`is_peat`** through from layer 1, so that jdLUC never reads layer 1. |
+| 1.7 | **layer 2 additions** | Copy the **y-20 cropland bit** (or the whole y-20 bitmask) and **`is_peat`** through from layer 1, so that jdLUC never reads layer 1. Add **`conversion-year`** too if the annual columns in §4 are kept. |
 | 1.8 | layer 2 coverage | Layer 2 holds "potential emissions *if* the crop occupies this pixel" for **every** pixel. The crop and baseline gates are applied in jdLUC. |
 
 Still open:
@@ -116,14 +116,37 @@ Legacy rows exist at ADM3, ADM2, ADM1 and country level. Common rules:
 If 2b and 2c are both dropped, new jdLUC needs only layer 2 as specified (plus the §1.7 additions), crop data and
 admin boundaries.
 
-## 4 · Deferred
+## 4 · Annual columns
+
+**What applies to all of them**
+
+- **Same sum, split by year.** Each annual family is the corresponding core sum, split by conversion year
+  (`ref−19 … ref`), and added to the same one-row-per-ADM3 file as 20 columns `…_year_YYYY`.
+- **One new layer-2 field.** Layer 2 needs **`conversion-year`** copied through from layer 1. Layer 2 as specified
+  uses it only inside the linear weight and doesn't expose it.
+- **No new values otherwise.** Each pixel has one conversion year, so splitting by year needs no new values; the one
+  exception is the undiscounted family, which needs the §2c variant.
+- **Mapping to legacy.** Legacy per-kg annual columns = the per-year extensive value ÷ production. Roll-up is still
+  a sum. The core totals equal the sums of their families, so they become redundant (they are kept for legibility).
+
+Consumers were checked in maverick `main` only. External readers of the output files are unknown.
+
+| # | legacy family (× 20 years) | new jdLUC family: value × gate | sources | consumers in maverick | rec. |
+|---|---|---|---|---|---|
+| 1 | `annual_forest_loss_(crop_related)_year_X` | `forest_conversion_ha_year_X`: 1 × (`E` ∧ forest) | L2 source + conversion-year; crop data | `DeforestationYear` import (`database_import/deforestation_import.py`): cumulative loss, deforestation footprint, deforestation-free volume. Validation: crop-related forest conversion ≥ Σ annual (`jdluc_validation.py:371`). | **keep** |
+| 2 | `forest_luc_ghg_per_ha_year_X` (What-If: undiscounted kg CO2e per ha of crop) | `forest_emissions_t_year_X`: L2 undiscounted forest biomass + mineral soil × (`E` ∧ forest); ÷ `crop_area_ha` at output | as #1, plus §2c undiscounted (forest only, one combined column) | What-If module via `LucGHGYear` import (`database_import/luc_ghg_year_import.py`) | **keep** |
+| 3 | `{forest,native,pasture}_luc_ghg_{biomass,soil}_year_X_dep` (6 families, amortised kg/kg) | `{s}_{pool}_amort_t_year_X`: L2 amortised pool × (`E` ∧ source); ÷ production at output | L2 source + conversion-year + amortised values; crop data | only the temporary What-If demo command (`adastra_admin/management/commands/import_luc_ghg_year_data.py`), which back-calculates what #2 now provides directly | skip |
+| 4 | `annual_{natural,cultivated}_grassland_loss_year_X` | `{s}_conversion_ha_year_X`: 1 × (`E` ∧ source) | L2 source + conversion-year; crop data | none found | skip |
+| 5 | `total_annual_forest_loss_year_X` | `forest_conversion_total_ha_year_X`: 1 × forest (all land) | L2 source + conversion-year | none found | skip |
+| — | `forest_luc_ghg_{biomass,soil}_year_X_depeq` | — | — | computed and aggregated but not published (`col_to_retrieve`) | n/a |
+
+Keeping #1 and #2 costs 40 columns plus `conversion-year` in layer 2. It also pulls a forest-only slice of §2c into
+scope. #2 is the only undiscounted value that has a regular consumer.
+
+## 5 · Deferred
 
 Notes for when these come back into scope:
 
-- **Annualised columns.** Legacy publishes per-year crop-related and total forest-loss area, per-year grassland
-  areas, and per-year amortised biomass/soil per kg for all three sources (`AttributeClass.py:1549`). All of these are
-  pixel sums grouped by conversion year. They need the year as a column family in new jdLUC, plus undiscounted or
-  per-scheme values per year.
 - **Forecasting and backcasting.** Forecasting runs on undiscounted per-year ADM3 series before amortisation, so a
   forecast new jdLUC needs the annualised columns first. Cell-level backcasting needs loss events *after* the
   reference year, which are outside layer 1's window; it belongs in `crop_present` pre-processing. Admin-level
