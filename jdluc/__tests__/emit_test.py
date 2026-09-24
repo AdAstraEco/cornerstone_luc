@@ -1,5 +1,6 @@
 import collections
 import collections.abc
+import dataclasses
 
 import numpy
 import pytest
@@ -30,6 +31,7 @@ from jdluc.emit import (
     Conversion,
     ConversionEmissions,
     ConversionRecord,
+    ConversionSource,
     DestinationDataset,
     EmissionComponent,
     SpanType,
@@ -42,6 +44,7 @@ from jdluc.emit import (
     get_grassland_carbon,
     get_hectares_per_pixel,
     get_last_departure_year,
+    get_layer1,
     get_linear_discounted_total,
     get_mineral_soil_emissions,
     get_peatland_occupation_emissions,
@@ -141,6 +144,17 @@ MINERAL_SOIL_TCO2E_PER_HA = (
 )
 
 
+CONVERSION_TO_SOURCE: dict[Conversion, ConversionSource] = {
+    Conversion.NONE: ConversionSource.NONE,
+    Conversion.FOREST_TO_CROPLAND: ConversionSource.FOREST,
+    Conversion.FOREST_TO_PASTURE: ConversionSource.FOREST,
+    Conversion.RANGELAND_TO_CROPLAND: ConversionSource.NATURAL_GRASSLAND,
+    Conversion.RANGELAND_TO_PASTURE: ConversionSource.NATURAL_GRASSLAND,
+    Conversion.PASTURE_TO_CROPLAND: ConversionSource.PASTURE,
+}
+assert set(CONVERSION_TO_SOURCE) == set(Conversion)
+
+
 def get_record_for(conversion: Conversion, width: int = 1) -> ConversionRecord:
     """A record holding one conversion, with its halves read off the axis tuples.
 
@@ -174,6 +188,7 @@ def get_record_for(conversion: Conversion, width: int = 1) -> ConversionRecord:
         ),
         from_forest=mask(FROM_FOREST),
         from_grassland=mask(FROM_GRASSLAND),
+        source=get_darray_for_data(data=[[CONVERSION_TO_SOURCE[conversion]] * width]),
         to_cropland=mask(to_cropland),
         to_pasture=mask(to_pasture),
         year=get_darray_for_data(data=[[ASSESSMENT_YEAR] * width]),
@@ -212,6 +227,11 @@ def test_a_half_resolved_pixel_is_charged_nothing() -> None:
             destination_dataset=get_darray_for_data(data=[[0]]),
             from_forest=mask(from_forest),
             from_grassland=mask(False),
+            source=get_darray_for_data(
+                data=[
+                    [ConversionSource.FOREST if from_forest else ConversionSource.NONE]
+                ]
+            ),
             to_cropland=mask(to_cropland),
             to_pasture=mask(False),
             year=get_darray_for_data(data=[[ASSESSMENT_YEAR]]),
@@ -1103,4 +1123,175 @@ def test_the_halves_a_conversion_record_resolves(
     )
     assert bool(result.from_forest) == from_forest
     assert bool(result.from_grassland) == from_grassland
+    # NB: the source is the same halves, read before any destination gates them
+    assert bool(result.source == ConversionSource.FOREST) == from_forest
+    assert (
+        bool(
+            result.source.isin(
+                (ConversionSource.NATURAL_GRASSLAND, ConversionSource.PASTURE)
+            )
+        )
+        == from_grassland
+    )
     assert bool(result.to_cropland | result.to_pasture) == has_destination
+
+
+@pytest.mark.parametrize(
+    ("grassland_by_year", "loss_year", "source"),
+    (
+        pytest.param(NO_GRASSLAND, 2012, ConversionSource.FOREST, id="forest loss"),
+        pytest.param(
+            [
+                Grassland.NATURAL if year <= 2011 else Grassland.OTHER
+                for year in LOOKBACK_YEARS_RANGE
+            ],
+            None,
+            ConversionSource.NATURAL_GRASSLAND,
+            id="natural grassland departed",
+        ),
+        pytest.param(
+            [
+                Grassland.CULTIVATED if year <= 2011 else Grassland.OTHER
+                for year in LOOKBACK_YEARS_RANGE
+            ],
+            None,
+            ConversionSource.PASTURE,
+            id="pasture departed, which layer 1 keeps apart from natural grassland",
+        ),
+        pytest.param(NO_GRASSLAND, None, ConversionSource.NONE, id="nothing departed"),
+    ),
+)
+def test_get_conversion_record_source(
+    grassland_by_year: list[float], loss_year: float | None, source: ConversionSource
+) -> None:
+    # No destination claims the pixel, so the conversion is NONE; the source is reported anyway
+    result = get_conversion_record(
+        dset=get_dset_for_one_pixel(
+            grassland_by_year=grassland_by_year,
+            is_cropland=False,
+            loss_year=loss_year,
+            planting_year=0,
+        )
+    )
+    assert result.conversion.data == [[Conversion.NONE]]
+    assert result.source.data == [[source]]
+
+
+def get_layer1_for(
+    conversion_record: ConversionRecord, is_peatland: bool = False
+) -> dict[str, xarray.DataArray]:
+    return get_layer1(
+        climate_zones=get_darray_for_data(data=[[Zone.TROPICAL_DRY.value]]),
+        conversion_record=conversion_record,
+        forest_carbon=get_darray_for_data(data=[[FOREST_TCARBON_PER_HA]]),
+        grassland_carbon=get_darray_for_data(data=[[GRASSLAND_TCARBON_PER_HA]]),
+        hectares_per_pixel=get_darray_for_data(data=[[1.0]]),
+        is_peatland=get_darray_for_data(data=[[is_peatland]]),
+        soil_organic_carbon=get_darray_for_data(data=[[SOIL_ORGANIC_CARBON]]),
+    )
+
+
+@pytest.mark.parametrize("is_peatland", (False, True))
+@pytest.mark.parametrize("conversion", tuple(Conversion))
+def test_layer1_reproduces_the_pools_a_fired_conversion_releases(
+    conversion: Conversion, is_peatland: bool
+) -> None:
+    """Where a conversion fired, the old pools are layer 1's with the destination applied.
+
+    Vegetation is layer 1's as it stands; soil is the peat pulse on peat, and otherwise the
+    mineral stock at risk scaled by the cropland loss fraction, or by zero for pasture.
+    """
+    record = get_record_for(conversion=conversion)
+    old = get_pools_for(conversion=conversion, is_peatland=is_peatland)
+    new = get_layer1_for(conversion_record=record, is_peatland=is_peatland)
+
+    assert new["l1-conversion-source"].data == [[CONVERSION_TO_SOURCE[conversion]]]
+    if conversion == Conversion.NONE:
+        return
+    numpy.testing.assert_allclose(
+        old.vegetation.data, new["l1-vegetation-emissions-undiscounted"].data
+    )
+    soil_loss_fraction = (
+        1 - CLIMATE_ZONE_TO_SOC_RETENTION_FRACTION[Zone.TROPICAL_DRY]
+        if bool(record.to_cropland)
+        else 0.0
+    )
+    numpy.testing.assert_allclose(
+        old.soil.data,
+        new["l1-peat-transformation-emissions-undiscounted"].data
+        + soil_loss_fraction * new["l1-mineral-soil-carbon-at-risk"].data,
+        rtol=1e-6,
+    )
+
+
+def test_layer1_charges_a_source_no_destination_claimed() -> None:
+    # The old bands charge this pixel nothing and report its vegetation as dropped; layer 1
+    # carries the whole of what is at risk, leaving the destination to layer 2
+    record = ConversionRecord(
+        conversion=get_darray_for_data(data=[[Conversion.NONE]]),
+        destination_dataset=get_darray_for_data(data=[[0]]),
+        from_forest=get_darray_for_data(data=[[True]]),
+        from_grassland=get_darray_for_data(data=[[False]]),
+        source=get_darray_for_data(data=[[ConversionSource.FOREST]]),
+        to_cropland=get_darray_for_data(data=[[False]]),
+        to_pasture=get_darray_for_data(data=[[False]]),
+        year=get_darray_for_data(data=[[2012]]),
+    )
+    result = get_layer1_for(conversion_record=record)
+    dropped = get_dropped_emissions(
+        forest_carbon=get_darray_for_data(data=[[FOREST_TCARBON_PER_HA]]),
+        from_forest=record.from_forest,
+        from_grassland=record.from_grassland,
+        grassland_carbon=get_darray_for_data(data=[[GRASSLAND_TCARBON_PER_HA]]),
+        has_destination=get_darray_for_data(data=[[False]]),
+    )
+    numpy.testing.assert_allclose(
+        result["l1-vegetation-emissions-undiscounted"].data, dropped.data
+    )
+    numpy.testing.assert_allclose(
+        result["l1-mineral-soil-carbon-at-risk"].data,
+        [[SOIL_ORGANIC_CARBON * CO2E_PER_CARBON]],
+    )
+    assert result["l1-conversion-year"].data == [[2012]]
+
+
+def test_layer1_without_a_source() -> None:
+    # `get_conversion_record` dates only pixels with a source, so the year here is contrived: layer
+    # 1 still reports none, and prices only the occupation potential of the peat underneath
+    record = dataclasses.replace(
+        get_record_for(conversion=Conversion.NONE),
+        year=get_darray_for_data(data=[[2012]]),
+    )
+    result = get_layer1_for(conversion_record=record, is_peatland=True)
+    assert result["l1-conversion-year"].data == [[0]]
+    for name in (
+        "l1-mineral-soil-carbon-at-risk",
+        "l1-peat-transformation-emissions-undiscounted",
+        "l1-vegetation-emissions-undiscounted",
+    ):
+        assert float(result[name].sum()) == 0.0, name
+    numpy.testing.assert_allclose(
+        result["l1-peat-occupation-emissions"].data,
+        [[PEATLAND_EMISSIONS_ANNUAL_TCO2E_PER_HA]],
+    )
+    assert numpy.isnan(result["l1-continent"].data).all()
+
+
+def test_layer1_names_its_units() -> None:
+    dset = get_dset_for_output(
+        name_to_darray=get_layer1_for(
+            conversion_record=get_record_for(conversion=Conversion.FOREST_TO_CROPLAND)
+        )
+    )
+    assert set(dset) == {
+        "l1-climate-zone",
+        "l1-continent",
+        "l1-conversion-source",
+        "l1-conversion-year",
+        "l1-destination-dataset",
+        "l1-hectares-per-pixel",
+        "l1-mineral-soil-carbon-at-risk:tco2e-per-ha",
+        "l1-peat-occupation-emissions:tco2e-per-ha-per-year",
+        "l1-peat-transformation-emissions-undiscounted:tco2e-per-ha",
+        "l1-vegetation-emissions-undiscounted:tco2e-per-ha",
+    }
