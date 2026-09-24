@@ -29,7 +29,7 @@ This makes the `cie-` bands the common input from which any destination- or crop
 
 ## Deriving the existing bands from CIE
 
-Every existing band can be computed from the `cie-` bands. The only extra inputs are two lookup tables already in `emit`: the soil loss fraction and the discount weights. Below, `ConversionSource` and `Conversion` refer to the band values in the table above.
+Every existing band can be computed from the `cie-` bands. `emit.derive_from_cie` does so, and `jurisdictional_direct` and `statistical` now read their emit inputs through it rather than from the existing bands. The only extra inputs are two lookup tables already in `emit`: the soil loss fraction and the discount weights. Below, `ConversionSource` and `Conversion` refer to the band values in the table above.
 
 **Destination.** Cropland outranks pasture:
 
@@ -57,7 +57,7 @@ Here `f` is the cropland soil loss fraction, 1 − retention (IPCC 2019, Vol 4, 
 - `emissions-per-hectare` = Σ<sub>span</sub> `w` × `emissions:{span}` + both occupation bands
 - `dropped-emissions` = Σ<sub>span</sub> `w` × `cie-vegetation-emissions-undiscounted`, where there is a source, the year is in the span, and neither `to_cropland` nor `to_pasture` holds
 
-The vegetation, soil and year identities are unit-tested in `jdluc/__tests__/emit_test.py` (`test_cie_*`). `tools/compare-emit-layers.py` checks the vegetation and year identities on a real tile. It also totals the old and new pools by source, and by whether a conversion fired, which shows how much carbon the CIE bands carry that the existing bands leave uncharged.
+The vegetation, soil and year identities are unit-tested in `jdluc/__tests__/emit_test.py` (`test_cie_*`), and `test_derive_from_cie_reproduces_every_band_it_replaces` checks every existing band against `derive_from_cie` on a grid covering each event, destination and soil case. `tools/compare-emit-layers.py` checks the vegetation and year identities on a real tile, and the largest difference between each existing band and its derived counterpart. It also totals the old and new pools by source, and by whether a conversion fired, which shows how much carbon the CIE bands carry that the existing bands leave uncharged.
 
 ## Encoding
 
