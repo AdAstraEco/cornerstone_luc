@@ -8,7 +8,7 @@ Returns a cached xarray.Dataset: the conversion, the year its source class ended
 that claimed its destination; vegetation, soil and total emissions per span; the two occupation
 bands; the discounted per-hectare total; the source carbon no destination claimed; and a
 hectares-per-pixel band for downstream area-scaling. Beside them, as a spike, the `cie-` bands carry
-Orbae Crop-Independent Emissions (CIE); see `get_crop_independent_emissions`.
+Crop-Independent Emissions (CIE); see `get_crop_independent_emissions`.
 
 Source carbon that no destination claimed is charged to nobody and reported on its own as
 `dropped-emissions`.
@@ -508,7 +508,7 @@ def get_crop_independent_emissions(
     is_peatland: xarray.DataArray,
     soil_organic_carbon: xarray.DataArray,
 ) -> dict[str, xarray.DataArray]:
-    """Orbae Crop-Independent Emissions (CIE), from `docs/orbae/orbae_emissions_data_model.md` §1.
+    """Crop-Independent Emissions (CIE); see `docs/crop_independent_emissions.md`.
 
     Gated on the source alone: no destination is asked, nothing is discounted, and no land-use
     factor is applied, so each pool is the stock the conversion puts at risk. Layer 2 applies the
