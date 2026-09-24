@@ -69,6 +69,8 @@ if 'class="mermaid"' in s:
     s = s.replace("</body>",
       '<script type="module">\n'
       'import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";\n'
+      'import elkLayouts from "https://cdn.jsdelivr.net/npm/@mermaid-js/layout-elk@0/dist/mermaid-layout-elk.esm.min.mjs";\n'
+      'mermaid.registerLayoutLoaders(elkLayouts);\n'
       'mermaid.initialize({startOnLoad:true,theme:"neutral"});\n'
       "</script>\n</body>")
 open(p, "w").write(s)
