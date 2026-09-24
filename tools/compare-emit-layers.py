@@ -1,10 +1,10 @@
-"""Contrast emit's existing bands with its `l1-` bands (Orbae layer 1) on one tile.
+"""Contrast emit's existing bands with its `cie-` bands (Crop-Independent Emissions) on one tile.
 
-Pixels are grouped by layer-1 conversion source and by whether the old record fired a conversion
+Pixels are grouped by CIE conversion source and by whether the old record fired a conversion
 (i.e. a destination claimed the pixel). For each group: pixel count, hectares, and the hectare-
-weighted totals of the old undiscounted pools (summed over spans) beside layer 1's. Where a
-conversion fired, the old vegetation must equal layer 1's and the year must match; the residuals
-are printed so any disagreement is visible. Where none fired, layer 1 carries emissions the old
+weighted totals of the old undiscounted pools (summed over spans) beside CIE's. Where a
+conversion fired, the old vegetation must equal CIE's and the year must match; the residuals
+are printed so any disagreement is visible. Where none fired, CIE carries emissions the old
 bands charge to nobody (and report, discounted, as `dropped-emissions`).
 
 Must run from the repo root, so Config finds .env.
@@ -29,14 +29,14 @@ TCO2E = "tco2e-per-ha"
 def get_rows_checks(
     dset: xarray.Dataset,
 ) -> tuple[list[dict[str, object]], dict[str, float]]:
-    source = dset["l1-conversion-source"]
+    source = dset["cie-conversion-source"]
     fired = dset["conversion"] != emit.Conversion.NONE
     ha = dset["hectares-per-pixel:ha"]
     old_vegetation = sum(dset[f"vegetation-emissions:{TCO2E}:{span}"] for span in SPANS)
     old_soil = sum(dset[f"soil-emissions:{TCO2E}:{span}"] for span in SPANS)
-    new_vegetation = dset[f"l1-vegetation-emissions-undiscounted:{TCO2E}"]
-    new_mineral = dset[f"l1-mineral-soil-carbon-at-risk:{TCO2E}"]
-    new_peat = dset[f"l1-peat-transformation-emissions-undiscounted:{TCO2E}"]
+    new_vegetation = dset[f"cie-vegetation-emissions-undiscounted:{TCO2E}"]
+    new_mineral = dset[f"cie-mineral-soil-carbon-at-risk:{TCO2E}"]
+    new_peat = dset[f"cie-peat-transformation-emissions-undiscounted:{TCO2E}"]
 
     lazy: list[dict[str, object]] = []
     for member in emit.ConversionSource:
@@ -49,22 +49,22 @@ def get_rows_checks(
                     "pixels": mask.sum(),
                     "ha": ha.where(mask).sum(),
                     "old veg t": (ha * old_vegetation).where(mask).sum(),
-                    "l1 veg t": (ha * new_vegetation).where(mask).sum(),
+                    "cie veg t": (ha * new_vegetation).where(mask).sum(),
                     "old soil t": (ha * old_soil).where(mask).sum(),
-                    "l1 mineral t": (ha * new_mineral).where(mask).sum(),
-                    "l1 peat t": (ha * new_peat).where(mask).sum(),
+                    "cie mineral t": (ha * new_mineral).where(mask).sum(),
+                    "cie peat t": (ha * new_peat).where(mask).sum(),
                 }
             )
     checks = {
-        "max |old veg - l1 veg| where fired": abs(old_vegetation - new_vegetation)
+        "max |old veg - cie veg| where fired": abs(old_vegetation - new_vegetation)
         .where(fired)
         .max(),
         "year mismatches where fired": (
-            dset["conversion-year"] != dset["l1-conversion-year"]
+            dset["conversion-year"] != dset["cie-conversion-year"]
         )
         .where(fired, other=False)
         .sum(),
-        "fired pixels with no l1 source": (
+        "fired pixels with no CIE source": (
             fired & (source == emit.ConversionSource.NONE)
         ).sum(),
     }

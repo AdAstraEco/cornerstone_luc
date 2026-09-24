@@ -7,8 +7,8 @@ peatland-occupation emissions split by destination, and applies the GHGP 20-year
 Returns a cached xarray.Dataset: the conversion, the year its source class ended and the datasets
 that claimed its destination; vegetation, soil and total emissions per span; the two occupation
 bands; the discounted per-hectare total; the source carbon no destination claimed; and a
-hectares-per-pixel band for downstream area-scaling. Beside them, as a spike, the `l1-` bands carry
-the Orbae non-crop-specific layer; see `get_layer1`.
+hectares-per-pixel band for downstream area-scaling. Beside them, as a spike, the `cie-` bands carry
+Orbae Crop-Independent Emissions (CIE); see `get_crop_independent_emissions`.
 
 Source carbon that no destination claimed is charged to nobody and reported on its own as
 `dropped-emissions`.
@@ -240,7 +240,7 @@ assert set(FROM_FOREST) ^ set(FROM_GRASSLAND) == frozenset(Conversion) - {
 
 @enum.unique
 class ConversionSource(enum.IntEnum):
-    """The class a pixel left, whatever -- if anything -- it became: layer 1's conversion source."""
+    """The class a pixel left, whatever -- if anything -- it became: CIE's conversion source."""
 
     NONE = 0
     FOREST = 1
@@ -315,7 +315,7 @@ class ConversionRecord:
     destination_dataset: xarray.DataArray
     from_forest: xarray.DataArray
     from_grassland: xarray.DataArray
-    # NB: the source alone, before any destination gates it -- what layer 1 reports
+    # NB: the source alone, before any destination gates it -- what CIE reports
     source: xarray.DataArray
     to_cropland: xarray.DataArray
     to_pasture: xarray.DataArray
@@ -499,7 +499,7 @@ def get_peatland_occupation_emissions(
     ).rename("tco2e-per-ha")
 
 
-def get_layer1(
+def get_crop_independent_emissions(
     climate_zones: xarray.DataArray,
     conversion_record: ConversionRecord,
     forest_carbon: xarray.DataArray,
@@ -508,7 +508,7 @@ def get_layer1(
     is_peatland: xarray.DataArray,
     soil_organic_carbon: xarray.DataArray,
 ) -> dict[str, xarray.DataArray]:
-    """The Orbae non-crop-specific emissions layer (`docs/orbae/orbae_emissions_data_model.md`).
+    """Orbae Crop-Independent Emissions (CIE), from `docs/orbae/orbae_emissions_data_model.md` §1.
 
     Gated on the source alone: no destination is asked, nothing is discounted, and no land-use
     factor is applied, so each pool is the stock the conversion puts at risk. Layer 2 applies the
@@ -519,19 +519,19 @@ def get_layer1(
     """
     has_source = conversion_record.source != ConversionSource.NONE
     return {
-        "l1-conversion-source": conversion_record.source,
-        "l1-conversion-year": conversion_record.year.where(has_source, other=0),
+        "cie-conversion-source": conversion_record.source,
+        "cie-conversion-year": conversion_record.year.where(has_source, other=0),
         # NB: peat replaces the mineral term, as it does in `get_conversion_emissions`
-        "l1-mineral-soil-carbon-at-risk": (
+        "cie-mineral-soil-carbon-at-risk": (
             CO2E_PER_CARBON * soil_organic_carbon.fillna(0)
         )
         .where(has_source & ~is_peatland, other=0)
         .rename("tco2e-per-ha"),
-        "l1-peat-transformation-emissions-undiscounted": (
+        "cie-peat-transformation-emissions-undiscounted": (
             PEATLAND_EMISSIONS_PULSE_TCO2E_PER_HA
             * (has_source & is_peatland).astype(numpy.float32)
         ).rename("tco2e-per-ha"),
-        "l1-vegetation-emissions-undiscounted": (
+        "cie-vegetation-emissions-undiscounted": (
             CO2E_PER_CARBON
             * (
                 forest_carbon.where(conversion_record.from_forest, other=0)
@@ -539,16 +539,16 @@ def get_layer1(
             )
         ).rename("tco2e-per-ha"),
         # NB: the potential, on all peat whether or not it was converted or is occupied
-        "l1-peat-occupation-emissions": (
+        "cie-peat-occupation-emissions": (
             PEATLAND_EMISSIONS_ANNUAL_TCO2E_PER_HA * is_peatland.astype(numpy.float32)
         ).rename("tco2e-per-ha-per-year"),
-        "l1-climate-zone": climate_zones.rename(None),
+        "cie-climate-zone": climate_zones.rename(None),
         # NB: no continent source yet, so the band is all null
-        "l1-continent": xarray.full_like(
+        "cie-continent": xarray.full_like(
             hectares_per_pixel, fill_value=numpy.nan, dtype=numpy.float32
         ).rename(None),
-        "l1-hectares-per-pixel": hectares_per_pixel,
-        "l1-destination-dataset": conversion_record.destination_dataset,
+        "cie-hectares-per-pixel": hectares_per_pixel,
+        "cie-destination-dataset": conversion_record.destination_dataset,
     }
 
 
@@ -778,9 +778,9 @@ def workflow(tile_id: str) -> xarray.Dataset:
         )
     ).rename("tco2e-per-ha")
 
-    logger.info("Assembling the non-crop-specific layer (Orbae layer 1)")
+    logger.info("Assembling the Crop-Independent Emissions (CIE)")
     hectares_per_pixel = get_hectares_per_pixel(darray=emissions_per_hectare)
-    layer1 = get_layer1(
+    cie = get_crop_independent_emissions(
         climate_zones=climate_zones,
         conversion_record=conversion_record,
         forest_carbon=forest_carbon,
@@ -816,7 +816,7 @@ def workflow(tile_id: str) -> xarray.Dataset:
             "hectares-per-pixel": hectares_per_pixel,
             "pastureland-peatland-occupation": pastureland_occupation_emissions,
         }
-        | layer1
+        | cie
     )
 
 
