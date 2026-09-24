@@ -20,6 +20,8 @@ flowchart TB
   %% emit rather than the "Repo today" box so it sits level with the alignment point: a
   %% node always lands one layer below whatever feeds it. Viewers without the ELK plugin
   %% fall back to dagre; the chart still renders, just with a looser layout.
+  %% Detail lines are the italic lines inside labels; tools/strip-mermaid-detail.py
+  %% removes them to produce the headings-only version.
 
   %% ───────────── Cornerstone inputs ─────────────
   src_stocks["`**Carbon stocks**
@@ -43,8 +45,10 @@ flowchart TB
   %% ───────────── Cornerstone pipeline ─────────────
   subgraph cornerstone["Cornerstone repo"]
     ingest["`**ingest**`"]
-    harmonize["`**harmonize**`"]
-    emit["`**emit**`"]
+    harmonize["`**harmonize**
+    *57 bands · 30 m · 10° tiles*`"]
+    emit["`**emit**
+    *conversion record + per-pixel emissions*`"]
     ingest --> harmonize --> emit
   end
   src_stocks --> ingest
@@ -54,18 +58,28 @@ flowchart TB
 
   %% ───────────── alignment point ─────────────
   subgraph align["⚠ ALIGNMENT POINT — to be clarified"]
-    emitout["`**Repo today: emit zarr**`"]
-    L1["`**Orbae: Layer 1 — non-crop-specific emissions layer**`"]
+    emitout["`**Repo today: emit zarr**
+    *20 bands · 5-yr spans · destination required*
+    *reference year baked in*`"]
+    L1["`**Orbae: Layer 1 — non-crop-specific emissions layer**
+    *one global layer per reference year*
+    *undiscounted stocks · no crop info · no destination gate*`"]
   end
   emit --> emitout
   emit -. proposed .-> L1
 
   %% ───────────── Orbae ─────────────
-  L2["`**Crop-specific derived emissions data**`"]
-  newjd["`**per-pixel jdLUC input data**`"]
-  annual["`**Annual Data Series**`"]
-  jdagg["`**jdLUC aggregation**`"]
-  statalloc["`**Statistical allocation**`"]
+  L2["`**Crop-specific derived emissions data**
+  *amortised · crop-specific FLU and peat factors*
+  *potential emissions if the crop occupies the pixel*`"]
+  newjd["`**per-pixel jdLUC input data**
+  *crop and baseline gates applied*`"]
+  annual["`**Annual Data Series**
+  *split by conversion year*`"]
+  jdagg["`**jdLUC aggregation**
+  *Σ over ADM3 · extensive values only*`"]
+  statalloc["`**Statistical allocation**
+  *ADM3 share × ADM3 totals*`"]
   L1 --> L2
   croplayer --> L2
   croplayer --> newjd
@@ -76,9 +90,12 @@ flowchart TB
 
   %% ───────────── Cornerstone downstream (right, de-emphasised) ─────────────
   src_mapspam["`MapSPAM`"]
-  downscale["`downscale`"]
-  attribute["`attribute`"]
-  trace["`trace`"]
+  downscale["`downscale
+  *MapSPAM ~10 km grid*`"]
+  attribute["`attribute
+  *admin × crop*`"]
+  trace["`trace
+  *EF in kgCO₂e / kg*`"]
   emit -->|statistical leg| downscale
   emit -->|direct leg| attribute
   src_mapspam --> downscale
@@ -86,10 +103,12 @@ flowchart TB
 
   %% ───────────── outputs ─────────────
   subgraph outputs["Outputs"]
-    legacyjd["`**legacy jdLUC**`"]
+    legacyjd["`**legacy jdLUC**
+    *ADM roll-up · ratios · % · per kg*`"]
     orbae_app["`**Orbae**`"]
     whatif["`**What If**`"]
-    L3["`**Emissions Layer**`"]
+    L3["`**Emissions Layer**
+    *total tCO₂e/ha · ha/px · crop_present*`"]
     proxy["`**jdLUC Proxy**`"]
     dluc["`**dLUC**`"]
   end
@@ -135,6 +154,9 @@ flowchart TB
 
 Green: Cornerstone repo stages. Light blue: Orbae data model intermediates. Dark blue:
 outputs. Grey dashed: external data sources. Amber: the two candidate outputs of `emit`, side by side.
+
+Italic lines inside boxes are detail. For a headings-only version, run
+`tools/strip-mermaid-detail.py docs/orbae/overall_data_flow.md` and render the result.
 
 ## Notes
 
