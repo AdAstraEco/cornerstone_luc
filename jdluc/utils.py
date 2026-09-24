@@ -87,7 +87,7 @@ def get_git_version(default_branch_name: str = "main") -> str:
         if branch_name == default_branch_name:
             return f"{branch_name:s}-{repo.head.commit.hexsha[:8]:s}"
         return branch_name
-    except Exception:
+    except Exception:  # noqa: BLE001 -- provenance tag must never break ingest
         return os.environ.get("JDLUC_GIT_VERSION", "unknown")
 
 
@@ -99,7 +99,7 @@ def get_git_remote_url(default_remote_name: str = "origin") -> str:
         repo = git.Repo(__file__, search_parent_directories=True)
         (remote,) = (r for r in repo.remotes if r.name == default_remote_name)
         return next(iter(remote.urls))
-    except Exception:
+    except Exception:  # noqa: BLE001 -- provenance tag must never break ingest
         return os.environ.get("JDLUC_GIT_REMOTE_URL", "unknown")
 
 

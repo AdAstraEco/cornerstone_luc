@@ -95,7 +95,7 @@ def get_dataset_names(methodology: attribute.Methodology) -> tuple[DatasetName, 
     """Every dataset a run of ``methodology`` reads."""
     return (
         *BOUNDARY_DATASET_NAMES,
-        *harmonize.LUC_AND_EMISSIONS_DATASET_NAMES,
+        *(name for stack in harmonize.Stack for name in stack.value),
         *(
             (*jurisdictional_direct.DATASET_NAMES, DatasetName.USDA_NASS_QUICKSTATS)
             if methodology == attribute.Methodology.JURISDICTIONAL_DIRECT
@@ -213,7 +213,6 @@ def run_compute(
     crop_names: tuple[str, ...],
     iso_3166s: collections.abc.Sequence[str],
     methodology: attribute.Methodology,
-    skip_glad_crop_filter: bool,
     skip_ingest: bool,
     tile_id: str,
 ) -> None:
@@ -225,14 +224,15 @@ def run_compute(
     ``skip_ingest=False`` and the cache key ignores the flag, so warming it here is what
     keeps source credentials off the compute pods.
     """
-    logger.info(f"harmonize {tile_id=:s}")
-    harmonize.workflow(
-        dataset_names=harmonize.LUC_AND_EMISSIONS_DATASET_NAMES,
-        ignore_missing_tiles=True,
-        skip_ingest=skip_ingest,
-        tile_id=tile_id,
-        tile_resolution=tiling.TileResolution.GLAD,
-    )
+    for stack in harmonize.Stack:
+        logger.info(f"harmonize {stack.name:s} {tile_id=:s}")
+        harmonize.workflow(
+            dataset_names=stack.value,
+            ignore_missing_tiles=True,
+            skip_ingest=skip_ingest,
+            tile_id=tile_id,
+            tile_resolution=tiling.TileResolution.GLAD,
+        )
     logger.info(f"emit {tile_id=:s}")
     emit.workflow(tile_id=tile_id)
 
@@ -248,7 +248,6 @@ def run_compute(
         workflow_for_tile(
             crop_names=crop_names,
             iso_3166=iso_3166,
-            skip_glad_crop_filter=skip_glad_crop_filter,
             tile_id=tile_id,
         )
 
@@ -257,25 +256,25 @@ def run_reduce(
     crop_names: tuple[str, ...],
     iso_3166s: collections.abc.Iterable[str],
     methodology: attribute.Methodology,
-    skip_glad_crop_filter: bool,
 ) -> None:
     """The AOI's cross-tile merge; ``trace.workflow`` drives ``attribute.workflow``.
 
-    Cheap *only* if the compute phase ran with the same methodology, crop names and
-    ``skip_glad_crop_filter``: those are cache-key arguments, so a mismatch silently
+    Cheap *only* if the compute phase ran with the same methodology and crop names: those
+    are cache-key arguments, so a mismatch silently
     recomputes every tile here, in one pod. The driver passes identical flags to both.
     """
     df = trace.workflow(
+        # NB: not a cache-key argument; the tiles are warm, so this only fans out the reads
+        concurrency=1,
         crop_names=crop_names,
         iso_3166s=tuple(sorted(iso_3166s)),
         methodology=methodology,
-        skip_glad_crop_filter=skip_glad_crop_filter,
     )
     logger.info(f"traced {len(df):d} (jurisdiction, crop) rows")
 
 
 def run_export(tile_id: str) -> None:
-    """Serialise this tile's ``emit`` scratch output to an emissions COG.
+    """Serialise this tile's ``emit`` scratch output to a CIE COG.
 
     Additive and terminal (docs/rooster-emissions-cog-spike.md): it reads ``emit``'s cached
     zarr -- warm after ``compute`` -- and writes one COG, with no recompute and no edits to any
@@ -338,7 +337,6 @@ def main() -> int:
         action="store_true",
         help="compute phase: read a pre-warmed INGEST_ROOT and never touch a source",
     )
-    parser.add_argument("--skip-glad-crop-filter", action="store_true")
     args = parser.parse_args()
 
     phase = Phase(args.phase)
@@ -384,7 +382,6 @@ def main() -> int:
                     crop_names=attribute.get_crop_names(methodology=methodology),
                     iso_3166s=iso_3166s,
                     methodology=methodology,
-                    skip_glad_crop_filter=args.skip_glad_crop_filter,
                     skip_ingest=args.skip_ingest,
                     tile_id=tile_id,
                 )
@@ -393,7 +390,6 @@ def main() -> int:
                     crop_names=attribute.get_crop_names(methodology=methodology),
                     iso_3166s=iso_3166s,
                     methodology=methodology,
-                    skip_glad_crop_filter=args.skip_glad_crop_filter,
                 )
             case Phase.EXPORT:
                 assert tile_id

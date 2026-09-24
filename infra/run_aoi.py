@@ -154,7 +154,8 @@ PHASE_TO_SPEC = {
     # multi-band COG out to scratch. Memory stays modest (dask writes in chunks), but disk is
     # the real constraint: cog_translate first writes an UNCOMPRESSED tiled intermediate (for
     # overviews + random-access windows) before compressing the final COG -- ~33 GB for a
-    # 5-band-float32 10-degree tile. So localtmp must comfortably exceed that; 100Gi leaves
+    # 5-band-float32 10-degree tile, so ~70 GB for the 11 cie- bands. localtmp must comfortably
+    # exceed that; 200Gi leaves
     # headroom and clears GDAL's disk precheck, which we keep ON as a fast-fail guard (better
     # to refuse up front than die at 97% mid-write). It's ephemeral (deleted with the pod), so
     # the headroom is essentially free. Needs only GCS access, not the source-API Secret, so it
@@ -162,11 +163,11 @@ PHASE_TO_SPEC = {
     run_phase.Phase.EXPORT: PhaseSpec(
         cpu_limit="4",
         cpu_request="2",
-        localtmp_size="100Gi",
+        localtmp_size="200Gi",
         memory_limit="24Gi",
         memory_request="8Gi",
         node_pool_var="NODE_POOL_REDUCE",
-        pod_deadline_seconds=2 * 3600,
+        pod_deadline_seconds=3 * 3600,
         secret_var="K8S_SECRET_COMPUTE",
     ),
     # One AOI-wide pod: reads each tile COG's header and writes a small union VRT -- no pixels
@@ -244,13 +245,11 @@ def get_phase_args(
     iso_3166s: list[str],
     methodology_name: str,
     phase: run_phase.Phase,
-    skip_glad_crop_filter: bool,
 ) -> list[str]:
     """The ``infra/run_phase.py`` argv for one phase.
 
-    ``--methodology-name`` and ``--skip-glad-crop-filter`` go to *every* phase that has a
-    cache key involving them, identically: they select which datasets ingest fetches and
-    they are cache-key arguments for the attribute legs, so compute and reduce disagreeing
+    ``--methodology-name`` goes to *every* phase, identically: it selects which datasets
+    ingest fetches and it is a cache-key argument for the attribute legs, so compute and reduce disagreeing
     would silently recompute the whole AOI in the reduce pod.
     """
     args = ["--phase", str(phase), "--methodology-name", methodology_name]
@@ -260,11 +259,6 @@ def get_phase_args(
         # The ingest phases have already warmed INGEST_ROOT, so compute never touches a
         # source -- which is what lets its pods run without the API-key Secret.
         args += ["--skip-ingest"]
-    if skip_glad_crop_filter and phase in (
-        run_phase.Phase.COMPUTE,
-        run_phase.Phase.REDUCE,
-    ):
-        args += ["--skip-glad-crop-filter"]
     return [*args, *iso_3166s]
 
 
@@ -440,7 +434,6 @@ def main() -> int:
         choices=sorted(e.name for e in attribute.Methodology),
         default=attribute.Methodology.STATISTICAL.name,
     )
-    parser.add_argument("--skip-glad-crop-filter", action="store_true")
     parser.add_argument(
         "--run-id",
         help="suffix that makes this run's Job names unique (default: UTC MMDDHHMM). "
@@ -489,7 +482,6 @@ def main() -> int:
                 iso_3166s=iso_3166s,
                 methodology_name=str(args.methodology_name),
                 phase=phase,
-                skip_glad_crop_filter=args.skip_glad_crop_filter,
             ),
         )
         if args.dry_run:
