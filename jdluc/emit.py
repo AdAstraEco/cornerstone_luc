@@ -520,7 +520,8 @@ def get_crop_independent_emissions(
     has_source = conversion_record.source != ConversionSource.NONE
     return {
         "cie-conversion-source": conversion_record.source,
-        "cie-conversion-year": conversion_record.year.where(has_source, other=0),
+        # NB: already 0 wherever there is no source, so a copy
+        "cie-conversion-year": conversion_record.year,
         # NB: peat replaces the mineral term, as it does in `get_conversion_emissions`
         "cie-mineral-soil-carbon-at-risk": (
             CO2E_PER_CARBON * soil_organic_carbon.fillna(0)

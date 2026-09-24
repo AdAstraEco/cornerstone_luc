@@ -1,6 +1,5 @@
 import collections
 import collections.abc
-import dataclasses
 
 import numpy
 import pytest
@@ -1175,6 +1174,8 @@ def test_get_conversion_record_source(
     )
     assert result.conversion.data == [[Conversion.NONE]]
     assert result.source.data == [[source]]
+    # NB: which is what lets `cie-conversion-year` copy the year rather than gate it
+    assert bool(result.year == 0) == (source == ConversionSource.NONE)
 
 
 def get_crop_independent_emissions_for(
@@ -1258,16 +1259,10 @@ def test_cie_charges_a_source_no_destination_claimed() -> None:
 
 
 def test_cie_without_a_source() -> None:
-    # `get_conversion_record` dates only pixels with a source, so the year here is contrived: CIE
-    # still reports none, and prices only the occupation potential of the peat underneath
-    record = dataclasses.replace(
-        get_record_for(conversion=Conversion.NONE),
-        year=get_darray_for_data(data=[[2012]]),
-    )
+    # With no source, CIE prices only the occupation potential of the peat underneath
     result = get_crop_independent_emissions_for(
-        conversion_record=record, is_peatland=True
+        conversion_record=get_record_for(conversion=Conversion.NONE), is_peatland=True
     )
-    assert result["cie-conversion-year"].data == [[0]]
     for name in (
         "cie-mineral-soil-carbon-at-risk",
         "cie-peat-transformation-emissions-undiscounted",

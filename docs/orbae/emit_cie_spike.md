@@ -6,17 +6,17 @@ Working note, 2026-09-24, branch `spike/orbae-layer1`. This is a first implement
 
 The new bands have a `cie-` prefix. `emit`'s cache version goes from 1 to 2. Downstream readers (`statistical`, `jurisdictional_direct`, `trace`) select bands by name, so they are unaffected.
 
-| band                                                          | how it is computed                                                             | differs from the old bands by                                         |
-| ------------------------------------------------------------- | ------------------------------------------------------------------------------ | --------------------------------------------------------------------- |
-| `cie-conversion-source`                                       | `NONE 0 · FOREST 1 · NATURAL_GRASSLAND 2 · PASTURE 3`, from the `from_*` masks | not gated on destination                                              |
-| `cie-conversion-year`                                         | `ConversionRecord.year`, 0 where there is no source                            | same as the old value wherever a source exists; the gate is defensive |
-| `cie-mineral-soil-carbon-at-risk:tco2e-per-ha`                | SOC × 44/12, 0 on peat                                                         | no Table 5.5 loss fraction and no destination gate                    |
-| `cie-peat-transformation-emissions-undiscounted:tco2e-per-ha` | 621 × peat                                                                     | not gated on destination                                              |
-| `cie-vegetation-emissions-undiscounted:tco2e-per-ha`          | forest or grassland carbon × 44/12, by source                                  | not gated on destination                                              |
-| `cie-peat-occupation-emissions:tco2e-per-ha-per-year`         | 37.3 × peat, **on all peat**                                                   | not gated on conversion or destination                                |
-| `cie-climate-zone`                                            | harmonized band                                                                | passed straight through                                               |
-| `cie-continent`                                               | all NaN                                                                        | no source yet                                                         |
-| `cie-hectares-per-pixel:ha`, `cie-destination-dataset`        | copies                                                                         | none; duplicated so the `cie-` set stands on its own                  |
+| band                                                          | how it is computed                                                             | differs from the old bands by                             |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------ | --------------------------------------------------------- |
+| `cie-conversion-source`                                       | `NONE 0 · FOREST 1 · NATURAL_GRASSLAND 2 · PASTURE 3`, from the `from_*` masks | not gated on destination                                  |
+| `cie-conversion-year`                                         | `ConversionRecord.year`                                                        | a copy: the year is already 0 wherever there is no source |
+| `cie-mineral-soil-carbon-at-risk:tco2e-per-ha`                | SOC × 44/12, 0 on peat                                                         | no Table 5.5 loss fraction and no destination gate        |
+| `cie-peat-transformation-emissions-undiscounted:tco2e-per-ha` | 621 × peat                                                                     | not gated on destination                                  |
+| `cie-vegetation-emissions-undiscounted:tco2e-per-ha`          | forest or grassland carbon × 44/12, by source                                  | not gated on destination                                  |
+| `cie-peat-occupation-emissions:tco2e-per-ha-per-year`         | 37.3 × peat, **on all peat**                                                   | not gated on conversion or destination                    |
+| `cie-climate-zone`                                            | harmonized band                                                                | passed straight through                                   |
+| `cie-continent`                                               | all NaN                                                                        | no source yet                                             |
+| `cie-hectares-per-pixel:ha`, `cie-destination-dataset`        | copies                                                                         | none; duplicated so the `cie-` set stands on its own      |
 
 **Not emitted:** the y-20 land-use bitmask (see below).
 
