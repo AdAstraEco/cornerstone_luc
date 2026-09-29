@@ -5,7 +5,7 @@ cached per-tile zarr through the usual ``workflow()`` cache-hit idiom) and produ
 terminal Cloud-Optimised GeoTIFF deliverable that nothing downstream reads. It touches
 no other stage's logic.
 
-The COG carries only ``emit``'s ``cie-`` bands (see ``docs/crop_independent_emissions.md``),
+The COG carries only ``emit``'s ``cie-`` bands (see ``docs/orbae/crop_independent_emissions.md``),
 one COG band per variable, named as ``emit`` names it (units after the first ``:``) and
 ordered by name so every tile, and so the mosaic, agrees. All EPSG:4326, float32,
 nan-nodata -- the encoding ``emit`` already writes them in.

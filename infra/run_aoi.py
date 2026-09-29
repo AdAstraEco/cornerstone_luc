@@ -77,6 +77,7 @@ DEFAULT_PARALLELISM = 8
 # How long the driver waits past a phase's own worst case before giving up on it.
 BARRIER_SLACK_SECONDS = 900
 POLL_SECONDS = 30
+KUBECTL_GET_ATTEMPTS = 5
 
 
 @dataclasses.dataclass(frozen=True)
@@ -155,11 +156,10 @@ PHASE_TO_SPEC = {
     # the real constraint: cog_translate first writes an UNCOMPRESSED tiled intermediate (for
     # overviews + random-access windows) before compressing the final COG -- ~33 GB for a
     # 5-band-float32 10-degree tile, so ~70 GB for the 11 cie- bands. localtmp must comfortably
-    # exceed that; 200Gi leaves
-    # headroom and clears GDAL's disk precheck, which we keep ON as a fast-fail guard (better
-    # to refuse up front than die at 97% mid-write). It's ephemeral (deleted with the pod), so
-    # the headroom is essentially free. Needs only GCS access, not the source-API Secret, so it
-    # runs on the cheap reduce pool.
+    # exceed that; 200Gi leaves headroom and clears GDAL's disk precheck, which we keep ON as a
+    # fast-fail guard (better to refuse up front than die at 97% mid-write). It's ephemeral
+    # (deleted with the pod), so the headroom is essentially free. Needs only GCS access, not
+    # the source-API Secret, so it runs on the cheap reduce pool.
     run_phase.Phase.EXPORT: PhaseSpec(
         cpu_limit="4",
         cpu_request="2",
@@ -339,12 +339,23 @@ class JobStatus:
 
     @classmethod
     def get(cls, name: str, namespace: str) -> JobStatus:
-        completed = subprocess.run(
-            ["kubectl", "-n", namespace, "get", "job", name, "-o", "json"],
-            capture_output=True,
-            check=True,
-            text=True,
-        )
+        # NB: a lone failed poll (API-server blip, token refresh) must not kill the driver
+        # mid-run, so retry before giving up; the Job itself is unaffected either way.
+        for attempt in range(1, KUBECTL_GET_ATTEMPTS + 1):
+            completed = subprocess.run(
+                ["kubectl", "-n", namespace, "get", "job", name, "-o", "json"],
+                capture_output=True,
+                text=True,
+            )
+            if completed.returncode == 0:
+                break
+            logger.warning(
+                f"kubectl get job {name:s} failed ({attempt:d}/{KUBECTL_GET_ATTEMPTS:d}): "
+                f"{completed.stderr.strip():s}"
+            )
+            if attempt == KUBECTL_GET_ATTEMPTS:
+                completed.check_returncode()
+            time.sleep(POLL_SECONDS)
         status = json.loads(completed.stdout).get("status", {})
         return cls(
             active=int(status.get("active", 0)),

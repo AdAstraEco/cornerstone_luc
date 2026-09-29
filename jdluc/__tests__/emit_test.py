@@ -1,5 +1,6 @@
 import collections
 import collections.abc
+import itertools
 
 import numpy
 import pytest
@@ -7,15 +8,19 @@ import xarray
 
 from jdluc.datasets.descals_oil_palm import DATASET as OIL_PALM
 from jdluc.datasets.gnw_global_peatlands import DATASET as PEATLANDS
+from jdluc.datasets.gnw_harris_agb import DATASET as ABOVEGROUND_BIOMASS
 from jdluc.datasets.gnw_tcl import DATASET as TREE_COVER_LOSS
 from jdluc.datasets.gnw_tcl import LOSS_YEAR_OFFSET
 from jdluc.datasets.gpw_grassland import DATASET as GRASSLAND
 from jdluc.datasets.gpw_grassland import YEARS as GRASSLAND_YEARS
 from jdluc.datasets.gpw_grassland import Grassland
+from jdluc.datasets.huang_bgb import DATASET as BELOWGROUND_BIOMASS
+from jdluc.datasets.ipcc_climate_zones import DATASET as CLIMATE_ZONES
 from jdluc.datasets.ipcc_climate_zones import Zone
 from jdluc.datasets.liao_gaced30 import DATASET as CROPLAND
 from jdluc.datasets.liao_gaced30 import YEARS as CROPLAND_YEARS
 from jdluc.datasets.liao_gaced30 import Cropland
+from jdluc.datasets.soilgrids_ocs import DATASET as SOIL_ORGANIC_CARBON_STOCK
 from jdluc.emit import (
     ASSESSMENT_YEAR,
     CARBON_PER_BIOMASS_LIVE_WOOD,
@@ -34,6 +39,7 @@ from jdluc.emit import (
     DestinationDataset,
     EmissionComponent,
     SpanType,
+    derive_from_cie,
     get_belowground_carbon,
     get_conversion_emissions,
     get_conversion_record,
@@ -46,6 +52,7 @@ from jdluc.emit import (
     get_last_departure_year,
     get_linear_discounted_total,
     get_mineral_soil_emissions,
+    get_output_dset,
     get_peatland_occupation_emissions,
     get_span_to_charge,
     get_span_to_component_to_emissions,
@@ -1294,3 +1301,124 @@ def test_cie_names_its_units() -> None:
         "cie-peat-transformation-emissions-undiscounted:tco2e-per-ha",
         "cie-vegetation-emissions-undiscounted:tco2e-per-ha",
     }
+
+
+# Every (loss, grassland sequence, destination bits) class, as in the S1 truth table
+LOSS_YEARS: tuple[int | None, ...] = (
+    None,
+    LOOKBACK_YEARS_RANGE[0],
+    2003,
+    2012,
+    ASSESSMENT_YEAR,
+    ASSESSMENT_YEAR + 4,
+)
+GRASSLAND_SEQUENCES: tuple[collections.abc.Callable[[int], Grassland], ...] = (
+    lambda year: Grassland.OTHER,
+    lambda year: Grassland.NATURAL if year <= 2011 else Grassland.OTHER,
+    lambda year: Grassland.CULTIVATED if year <= 2011 else Grassland.OTHER,
+    lambda year: (
+        Grassland.CULTIVATED
+        if year <= 2005
+        else Grassland.NATURAL
+        if year <= 2014
+        else Grassland.OTHER
+    ),
+    lambda year: (
+        Grassland.NATURAL
+        if year <= 2005
+        else Grassland.CULTIVATED
+        if year <= 2014
+        else Grassland.OTHER
+    ),
+)
+
+
+def get_harmonized_dset_for_every_case() -> xarray.Dataset:
+    """One column per event class; one row per soil case: mineral, peat, no peat data, no data.
+
+    The last row has no soil carbon and no climate zone, which is where NaN handling differs.
+    """
+    columns = list(
+        itertools.product(
+            LOSS_YEARS,
+            GRASSLAND_SEQUENCES,
+            itertools.product((False, True), repeat=3),
+        )
+    )
+    zones = list(Zone)
+    height, width = 4, len(columns)
+    grassland = numpy.empty((len(LOOKBACK_YEARS_RANGE), height, width))
+    loss = numpy.empty((height, width))
+    planting_year = numpy.empty((height, width))
+    cropland = numpy.empty((height, width))
+    for x, (
+        loss_year,
+        get_class,
+        (is_oil_palm, is_cropland, is_cultivated),
+    ) in enumerate(columns):
+        for offset, year in enumerate(LOOKBACK_YEARS_RANGE):
+            grassland[offset, :, x] = get_class(year)
+        if is_cultivated:
+            grassland[-1, :, x] = Grassland.CULTIVATED
+        loss[:, x] = 0 if loss_year is None else loss_year - LOSS_YEAR_OFFSET
+        planting_year[:, x] = 2012 if is_oil_palm else 0
+        cropland[:, x] = Cropland.CROPLAND if is_cropland else Cropland.NOT_CROPLAND
+
+    def darray(data: numpy.ndarray) -> xarray.DataArray:
+        return xarray.DataArray(
+            coords={"y": numpy.arange(height) * -0.5, "x": numpy.arange(width) * 0.5},
+            data=data,
+            dims=("y", "x"),
+        )
+
+    xs = numpy.arange(width)
+    climate_zone = numpy.tile([float(zones[x % len(zones)]) for x in xs], (height, 1))
+    climate_zone[3] = numpy.nan
+    soil_organic_carbon = numpy.tile(50.0 + xs, (height, 1))
+    soil_organic_carbon[3] = numpy.nan
+    peat = numpy.array([[0.0], [1.0], [numpy.nan], [0.0]]) * numpy.ones(width)
+    aboveground_biomass = numpy.tile(100.0 + 3 * xs, (height, 1))
+    # NB: zero where the belowground fallback to the root-to-shoot ratio applies
+    belowground_biomass = numpy.tile(numpy.where(xs % 2, 20.0 + xs, 0.0), (height, 1))
+    return xarray.Dataset(
+        {
+            GRASSLAND.fully_qualified_band_names[GRASSLAND_YEARS.index(year)]: darray(
+                grassland[offset]
+            )
+            for offset, year in enumerate(LOOKBACK_YEARS_RANGE)
+        }
+        | {
+            ABOVEGROUND_BIOMASS.fully_qualified_band_name: darray(aboveground_biomass),
+            BELOWGROUND_BIOMASS.fully_qualified_band_name: darray(belowground_biomass),
+            CLIMATE_ZONES.fully_qualified_band_name: darray(climate_zone),
+            CROPLAND.fully_qualified_band_names[
+                CROPLAND_YEARS.index(ASSESSMENT_YEAR)
+            ]: darray(cropland),
+            OIL_PALM.fully_qualified_band_name: darray(planting_year),
+            PEATLANDS.fully_qualified_band_name: darray(peat),
+            SOIL_ORGANIC_CARBON_STOCK.fully_qualified_band_name: darray(
+                soil_organic_carbon
+            ),
+            TREE_COVER_LOSS.fully_qualified_band_name: darray(loss),
+        }
+    )
+
+
+def test_derive_from_cie_reproduces_every_band_it_replaces() -> None:
+    output = get_output_dset(dset=get_harmonized_dset_for_every_case()).compute()
+    derived = derive_from_cie(dset=output).compute()
+
+    assert set(derived) == {
+        name for name in map(str, output) if not name.startswith("cie-")
+    }
+    for name in derived:
+        numpy.testing.assert_allclose(
+            derived[name].data,
+            output[name].data,
+            atol=1e-4,
+            err_msg=name,
+            rtol=1e-6,
+        )
+    # Every conversion, and both a charged and a dropped pixel, occur in the grid
+    assert set(numpy.unique(output["conversion"].data)) == set(map(float, Conversion))
+    assert float(output["dropped-emissions:tco2e-per-ha"].sum()) > 0

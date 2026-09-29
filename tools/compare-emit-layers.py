@@ -7,6 +7,9 @@ conversion fired, the old vegetation must equal CIE's and the year must match; t
 are printed so any disagreement is visible. Where none fired, CIE carries emissions the old
 bands charge to nobody (and report, discounted, as `dropped-emissions`).
 
+Last, every existing band is rebuilt from the `cie-` bands by `emit.derive_from_cie`, and the
+largest absolute difference from the stored band is printed; each should be ~0.
+
 Must run from the repo root, so Config finds .env.
 
   uv run python tools/compare-emit-layers.py 10N_010W
@@ -67,6 +70,11 @@ def get_rows_checks(
         "fired pixels with no CIE source": (
             fired & (source == emit.ConversionSource.NONE)
         ).sum(),
+    }
+    derived = emit.derive_from_cie(dset=dset)
+    checks |= {
+        f"max |derived - existing| {name:s}": abs(derived[name] - dset[name]).max()
+        for name in map(str, derived.data_vars)
     }
     rows, checks = dask.compute(lazy, checks)
     return rows, {name: float(value) for name, value in checks.items()}
