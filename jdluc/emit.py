@@ -508,7 +508,7 @@ def get_crop_independent_emissions(
     is_peatland: xarray.DataArray,
     soil_organic_carbon: xarray.DataArray,
 ) -> dict[str, xarray.DataArray]:
-    """Crop-Independent Emissions (CIE); see `docs/crop_independent_emissions.md`.
+    """Crop-Independent Emissions (CIE); see `docs/orbae/crop_independent_emissions.md`.
 
     Gated on the source alone: no destination is asked, nothing is discounted, and no land-use
     factor is applied, so each pool is the stock the conversion puts at risk. Layer 2 applies the
@@ -701,7 +701,7 @@ def get_cropland_soil_loss_fraction(
 def derive_from_cie(dset: xarray.Dataset) -> xarray.Dataset:
     """The destination-gated, discounted bands, rebuilt from `emit`'s `cie-` bands alone.
 
-    Reproduces the non-`cie-` bands of `workflow` (see `docs/crop_independent_emissions.md`):
+    Reproduces the non-`cie-` bands of `workflow` (see `docs/orbae/crop_independent_emissions.md`):
     gate on the destination, scale mineral soil by the cropland loss fraction (zero for
     pasture), and charge each pool to its span.
     """

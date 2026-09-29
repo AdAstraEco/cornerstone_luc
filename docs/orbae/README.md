@@ -36,6 +36,13 @@ silent-zero lookups, an unresolved SoilGrids scale factor, and `ASSESSMENT_YEAR`
 module constant outside the cache key, so changing it and re-running silently returns the old
 zarr.
 
+### [`crop_independent_emissions.md`](crop_independent_emissions.md)
+
+emit's existing bands next to its `cie-` (Crop-Independent Emissions) bands, one row per
+quantity, and how each existing band is derived from the `cie-` ones. The code is
+`emit.get_crop_independent_emissions`. For a numeric comparison on one tile, run
+[`../../tools/compare-emit-layers.py`](../../tools/compare-emit-layers.py).
+
 ---
 
 ## 2 · The Orbae spec comparison
