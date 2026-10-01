@@ -177,15 +177,6 @@ def get_cache_decorator(
     version: int,
     ignored_args: list[str] | None = None,
 ) -> CacherDecoratorProtocol[typing.Any]:
-    def get_module_for_func(func: typing.Callable[..., object]) -> str:
-        import git
-
-        relative_path = os.path.relpath(
-            path=inspect.getfile(func),
-            start=git.Repo(search_parent_directories=True).working_dir,
-        )
-        return relative_path.removesuffix(".py").replace(os.sep, ".")
-
     def decorator(
         func: typing.Callable[P, R],
     ) -> typing.Callable[P, R]:
@@ -201,7 +192,10 @@ def get_cache_decorator(
             bound.apply_defaults()
             ignored = set(ignored_args or ())
             hash_tokens = (
-                get_module_for_func(func=func),
+                # func.__module__ (e.g. "jdluc.emit") replaces a former
+                # git.Repo()-relative file path: identical string for in-package
+                # modules, but no .git needed at runtime (so the image can drop it).
+                func.__module__,
                 func.__qualname__,
                 version,
                 *(
