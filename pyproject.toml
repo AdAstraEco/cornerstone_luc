@@ -135,18 +135,15 @@ forbidden_modules = [
 name = "The control plane reaches the pipeline only through controlplane.aoi"
 type = "forbidden"
 source_modules = [
-    "controlplane.__main__",
-    "controlplane.manifest",
-    "controlplane.models",
-    "controlplane.phases",
-    "controlplane.preflight",
-    "controlplane.run",
-    "controlplane.settings",
+    "controlplane",
 ]
 forbidden_modules = [
     "jdluc",
 ]
 allow_indirect_imports = true
+ignore_imports = [
+    "controlplane.aoi -> jdluc.**",
+]
 
 [[tool.importlinter.contracts]]
 name = "Only controlplane.manifest touches the Kubernetes client"
@@ -154,15 +151,12 @@ type = "forbidden"
 source_modules = [
     "jdluc",
     "validation",
-    "controlplane.__main__",
-    "controlplane.aoi",
-    "controlplane.models",
-    "controlplane.phases",
-    "controlplane.preflight",
-    "controlplane.run",
-    "controlplane.settings",
+    "controlplane",
 ]
 forbidden_modules = [
     "lightkube",
 ]
 allow_indirect_imports = true
+ignore_imports = [
+    "controlplane.manifest -> lightkube",
+]

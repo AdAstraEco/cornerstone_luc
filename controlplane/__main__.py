@@ -10,7 +10,7 @@ from controlplane.models import Aoi, RunPlan, RunSpec
 from controlplane.phases import Phase
 
 
-def summary(plan: run.RunPlan | RunPlan, settings: settings_module.Settings) -> str:
+def summary(plan: RunPlan, settings: settings_module.Settings) -> str:
     spec = plan.spec
     lines = [
         settings.banner(),
@@ -39,7 +39,6 @@ def summary(plan: run.RunPlan | RunPlan, settings: settings_module.Settings) -> 
 def cmd_doctor(_: argparse.Namespace) -> int:
     settings = settings_module.Settings.load()
     print(settings.banner())
-    print(f"history  {settings.history_root}  (index {settings.history_db})")
     print(
         f"pools    heavy {settings.pool_heavy}  light {settings.pool_light}  allowed {settings.allowed_pool_regex}"
     )
@@ -76,7 +75,9 @@ def cmd_submit(args: argparse.Namespace) -> int:
         parallelism=args.parallelism,
         ingest_concurrency=args.concurrency,
         skip_ingest=not args.no_skip_ingest,
-        overrides=run.parse_overrides(args.pool, args.set),
+        overrides=run.parse_overrides(
+            [p.replace("=", ".pool=", 1) for p in args.pool] + args.set
+        ),
         image=args.image,
         ttl_s=run.parse_duration(args.ttl),
         fail_fast=args.fail_fast,
@@ -129,7 +130,9 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--no-skip-ingest", action="store_true")
     s.add_argument("--fail-fast", action="store_true")
     s.add_argument("--allow-foreign-pool", action="store_true")
-    s.add_argument("--dry-run", nargs="?", const="client", choices=("client", "server"))
+    s.add_argument(
+        "--dry-run", action="store_true", help="plan and print; nothing else exists yet"
+    )
     s.add_argument("-o", "--output", choices=("summary", "yaml"), default="summary")
     s.set_defaults(func=cmd_submit)
     args = parser.parse_args(argv)

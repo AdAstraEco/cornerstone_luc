@@ -12,15 +12,6 @@ from controlplane.phases import Phase
 from controlplane.settings import Settings
 
 NEEDS_COUNTRIES = (Phase.COMPUTE, Phase.REDUCE, Phase.MOSAIC)
-# An e2-standard-8 node has 27.6 GiB allocatable (measured); the light pool is that machine today.
-LIGHT_NODE_ALLOCATABLE_GIB = 27
-
-
-def memory_gib(quantity: str) -> float:
-    number, unit = quantity[:-2], quantity[-2:]
-    return (
-        float(number) * {"Ki": 1 / 1024**2, "Mi": 1 / 1024, "Gi": 1, "Ti": 1024}[unit]
-    )
 
 
 def check(
@@ -92,19 +83,6 @@ def check(
                         if allow_foreign_pool
                         else " (--allow-foreign-pool overrides)"
                     ),
-                )
-            )
-        if (
-            job.node_pool == settings.pool_light
-            and memory_gib(job.resources.memory_limit) > LIGHT_NODE_ALLOCATABLE_GIB
-        ):
-            out.append(
-                Check(
-                    "fit",
-                    "warning",
-                    f"{job.phase} asks {job.resources.memory_limit} but the light pool's nodes "
-                    f"(e2-standard-8) have about {LIGHT_NODE_ALLOCATABLE_GIB} GiB allocatable: "
-                    "the pod would stay Pending",
                 )
             )
     return tuple(out)

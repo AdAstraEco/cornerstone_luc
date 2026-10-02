@@ -20,17 +20,18 @@ MAX_NAME = 63
 RUN_ID = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,14}[a-z0-9])?")
 CPU = re.compile(r"\d+(?:\.\d+)?m?")
 MEMORY = re.compile(r"\d+(?:\.\d+)?(?:Ki|Mi|Gi|Ti)")
-FIELDS = (
-    "cpu",
-    "cpu-limit",
-    "memory",
-    "memory-request",
-    "localtmp",
-    "pool",
-    "secret",
-    "deadline",
-    "retries",
-)
+# Overridable field -> its value pattern (None: any text, checked where it is used).
+FIELDS: dict[str, re.Pattern[str] | None] = {
+    "cpu": CPU,
+    "cpu-limit": CPU,
+    "memory": MEMORY,
+    "memory-request": MEMORY,
+    "localtmp": MEMORY,
+    "pool": None,
+    "secret": None,
+    "deadline": None,
+    "retries": None,
+}
 
 
 def parse_duration(text: str) -> int:
@@ -40,21 +41,14 @@ def parse_duration(text: str) -> int:
     return int(match[1]) * {"": 1, "s": 1, "m": 60, "h": 3600}[match[2]]
 
 
-def parse_overrides(
-    pools: collections.abc.Iterable[str], sets: collections.abc.Iterable[str]
-) -> dict[Phase, dict[str, str]]:
-    """``--pool compute=P`` and ``--set compute.memory=48Gi`` -> ``{COMPUTE: {...}}``."""
+def parse_overrides(sets: collections.abc.Iterable[str]) -> dict[Phase, dict[str, str]]:
+    """``compute.memory=48Gi`` -> ``{COMPUTE: {"memory": "48Gi"}}``, validated."""
     out: dict[Phase, dict[str, str]] = {}
-    pairs = [("pool", p) for p in pools] + [("set", s) for s in sets]
-    for kind, text in pairs:
-        key, sep, value = text.partition("=")
-        phase_name, dot, field = key.partition(".")
-        if kind == "pool":
-            phase_name, field = key, "pool"
-        elif not dot:
-            raise ValueError(f"--set wants PHASE.FIELD=VALUE, got {text!r}")
-        if not sep or not value:
-            raise ValueError(f"{text!r} has no value")
+    for text in sets:
+        key, _, value = text.partition("=")
+        phase_name, _, field = key.partition(".")
+        if not value or not field:
+            raise ValueError(f"expected PHASE.FIELD=VALUE, got {text!r}")
         try:
             phase = Phase(phase_name)
         except ValueError:
@@ -63,21 +57,11 @@ def parse_overrides(
             raise ValueError(
                 f"unknown field {field!r} in {text!r}; one of {', '.join(FIELDS)}"
             )
+        pattern = FIELDS[field]
+        if pattern and not pattern.fullmatch(value):
+            raise ValueError(f"{field}={value!r} is not a valid quantity")
         out.setdefault(phase, {})[field] = value
     return out
-
-
-def _validated(field: str, value: str) -> str:
-    patterns = {
-        "cpu": CPU,
-        "cpu-limit": CPU,
-        "memory": MEMORY,
-        "memory-request": MEMORY,
-        "localtmp": MEMORY,
-    }
-    if field in patterns and not patterns[field].fullmatch(value):
-        raise ValueError(f"{field}={value!r} is not a valid quantity")
-    return value
 
 
 def job_name(slug: str, phase: Phase, run_id: str) -> str:
@@ -124,7 +108,7 @@ def phase_args(spec: RunSpec, phase: Phase) -> tuple[str, ...]:
 
 def job_for(settings: Settings, spec: RunSpec, phase: Phase) -> JobSpec:
     base = DEFAULT_SPECS[phase]
-    over = {k: _validated(k, v) for k, v in spec.overrides.get(phase, {}).items()}
+    over = spec.overrides.get(phase, {})
     pools = {PoolRole.HEAVY: settings.pool_heavy, PoolRole.LIGHT: settings.pool_light}
     secret_role = base.secret
     if phase == Phase.COMPUTE and not spec.skip_ingest:

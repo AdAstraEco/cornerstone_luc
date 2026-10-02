@@ -7,7 +7,7 @@ from controlplane.settings import Settings, SettingsError
 
 def test_defaults_and_derived_values(make_settings) -> None:  # type: ignore[no-untyped-def]
     s = make_settings()
-    assert s.history_root == "gs://bucket/cornerstone/control"
+    assert s.data_prefix == "cornerstone"
     assert s.max_parallelism == 16
     assert s.pool_allowed("ns-power-node-pool")
     assert not s.pool_allowed(
@@ -38,10 +38,9 @@ def test_environment_beats_the_file(
     assert s.namespace == "other"
 
 
-def test_a_laptop_needs_a_context_guard(make_settings) -> None:  # type: ignore[no-untyped-def]
+def test_the_context_guard_is_required(make_settings) -> None:  # type: ignore[no-untyped-def]
     with pytest.raises(SettingsError, match="KUBE_CONTEXT"):
         make_settings(KUBE_CONTEXT=None)
-    assert make_settings(KUBE_CONTEXT=None, AUTH="token").kube_context is None
 
 
 def test_bad_pool_regex_is_rejected(make_settings) -> None:  # type: ignore[no-untyped-def]
