@@ -65,6 +65,10 @@ spec:
             # the balance_dirty_pages write-throttle -- see docs/gke-disk-io-findings.md.
             - {name: TMPDIR, value: /localtmp}
             - {name: CPL_TMPDIR, value: /localtmp}
+            # Stamped on every line when run_phase.py logs as JSON (LOG_FORMAT=json).
+            - {name: RUN_ID, value: "${RUN_ID}"}
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
           resources:
             # ephemeral-storage here guards only the container's OWN overlay (logs, anything
             # not under /localtmp): a small deterministic per-pod eviction guard, so a stray
@@ -73,9 +77,10 @@ spec:
             requests: {cpu: "${CPU_REQUEST}", memory: "${MEMORY_REQUEST}", ephemeral-storage: "2Gi"}
             limits: {cpu: "${CPU_LIMIT}", memory: "${MEMORY_LIMIT}", ephemeral-storage: "8Gi"}
           volumeMounts:
-            # Config.from_dot_env reads a FILE (not process env), so mount the .env Secret
-            # at /app/.env. That is also where NUMBER_OF_DASK_WORKERS -- the size of the
-            # inner per-tile LocalCluster -- has to be set; keep it <= the cpu limit here.
+            # Config.from_dot_env reads each field from the process environment first and
+            # falls back to a .env file; this Secret is that file, at /app/.env. It is also
+            # where NUMBER_OF_DASK_WORKERS -- the size of the inner per-tile LocalCluster --
+            # is set; keep it <= the cpu limit here.
             - {name: dotenv, mountPath: /app/.env, subPath: .env, readOnly: true}
             - {name: localtmp, mountPath: /localtmp}
       volumes:
