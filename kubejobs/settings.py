@@ -1,6 +1,6 @@
 """Every cluster, bucket and path identifier is a setting; nothing else names a target.
 
-Precedence: process environment, then the env file (``.env``, or ``CONTROLPLANE_ENV_FILE``),
+Precedence: process environment, then the env file (``.env``, or ``KUBEJOBS_ENV_FILE``),
 then the default. A laptop has a file and sets nothing; a Cloud Run service sets variables and
 has no file. See docs/control-plane/05-configuration-and-deployment.md.
 """
@@ -13,7 +13,7 @@ import typing
 
 import dotenv
 
-PREFIX = "CONTROLPLANE_"
+PREFIX = "KUBEJOBS_"
 
 
 class SettingsError(ValueError):

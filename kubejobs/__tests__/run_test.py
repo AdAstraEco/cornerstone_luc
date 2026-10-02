@@ -1,8 +1,8 @@
 import pytest
 
-from controlplane import run
-from controlplane.models import Aoi, RunSpec
-from controlplane.phases import Phase
+from kubejobs import run
+from kubejobs.models import Aoi, RunSpec
+from kubejobs.phases import Phase
 
 
 def spec(**kw) -> RunSpec:  # type: ignore[no-untyped-def]

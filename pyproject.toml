@@ -33,9 +33,9 @@ dev = [
     "types-geopandas",
     "types-networkx",
     "types-requests",
-    { include-group = "controlplane" },
+    { include-group = "kubejobs" },
 ]
-controlplane = [
+kubejobs = [
     "google-auth",
     "lightkube",
     "pyyaml",
@@ -66,7 +66,7 @@ follow_imports = "skip"
 implicit_reexport = true
 
 [tool.importlinter]
-root_packages = ["jdluc", "validation", "controlplane"]
+root_packages = ["jdluc", "validation", "kubejobs"]
 include_external_packages = true
 
 [[tool.importlinter.contracts]]
@@ -77,7 +77,7 @@ source_modules = [
 ]
 forbidden_modules = [
     "validation",
-    "controlplane",
+    "kubejobs",
 ]
 
 [[tool.importlinter.contracts]]
@@ -132,31 +132,31 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
-name = "The control plane reaches the pipeline only through controlplane.aoi"
+name = "The Kubernetes job layer reaches the pipeline only through kubejobs.aoi"
 type = "forbidden"
 source_modules = [
-    "controlplane",
+    "kubejobs",
 ]
 forbidden_modules = [
     "jdluc",
 ]
 allow_indirect_imports = true
 ignore_imports = [
-    "controlplane.aoi -> jdluc.**",
+    "kubejobs.aoi -> jdluc.**",
 ]
 
 [[tool.importlinter.contracts]]
-name = "Only controlplane.manifest touches the Kubernetes client"
+name = "Only kubejobs.manifest touches the Kubernetes client"
 type = "forbidden"
 source_modules = [
     "jdluc",
     "validation",
-    "controlplane",
+    "kubejobs",
 ]
 forbidden_modules = [
     "lightkube",
 ]
 allow_indirect_imports = true
 ignore_imports = [
-    "controlplane.manifest -> lightkube",
+    "kubejobs.manifest -> lightkube",
 ]

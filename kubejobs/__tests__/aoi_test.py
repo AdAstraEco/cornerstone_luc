@@ -1,6 +1,6 @@
 import pytest
 
-from controlplane import aoi
+from kubejobs import aoi
 
 
 def test_explicit_tiles_are_validated_without_reading_a_boundary() -> None:

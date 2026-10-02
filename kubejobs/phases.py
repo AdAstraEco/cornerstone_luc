@@ -26,13 +26,13 @@ class Phase(enum.StrEnum):
 
 
 class PoolRole(enum.StrEnum):
-    LIGHT = "light"  # CONTROLPLANE_POOL_LIGHT
-    HEAVY = "heavy"  # CONTROLPLANE_POOL_HEAVY
+    LIGHT = "light"  # KUBEJOBS_POOL_LIGHT
+    HEAVY = "heavy"  # KUBEJOBS_POOL_HEAVY
 
 
 class SecretRole(enum.StrEnum):
-    KEYS = "keys"  # CONTROLPLANE_SECRET: source-API credentials, for the ingest phases
-    NOKEYS = "nokeys"  # CONTROLPLANE_SECRET_NOKEYS
+    KEYS = "keys"  # KUBEJOBS_SECRET: source-API credentials, for the ingest phases
+    NOKEYS = "nokeys"  # KUBEJOBS_SECRET_NOKEYS
 
 
 @dataclasses.dataclass(frozen=True)

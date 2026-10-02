@@ -13,7 +13,7 @@ import yaml
 from lightkube.models import batch_v1, core_v1, meta_v1
 from lightkube.resources.batch_v1 import Job
 
-from controlplane.models import JobSpec
+from kubejobs.models import JobSpec
 
 ANNOTATION_PREFIX = "cornerstone.adastra.eco/"
 SPEC_HASH = ANNOTATION_PREFIX + "spec-hash"
