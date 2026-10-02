@@ -56,7 +56,11 @@ def test_country_only_run_defers_the_per_tile_phases(make_settings) -> None:  # 
 
 def test_overrides(make_settings) -> None:  # type: ignore[no-untyped-def]
     overrides = run.parse_overrides(
-        ["compute=ns-worker-node-pool"], ["compute.memory=48Gi", "export.deadline=90m"]
+        [
+            "compute.pool=ns-worker-node-pool",
+            "compute.memory=48Gi",
+            "export.deadline=90m",
+        ]
     )
     plan = run.plan(make_settings(), spec(overrides=overrides))
     jobs = {p.phase: p.job for p in plan.phases if p.job}
@@ -64,23 +68,22 @@ def test_overrides(make_settings) -> None:  # type: ignore[no-untyped-def]
     assert compute.node_pool == "ns-worker-node-pool"  # type: ignore[union-attr]
     assert compute.resources.memory_request == compute.resources.memory_limit == "48Gi"  # type: ignore[union-attr]
     assert jobs[Phase.EXPORT].deadline_s == 5400  # type: ignore[union-attr]
-    # 48Gi on the light pool (27.6 GiB nodes) would stay Pending
-    assert [(c.name, c.message.split()[0]) for c in plan.checks] == [("fit", "compute")]
+    assert plan.checks == ()
 
 
 @pytest.mark.parametrize(
-    ("pools", "sets"),
+    "text",
     [
-        ([], ["compute.memory=lots"]),
-        ([], ["compute=1"]),
-        (["nope=p"], []),
-        ([], ["compute.color=red"]),
+        "compute.memory=lots",
+        "compute=1",
+        "nope.pool=p",
+        "compute.color=red",
+        "compute.cpu=",
     ],
 )
-def test_bad_overrides_are_rejected(make_settings, pools, sets) -> None:  # type: ignore[no-untyped-def]
+def test_bad_overrides_are_rejected(text) -> None:  # type: ignore[no-untyped-def]
     with pytest.raises(ValueError):
-        overrides = run.parse_overrides(pools, sets)
-        run.plan(make_settings(), spec(overrides=overrides))
+        run.parse_overrides([text])
 
 
 def test_guardrails_block(make_settings) -> None:  # type: ignore[no-untyped-def]
@@ -93,7 +96,7 @@ def test_guardrails_block(make_settings) -> None:  # type: ignore[no-untyped-def
     assert "--country" in messages  # compute, reduce, mosaic need countries
     foreign = run.plan(
         settings,
-        spec(overrides=run.parse_overrides(["compute=standard-node-pool"], [])),
+        spec(overrides=run.parse_overrides(["compute.pool=standard-node-pool"])),
     )
     assert any(c.name == "pool" for c in foreign.errors)
 

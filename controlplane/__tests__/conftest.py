@@ -1,3 +1,4 @@
+import os
 import pathlib
 
 import pytest
@@ -23,7 +24,7 @@ VALUES = {
 @pytest.fixture
 def make_settings(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch):  # type: ignore[no-untyped-def]
     """Settings from a throwaway env file, so a developer's real .env never leaks in."""
-    for name in list(__import__("os").environ):
+    for name in list(os.environ):
         if name.startswith("CONTROLPLANE_"):
             monkeypatch.delenv(name)
 
