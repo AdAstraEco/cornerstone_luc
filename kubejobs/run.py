@@ -3,19 +3,19 @@
 import collections.abc
 import re
 
-from controlplane import preflight
-from controlplane.models import (
+from kubejobs import preflight
+from kubejobs.models import (
     JobSpec,
     PhasePlan,
     ResourceSpec,
     RunPlan,
     RunSpec,
 )
-from controlplane.phases import DEFAULT_SPECS, Phase, PoolRole, SecretRole
-from controlplane.settings import Settings
+from kubejobs.phases import DEFAULT_SPECS, Phase, PoolRole, SecretRole
+from kubejobs.settings import Settings
 
 COMMAND = ("python", "infra/run_phase.py")
-MANAGED_BY = "cornerstone-controlplane"
+MANAGED_BY = "cornerstone-kubejobs"
 MAX_NAME = 63
 RUN_ID = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,14}[a-z0-9])?")
 CPU = re.compile(r"\d+(?:\.\d+)?m?")

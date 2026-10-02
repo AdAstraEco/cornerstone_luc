@@ -5,9 +5,9 @@ import string
 import pytest
 import yaml
 
-from controlplane import manifest, run
-from controlplane.models import Aoi, JobSpec, RunSpec
-from controlplane.phases import Phase
+from kubejobs import manifest, run
+from kubejobs.models import Aoi, JobSpec, RunSpec
+from kubejobs.phases import Phase
 
 TEMPLATE = pathlib.Path(__file__).parents[2] / "infra" / "k8s" / "phase-job.yaml"
 

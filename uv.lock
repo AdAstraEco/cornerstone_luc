@@ -951,12 +951,6 @@ dependencies = [
 ]
 
 [package.dev-dependencies]
-controlplane = [
-    { name = "google-auth" },
-    { name = "lightkube" },
-    { name = "pyyaml" },
-    { name = "types-pyyaml" },
-]
 dev = [
     { name = "google-auth" },
     { name = "lightkube" },
@@ -969,6 +963,12 @@ dev = [
     { name = "types-networkx" },
     { name = "types-pyyaml" },
     { name = "types-requests" },
+]
+kubejobs = [
+    { name = "google-auth" },
+    { name = "lightkube" },
+    { name = "pyyaml" },
+    { name = "types-pyyaml" },
 ]
 
 [package.metadata]
@@ -992,12 +992,6 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-controlplane = [
-    { name = "google-auth" },
-    { name = "lightkube" },
-    { name = "pyyaml" },
-    { name = "types-pyyaml" },
-]
 dev = [
     { name = "google-auth" },
     { name = "lightkube" },
@@ -1010,6 +1004,12 @@ dev = [
     { name = "types-networkx" },
     { name = "types-pyyaml" },
     { name = "types-requests" },
+]
+kubejobs = [
+    { name = "google-auth" },
+    { name = "lightkube" },
+    { name = "pyyaml" },
+    { name = "types-pyyaml" },
 ]
 
 [[package]]

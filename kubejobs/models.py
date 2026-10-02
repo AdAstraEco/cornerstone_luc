@@ -4,7 +4,7 @@ import collections.abc
 import dataclasses
 import typing
 
-from controlplane.phases import Phase
+from kubejobs.phases import Phase
 
 
 @dataclasses.dataclass(frozen=True)

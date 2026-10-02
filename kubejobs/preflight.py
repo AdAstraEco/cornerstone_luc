@@ -7,9 +7,9 @@ with ``cluster.py``.
 
 import collections.abc
 
-from controlplane.models import Check, JobSpec, RunSpec
-from controlplane.phases import Phase
-from controlplane.settings import Settings
+from kubejobs.models import Check, JobSpec, RunSpec
+from kubejobs.phases import Phase
+from kubejobs.settings import Settings
 
 NEEDS_COUNTRIES = (Phase.COMPUTE, Phase.REDUCE, Phase.MOSAIC)
 
@@ -28,7 +28,7 @@ def check(
             Check(
                 "parallelism",
                 "error",
-                f"parallelism {spec.parallelism} exceeds CONTROLPLANE_MAX_PARALLELISM={settings.max_parallelism}",
+                f"parallelism {spec.parallelism} exceeds KUBEJOBS_MAX_PARALLELISM={settings.max_parallelism}",
             )
         )
     tiles = spec.aoi.tiles or ()
@@ -37,7 +37,7 @@ def check(
             Check(
                 "tiles",
                 "error",
-                f"{len(tiles)} tiles exceed CONTROLPLANE_MAX_TILES={settings.max_tiles}",
+                f"{len(tiles)} tiles exceed KUBEJOBS_MAX_TILES={settings.max_tiles}",
             )
         )
     elif len(tiles) >= settings.confirm_tiles:
@@ -45,7 +45,7 @@ def check(
             Check(
                 "tiles",
                 "warning",
-                f"{len(tiles)} tiles is at or above CONTROLPLANE_CONFIRM_TILES="
+                f"{len(tiles)} tiles is at or above KUBEJOBS_CONFIRM_TILES="
                 f"{settings.confirm_tiles}: needs --i-know",
             )
         )
@@ -69,7 +69,7 @@ def check(
                     "completions",
                     "error",
                     f"{job.phase}: {job.completions} completions exceed "
-                    f"CONTROLPLANE_MAX_COMPLETIONS_PER_JOB={settings.max_completions_per_job} (splitting is not built yet)",
+                    f"KUBEJOBS_MAX_COMPLETIONS_PER_JOB={settings.max_completions_per_job} (splitting is not built yet)",
                 )
             )
         if not settings.pool_allowed(job.node_pool):
@@ -77,7 +77,7 @@ def check(
                 Check(
                     "pool",
                     "warning" if allow_foreign_pool else "error",
-                    f"{job.phase}: pool {job.node_pool!r} does not match CONTROLPLANE_ALLOWED_POOL_REGEX"
+                    f"{job.phase}: pool {job.node_pool!r} does not match KUBEJOBS_ALLOWED_POOL_REGEX"
                     + (
                         ""
                         if allow_foreign_pool
