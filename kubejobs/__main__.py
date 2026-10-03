@@ -52,7 +52,9 @@ def cmd_doctor(_: argparse.Namespace) -> int:
 def build_plan(args: argparse.Namespace, settings: settings_module.Settings) -> RunPlan:
     methodologies = aoi.methodology_names()
     if args.methodology_name not in methodologies:
-        raise ValueError(f"--methodology-name must be one of {', '.join(methodologies)}")
+        raise ValueError(
+            f"--methodology-name must be one of {', '.join(methodologies)}"
+        )
     spec = RunSpec(
         run_id=args.run_id,
         aoi=Aoi(
@@ -64,7 +66,9 @@ def build_plan(args: argparse.Namespace, settings: settings_module.Settings) -> 
         parallelism=args.parallelism,
         ingest_concurrency=args.concurrency,
         skip_ingest=not args.no_skip_ingest,
-        overrides=run.parse_overrides([p.replace("=", ".pool=", 1) for p in args.pool] + args.set),
+        overrides=run.parse_overrides(
+            [p.replace("=", ".pool=", 1) for p in args.pool] + args.set
+        ),
         image=args.image,
         ttl_s=run.parse_duration(args.ttl),
         fail_fast=args.fail_fast,
@@ -79,7 +83,10 @@ def cmd_submit(args: argparse.Namespace) -> int:
     if args.output == "yaml":
         for p in plan.phases:
             if p.job:
-                print(f"---\n# {p.job.name}\n{manifest.to_yaml(manifest.build_job(p.job))}", end="")
+                print(
+                    f"---\n# {p.job.name}\n{manifest.to_yaml(manifest.build_job(p.job))}",
+                    end="",
+                )
     if args.dry_run:
         return 1 if plan.errors else 0
     if plan.errors:
@@ -103,17 +110,27 @@ def cmd_status(args: argparse.Namespace) -> int:
         return 0
     print(f"{'JOB':52} {'STATE':9} {'DONE':>7} {'ACT':>3} {'FAIL':>4}")
     for j in jobs:
-        print(f"{j.name:52} {j.state:9} {f'{j.succeeded}/{j.completions}':>7} {j.active:>3} {j.failed:>4}")
+        print(
+            f"{j.name:52} {j.state:9} {f'{j.succeeded}/{j.completions}':>7} {j.active:>3} {j.failed:>4}"
+        )
         if args.pods:
             for pod in cluster.pods(j.run_id, j.phase):
-                print(f"  idx {pod.index}  {pod.name}  {pod.phase}  node {pod.node}  exit {pod.exit_code} {pod.reason or ''}")
+                print(
+                    f"  idx {pod.index}  {pod.name}  {pod.phase}  node {pod.node}  exit {pod.exit_code} {pod.reason or ''}"
+                )
     return 0
 
 
 def _pod_for(cluster: Cluster, args: argparse.Namespace) -> str:
-    pods = [p for p in cluster.pods(args.run_id, args.phase) if args.index is None or p.index == args.index]
+    pods = [
+        p
+        for p in cluster.pods(args.run_id, args.phase)
+        if args.index is None or p.index == args.index
+    ]
     if not pods:
-        raise ValueError(f"no pod for run {args.run_id} phase {args.phase} (pods are deleted 30 min after the Job ends)")
+        raise ValueError(
+            f"no pod for run {args.run_id} phase {args.phase} (pods are deleted 30 min after the Job ends)"
+        )
     return pods[0].name
 
 
@@ -146,7 +163,9 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser(
         "doctor", help="validate the settings and print the target"
     ).set_defaults(func=cmd_doctor)
-    s = sub.add_parser("submit", help="plan a run; with --yes, create its Jobs and wait for each phase")
+    s = sub.add_parser(
+        "submit", help="plan a run; with --yes, create its Jobs and wait for each phase"
+    )
     s.add_argument(
         "--tile",
         action="append",
@@ -176,17 +195,26 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--no-skip-ingest", action="store_true")
     s.add_argument("--fail-fast", action="store_true")
     s.add_argument("--allow-foreign-pool", action="store_true")
-    s.add_argument("--dry-run", action="store_true", help="plan and print; touch nothing")
+    s.add_argument(
+        "--dry-run", action="store_true", help="plan and print; touch nothing"
+    )
     s.add_argument("--yes", action="store_true", help="create the Jobs")
-    s.add_argument("--i-know", action="store_true", help="also needed from CONFIRM_TILES tiles up")
-    s.add_argument("--poll", type=float, default=15, help="seconds between status checks")
+    s.add_argument(
+        "--i-know", action="store_true", help="also needed from CONFIRM_TILES tiles up"
+    )
+    s.add_argument(
+        "--poll", type=float, default=15, help="seconds between status checks"
+    )
     s.add_argument("-o", "--output", choices=("summary", "yaml"), default="summary")
     s.set_defaults(func=cmd_submit)
     st = sub.add_parser("status", help="Jobs of one run (or all kubejobs Jobs)")
     st.add_argument("run_id", nargs="?")
     st.add_argument("--pods", action="store_true")
     st.set_defaults(func=cmd_status)
-    for name, func, help_ in (("logs", cmd_logs, "a pod's log"), ("report", cmd_report, "per-step resource use of a pod")):
+    for name, func, help_ in (
+        ("logs", cmd_logs, "a pod's log"),
+        ("report", cmd_report, "per-step resource use of a pod"),
+    ):
         p = sub.add_parser(name, help=help_)
         p.add_argument("run_id")
         p.add_argument("--phase", required=True, choices=[str(x) for x in Phase])
@@ -201,7 +229,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return int(args.func(args))
-    except (ValueError, settings_module.SettingsError, ClusterError, run.RunError) as exc:
+    except (
+        ValueError,
+        settings_module.SettingsError,
+        ClusterError,
+        run.RunError,
+    ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 

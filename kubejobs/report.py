@@ -88,7 +88,9 @@ def steps(records: list[dict[str, typing.Any]]) -> list[Step]:
             if r["message"].startswith("Saving to"):
                 started[found[1]] = r["_t"]
             elif r["message"].startswith("Finished writing") and found[1] in started:
-                out.append(Step(f"write {found[1]}", started[found[1]], r["_t"], parent=label))
+                out.append(
+                    Step(f"write {found[1]}", started[found[1]], r["_t"], parent=label)
+                )
     return out
 
 
@@ -108,7 +110,9 @@ def usage(records: list[dict[str, typing.Any]], step: Step) -> StepUse:
         return values[-1][1] - values[0][1] if len(values) > 1 else None
 
     cpu = delta("cpu_usage_s")
-    span = (inside[-1]["_t"] - inside[0]["_t"]).total_seconds() if len(inside) > 1 else 0
+    span = (
+        (inside[-1]["_t"] - inside[0]["_t"]).total_seconds() if len(inside) > 1 else 0
+    )
     written = delta("write_bytes")
     return StepUse(
         step=step,
@@ -149,6 +153,10 @@ def table(lines: typing.Iterable[str]) -> str:
             f"whole pod: {s.get('duration_s', 0) / 60:.1f} min, peak memory {s.get('peak_mem_pct')}% "
             f"(anon {s.get('peak_mem_anon_pct')}%), peak io psi {s.get('peak_io_psi_full_avg10')}, "
             f"wrote {s.get('total_write_gib')} GiB"
-            + (f", OOM events {s['mem_events_oom_kill']}" if s.get("mem_events_oom_kill") else "")
+            + (
+                f", OOM events {s['mem_events_oom_kill']}"
+                if s.get("mem_events_oom_kill")
+                else ""
+            )
         )
     return "\n".join(rows)
