@@ -10,7 +10,9 @@ from kubejobs.phases import Phase
 class FakeCluster:
     """Jobs by name; each ``get_job`` advances a scripted list of (active, succeeded, conditions)."""
 
-    def __init__(self, script: dict[str, list[tuple[int, int, set[str]]]] | None = None) -> None:
+    def __init__(
+        self, script: dict[str, list[tuple[int, int, set[str]]]] | None = None
+    ) -> None:
         self.jobs: dict[str, JobState] = {}
         self.script = script or {}
         self.created: list[str] = []
@@ -29,7 +31,10 @@ class FakeCluster:
         if job and steps:
             active, succeeded, conditions = steps.pop(0) if len(steps) > 1 else steps[0]
             job = dataclasses.replace(
-                job, active=active, succeeded=succeeded, conditions=frozenset(conditions)
+                job,
+                active=active,
+                succeeded=succeeded,
+                conditions=frozenset(conditions),
             )
             self.jobs[name] = job
         return job
@@ -58,11 +63,15 @@ def test_phases_run_in_order_and_each_is_waited_for(make_settings) -> None:  # t
     cluster = FakeCluster({n: [(1, 0, set()), (0, 1, {"Complete"})] for n in names})
     ok, lines = go(plan, cluster)
     assert ok
-    assert cluster.created == names  # barrier: the second is created only after the first completed
+    assert (
+        cluster.created == names
+    )  # barrier: the second is created only after the first completed
     assert lines[-1] == "export: done"
 
 
-def test_a_finished_job_with_the_same_spec_is_adopted_not_recreated(make_settings) -> None:  # type: ignore[no-untyped-def]
+def test_a_finished_job_with_the_same_spec_is_adopted_not_recreated(
+    make_settings,
+) -> None:  # type: ignore[no-untyped-def]
     plan = make_plan(make_settings)
     cluster = FakeCluster({p.job.name: [(0, 1, {"Complete"})] for p in plan.phases})
     go(plan, cluster)
@@ -106,7 +115,9 @@ def test_a_country_only_run_cannot_be_submitted_yet(make_settings) -> None:  # t
 
 def test_waiting_gives_up_at_the_deadline() -> None:
     cluster = FakeCluster()
-    cluster.jobs["j"] = JobState("j", "compute", "r1", 1, 1, 0, 0, "", None, frozenset())
+    cluster.jobs["j"] = JobState(
+        "j", "compute", "r1", 1, 1, 0, 0, "", None, frozenset()
+    )
     ticks = iter(range(0, 10_000, 100))
     with pytest.raises(run.RunError, match="still running"):
         run.wait_job(cluster, "j", timeout_s=250, poll_s=0, out=lambda _: None,

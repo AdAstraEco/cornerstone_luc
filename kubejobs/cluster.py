@@ -1,11 +1,13 @@
 """The only module that talks to the cluster. Everything else sees ``JobState`` / ``PodState``."""
 
 import collections.abc
+import typing
 
 from lightkube import ApiError, Client, KubeConfig
 from lightkube.core.exceptions import ConfigError
 from lightkube.resources.batch_v1 import Job
 from lightkube.resources.core_v1 import Pod
+from lightkube.types import CascadeType
 
 from kubejobs import manifest
 from kubejobs.models import JobState, PodState
@@ -41,7 +43,9 @@ class Cluster:
         try:
             self._client.create(job, dry_run=dry_run)
         except ApiError as exc:
-            raise ClusterError(f"create {job.metadata.name if job.metadata else '?'}: {exc}") from exc
+            raise ClusterError(
+                f"create {job.metadata.name if job.metadata else '?'}: {exc}"
+            ) from exc
 
     def get_job(self, name: str) -> JobState | None:
         try:
@@ -59,10 +63,12 @@ class Cluster:
         labels = _labels(run_id) | ({"phase": phase} if phase else {})
         return sorted(
             (_pod_state(p) for p in self._client.list(Pod, labels=labels)),
-            key=lambda p: (p.name if p.index is None else f"{p.index:06d}"),
+            key=lambda p: p.name if p.index is None else f"{p.index:06d}",
         )
 
-    def logs(self, pod: str, *, tail: int | None = None) -> collections.abc.Iterator[str]:
+    def logs(
+        self, pod: str, *, tail: int | None = None
+    ) -> collections.abc.Iterator[str]:
         try:
             yield from self._client.log(pod, tail_lines=tail, newlines=False)
         except ApiError as exc:
@@ -72,12 +78,15 @@ class Cluster:
         """Delete this run's Jobs (and, by cascade, their pods). Only objects we created."""
         names = [j.name for j in self.jobs(run_id)]
         for name in names:
-            self._client.delete(Job, name, cascade="Background")  # type: ignore[arg-type]
+            self._client.delete(Job, name, cascade=CascadeType.BACKGROUND)
         return names
 
 
-def _labels(run_id: str | None) -> dict[str, str]:
-    labels = {"app": "cornerstone", "app.kubernetes.io/managed-by": "cornerstone-kubejobs"}
+def _labels(run_id: str | None) -> dict[str, typing.Any]:
+    labels = {
+        "app": "cornerstone",
+        "app.kubernetes.io/managed-by": "cornerstone-kubejobs",
+    }
     return labels | ({RUN_LABEL: run_id} if run_id else {})
 
 
@@ -95,7 +104,9 @@ def _job_state(job: Job) -> JobState:
         failed_indexes=(status.failedIndexes if status else "") or "",
         spec_hash=(meta.annotations or {}).get(manifest.SPEC_HASH),
         conditions=frozenset(
-            c.type for c in (status.conditions if status else None) or [] if c.status == "True"
+            c.type
+            for c in (status.conditions if status else None) or []
+            if c.status == "True"
         ),
     )
 
@@ -113,7 +124,8 @@ def _pod_state(pod: Pod) -> PodState:
         index=int(index) if index is not None else None,
         phase=(status.phase if status else None) or "?",
         node=spec.nodeName if spec else None,
-        reason=(terminated.reason if terminated else None) or (status.reason if status else None),
+        reason=(terminated.reason if terminated else None)
+        or (status.reason if status else None),
         exit_code=terminated.exitCode if terminated else None,
         started=status.startTime if status else None,  # type: ignore[arg-type]
     )

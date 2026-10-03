@@ -211,7 +211,7 @@ class RunError(RuntimeError):
 
 
 def wait_job(
-    cluster: "ClusterAPI",
+    cluster: ClusterAPI,
     name: str,
     *,
     timeout_s: float,
@@ -226,7 +226,9 @@ def wait_job(
     while True:
         job = cluster.get_job(name)
         if job is None:
-            raise RunError(f"{name} disappeared while waiting (deleted by someone else?)")
+            raise RunError(
+                f"{name} disappeared while waiting (deleted by someone else?)"
+            )
         now = (job.state, job.active, job.succeeded, job.failed)
         if now != last:
             out(
@@ -238,7 +240,9 @@ def wait_job(
         if job.state in ("complete", "failed") or job.succeeded >= job.completions > 0:
             return job
         if clock() > deadline:
-            raise RunError(f"{name} still {job.state} after {timeout_s:.0f}s; the Job is untouched")
+            raise RunError(
+                f"{name} still {job.state} after {timeout_s:.0f}s; the Job is untouched"
+            )
         sleep(poll_s)
 
 
@@ -293,7 +297,9 @@ def execute(
         if final.state == "failed" or final.failed_indexes:
             out(f"{pp.phase}: FAILED (failed indexes: {final.failed_indexes or 'all'})")
             for pod in cluster.pods(plan.spec.run_id, str(pp.phase)):
-                out(f"  pod {pod.name} index {pod.index} {pod.phase} exit {pod.exit_code} {pod.reason or ''}")
+                out(
+                    f"  pod {pod.name} index {pod.index} {pod.phase} exit {pod.exit_code} {pod.reason or ''}"
+                )
             return False
         out(f"{pp.phase}: done")
     return True

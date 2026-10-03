@@ -1,8 +1,8 @@
 """Plain frozen dataclasses: what a run is asked to do, and the fully resolved Job it becomes."""
 
 import collections.abc
-import datetime
 import dataclasses
+import datetime
 import typing
 
 from kubejobs.phases import Phase

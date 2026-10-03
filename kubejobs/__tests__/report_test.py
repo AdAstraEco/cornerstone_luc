@@ -8,11 +8,19 @@ GIB = 1 << 30
 def line(t: float, message: str = "", logger: str = "x", **fields: object) -> str:
     stamp = f"2026-10-02T10:{int(t) // 60:02d}:{int(t) % 60:02d}+00:00"
     return json.dumps(
-        {"severity": "INFO", "time": stamp, "message": message, "logger": logger, **fields}
+        {
+            "severity": "INFO",
+            "time": stamp,
+            "message": message,
+            "logger": logger,
+            **fields,
+        }
     )
 
 
-def sample(t: float, mem: float, anon: float, cpu_s: float, wrote: int, io: float = 0.0) -> str:
+def sample(
+    t: float, mem: float, anon: float, cpu_s: float, wrote: int, io: float = 0.0
+) -> str:
     return line(t, "resource_sample", "resource_monitor", kind="resource_sample", mem_current_gib=mem,
                 mem_anon_gib=anon, cpu_usage_s=cpu_s, write_bytes=wrote, io_psi_full_avg10=io,
                 localtmp_used_pct=10.0)  # fmt: skip
@@ -22,7 +30,11 @@ LOG = [
     line(0, "phase compute for ['HND']", "__main__"),
     line(1, "harmonize LUC tile_id=20N_090W", "__main__"),
     sample(5, 4.0, 3.0, 10, 0),
-    line(10, "Saving to path_to_zarr=gs://b/s/abc123.zarr with num_workers=8", "jdluc.storage"),
+    line(
+        10,
+        "Saving to path_to_zarr=gs://b/s/abc123.zarr with num_workers=8",
+        "jdluc.storage",
+    ),
     sample(20, 30.0, 25.0, 50, 2 * GIB, io=40.0),
     sample(35, 33.0, 28.0, 110, 5 * GIB, io=10.0),
     line(40, "Finished writing to path_to_zarr=gs://b/s/abc123.zarr", "jdluc.storage"),
@@ -30,7 +42,8 @@ LOG = [
     sample(55, 12.0, 9.0, 130, 5 * GIB),
     sample(70, 15.0, 11.0, 160, 6 * GIB),
     "2026-09-29 18:23:50 - plain text lines are skipped",
-    "[##      ] | 5% Completed | 78.03 s" + sample(75, 16.0, 12.0, 170, 6 * GIB),  # progress bar first
+    "[##      ] | 5% Completed | 78.03 s"
+    + sample(75, 16.0, 12.0, 170, 6 * GIB),  # progress bar first
     line(80, "Done", "__main__"),
 ]
 
@@ -69,7 +82,11 @@ def test_export_marks_its_own_steps_and_a_pod_without_marks_is_one_row() -> None
     export = [
         line(0, "Reading emit scratch output for tile_id=20N_090W", "jdluc.export"),
         sample(5, 1.0, 1.0, 5, 0),
-        line(30, "Writing staged GeoTIFF to path_to_geotiff=/localtmp/x.tif", "jdluc.export"),
+        line(
+            30,
+            "Writing staged GeoTIFF to path_to_geotiff=/localtmp/x.tif",
+            "jdluc.export",
+        ),
         sample(40, 2.0, 1.5, 20, GIB),
     ]
     assert [s.label for s in report.steps(report.parse(export))][:2] == [
@@ -77,4 +94,6 @@ def test_export_marks_its_own_steps_and_a_pod_without_marks_is_one_row() -> None
         "Writing staged GeoTIFF to path_to_geotiff=/localtmp/x.tif",
     ]
     quiet = [sample(0, 1.0, 1.0, 0, 0), sample(15, 1.0, 1.0, 15, 0)]
-    assert [s.label for s in report.steps(report.parse(quiet))] == ["whole pod (no marked steps)"]
+    assert [s.label for s in report.steps(report.parse(quiet))] == [
+        "whole pod (no marked steps)"
+    ]
