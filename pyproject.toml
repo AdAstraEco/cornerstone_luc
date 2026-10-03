@@ -33,6 +33,13 @@ dev = [
     "types-geopandas",
     "types-networkx",
     "types-requests",
+    { include-group = "kubejobs" },
+]
+kubejobs = [
+    "google-auth",
+    "lightkube",
+    "pyyaml",
+    "types-pyyaml",
 ]
 
 [build-system]
@@ -42,7 +49,7 @@ build-backend = "hatchling.build"
 [tool.pytest.ini_options]
 addopts = "-s -v -m 'not integration'"
 markers = [
-    "integration: tests requiring live GCS credentials; excluded by default (run with `-m integration`).",
+    "integration: tests requiring live GCS credentials or cluster access; excluded by default (run with `-m integration`).",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning",
@@ -59,16 +66,18 @@ follow_imports = "skip"
 implicit_reexport = true
 
 [tool.importlinter]
-root_packages = ["jdluc", "validation"]
+root_packages = ["jdluc", "validation", "kubejobs"]
+include_external_packages = true
 
 [[tool.importlinter.contracts]]
-name = "The pipeline never imports the validator"
+name = "The pipeline never imports the validator or the control plane"
 type = "forbidden"
 source_modules = [
     "jdluc",
 ]
 forbidden_modules = [
     "validation",
+    "kubejobs",
 ]
 
 [[tool.importlinter.contracts]]
@@ -120,4 +129,34 @@ forbidden_modules = [
     "jdluc.jurisdictional_direct",
     "jdluc.statistical",
     "jdluc.trace",
+]
+
+[[tool.importlinter.contracts]]
+name = "The Kubernetes job layer reaches the pipeline only through kubejobs.aoi"
+type = "forbidden"
+source_modules = [
+    "kubejobs",
+]
+forbidden_modules = [
+    "jdluc",
+]
+allow_indirect_imports = true
+ignore_imports = [
+    "kubejobs.aoi -> jdluc.**",
+]
+
+[[tool.importlinter.contracts]]
+name = "Only kubejobs.manifest touches the Kubernetes client"
+type = "forbidden"
+source_modules = [
+    "jdluc",
+    "validation",
+    "kubejobs",
+]
+forbidden_modules = [
+    "lightkube",
+]
+allow_indirect_imports = true
+ignore_imports = [
+    "kubejobs.manifest -> lightkube",
 ]
