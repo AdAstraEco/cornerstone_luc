@@ -1,6 +1,7 @@
 """Plain frozen dataclasses: what a run is asked to do, and the fully resolved Job it becomes."""
 
 import collections.abc
+import datetime
 import dataclasses
 import typing
 
@@ -102,3 +103,40 @@ class RunPlan:
     @property
     def errors(self) -> tuple[Check, ...]:
         return tuple(c for c in self.checks if c.severity == "error")
+
+
+@dataclasses.dataclass(frozen=True)
+class JobState:
+    """What the cluster says about one Job."""
+
+    name: str
+    phase: str
+    run_id: str
+    completions: int
+    active: int
+    succeeded: int
+    failed: int
+    failed_indexes: str
+    spec_hash: str | None
+    conditions: frozenset[str]
+
+    @property
+    def state(self) -> str:
+        if "Complete" in self.conditions:
+            return "complete"
+        if "Failed" in self.conditions:
+            return "failed"
+        if self.active or self.succeeded or self.failed:
+            return "running"
+        return "pending"
+
+
+@dataclasses.dataclass(frozen=True)
+class PodState:
+    name: str
+    index: int | None
+    phase: str
+    node: str | None
+    reason: str | None
+    exit_code: int | None
+    started: datetime.datetime | None

@@ -159,4 +159,5 @@ forbidden_modules = [
 allow_indirect_imports = true
 ignore_imports = [
     "kubejobs.manifest -> lightkube",
+    "kubejobs.cluster -> lightkube",
 ]
