@@ -15,6 +15,12 @@ The signal that matters most is **``io_psi_full_avg10``** (from ``io.pressure``)
 high while CPU is near zero is the ``balance_dirty_pages`` write-throttle we were hitting --
 the exact state that is invisible without this. See ``docs/gke-disk-io-findings.md``.
 
+Every line also carries its fields as ``extra={"fields": ...}`` so ``structured_logging`` can
+emit them as top-level ``jsonPayload`` keys. A SIGTERM (eviction, a deadline, a node drain) is
+turned into a normal exit so the closing ``resource_summary`` is written with
+``termination_hint="sigterm"``; a SIGKILL (cgroup OOM) cannot be caught, so the last periodic
+sample is the evidence.
+
 Grep a run with e.g. ``... | grep resource_summary`` for the one-line-per-stage verdict, or
 ``resource_sample`` for the time series.
 """
@@ -24,6 +30,7 @@ import json
 import logging
 import os
 import shutil
+import signal
 import threading
 import time
 import typing
@@ -82,8 +89,20 @@ def _read_psi_full_avg10(path: str) -> float | None:
     return None
 
 
-def _proc_write_bytes() -> int | None:
-    """This process's cumulative ``write_bytes`` -- the same counter the incident measured."""
+def _pod_write_bytes() -> int | None:
+    """Cumulative bytes written by the whole pod: ``wbytes`` summed over ``io.stat`` devices.
+
+    ``/proc/self/io`` only sees this process, and dask worker subprocesses write too, so the
+    cgroup counter is preferred and the process counter is the fallback (macOS, cgroup v1).
+    """
+    wbytes = [
+        int(token.partition("=")[2])
+        for line in (_read_text(f"{CGROUP_ROOT}/io.stat") or "").splitlines()
+        for token in line.split()
+        if token.startswith("wbytes=")
+    ]
+    if wbytes:
+        return sum(wbytes)
     for line in (_read_text("/proc/self/io") or "").splitlines():
         if line.startswith("write_bytes:"):
             try:
@@ -110,7 +129,16 @@ def _sample(temp_dir: str) -> dict[str, typing.Any]:
     if mem_current is not None:
         out["mem_current_gib"] = round(mem_current / (1 << 30), 2)
         if mem_max:
+            out["mem_limit_gib"] = round(mem_max / (1 << 30), 2)
             out["mem_pct"] = round(100.0 * mem_current / mem_max, 1)
+    # memory.current counts page cache, which fills the cgroup by design; anon is the heap
+    # that can actually be OOM-killed, so it is the number to judge memory pressure by.
+    stat = _read_keyed(f"{CGROUP_ROOT}/memory.stat")
+    for key in ("anon", "file", "active_file", "inactive_file", "shmem"):
+        if key in stat:
+            out[f"mem_{key}_gib"] = round(stat[key] / (1 << 30), 2)
+    if "anon" in stat and mem_max:
+        out["mem_anon_pct"] = round(100.0 * stat["anon"] / mem_max, 1)
 
     for field, path in (
         ("io_psi_full_avg10", f"{CGROUP_ROOT}/io.pressure"),
@@ -121,7 +149,20 @@ def _sample(temp_dir: str) -> dict[str, typing.Any]:
         if value is not None:
             out[field] = value
 
-    write_bytes = _proc_write_bytes()
+    # Cumulative, so a sample says whether the cgroup has ever hit its limit, not only now.
+    for key, count in _read_keyed(f"{CGROUP_ROOT}/memory.events").items():
+        if key in ("high", "max", "oom", "oom_kill"):
+            out[f"mem_events_{key}"] = count
+
+    cpu = _read_keyed(f"{CGROUP_ROOT}/cpu.stat")
+    if "usage_usec" in cpu:
+        out["cpu_usage_s"] = round(cpu["usage_usec"] / 1e6, 1)
+    if "nr_throttled" in cpu:
+        out["cpu_nr_throttled"] = cpu["nr_throttled"]
+    if "throttled_usec" in cpu:
+        out["cpu_throttled_s"] = round(cpu["throttled_usec"] / 1e6, 1)
+
+    write_bytes = _pod_write_bytes()
     if write_bytes is not None:
         out["write_bytes"] = write_bytes
 
@@ -132,23 +173,31 @@ def _sample(temp_dir: str) -> dict[str, typing.Any]:
     return out
 
 
+def _emit(payload: dict[str, typing.Any]) -> None:
+    """The JSON text keeps ``grep resource_summary`` working; ``fields`` makes it queryable."""
+    logger.info("%s", json.dumps(payload), extra={"fields": payload})
+
+
 class _Sampler(threading.Thread):
     def __init__(self, label: str, temp_dir: str, interval: float) -> None:
         super().__init__(name="resource-monitor", daemon=True)
         self._label = label
         self._temp_dir = temp_dir
         self._interval = interval
-        self._stop = threading.Event()
+        self._stop_event = threading.Event()
         self._start_time = time.monotonic()
         # Rolling extrema for the end-of-stage summary.
         self._peak_mem_pct = 0.0
         self._peak_io_psi = 0.0
         self._peak_localtmp_pct = 0.0
+        self._peak_anon_pct = 0.0
+        self.termination_hint: str | None = None
         self._first_write_bytes: int | None = None
         self._last_write_bytes: int | None = None
 
     def _observe(self, sample: dict[str, typing.Any]) -> None:
         self._peak_mem_pct = max(self._peak_mem_pct, sample.get("mem_pct", 0.0))
+        self._peak_anon_pct = max(self._peak_anon_pct, sample.get("mem_anon_pct", 0.0))
         self._peak_io_psi = max(self._peak_io_psi, sample.get("io_psi_full_avg10", 0.0))
         self._peak_localtmp_pct = max(
             self._peak_localtmp_pct, sample.get("localtmp_used_pct", 0.0)
@@ -160,23 +209,21 @@ class _Sampler(threading.Thread):
             self._last_write_bytes = write_bytes
 
     def run(self) -> None:
-        while not self._stop.is_set():
+        while not self._stop_event.is_set():
             sample = _sample(self._temp_dir)
             self._observe(sample)
-            logger.info(
-                "%s",
-                json.dumps({"kind": "resource_sample", "label": self._label, **sample}),
-            )
-            self._stop.wait(self._interval)
+            _emit({"kind": "resource_sample", "label": self._label, **sample})
+            self._stop_event.wait(self._interval)
 
     def stop_and_summarize(self) -> None:
-        self._stop.set()
+        self._stop_event.set()
         self.join(timeout=self._interval + 5.0)
         summary: dict[str, typing.Any] = {
             "kind": "resource_summary",
             "label": self._label,
             "duration_s": round(time.monotonic() - self._start_time, 1),
             "peak_mem_pct": round(self._peak_mem_pct, 1),
+            "peak_mem_anon_pct": round(self._peak_anon_pct, 1),
             "peak_io_psi_full_avg10": round(self._peak_io_psi, 2),
             "peak_localtmp_used_pct": round(self._peak_localtmp_pct, 1),
         }
@@ -193,7 +240,9 @@ class _Sampler(threading.Thread):
         cpu = _read_keyed(f"{CGROUP_ROOT}/cpu.stat")
         if "throttled_usec" in cpu:
             summary["cpu_throttled_s"] = round(cpu["throttled_usec"] / 1e6, 1)
-        logger.info("%s", json.dumps(summary))
+        if self.termination_hint:
+            summary["termination_hint"] = self.termination_hint
+        _emit(summary)
 
 
 @contextlib.contextmanager
@@ -211,9 +260,22 @@ def monitor(
     temp_dir = temp_dir or os.environ.get("TMPDIR") or "/tmp"
     sampler = _Sampler(label=label, temp_dir=temp_dir, interval=interval)
     sampler.start()
+
+    def on_sigterm(signum: int, frame: object) -> typing.NoReturn:
+        sampler.termination_hint = "sigterm"
+        raise SystemExit(128 + signum)  # unwinds through the finally below
+
+    # Only the main thread may install handlers; anywhere else, skip the hint.
+    previous = (
+        signal.signal(signal.SIGTERM, on_sigterm)
+        if threading.current_thread() is threading.main_thread()
+        else None
+    )
     try:
         yield
     finally:
+        if previous is not None:
+            signal.signal(signal.SIGTERM, previous)
         try:
             sampler.stop_and_summarize()
         except Exception:
