@@ -7,7 +7,9 @@ GIB = 1 << 30
 
 def line(t: float, message: str = "", logger: str = "x", **fields: object) -> str:
     stamp = f"2026-10-02T10:{int(t) // 60:02d}:{int(t) % 60:02d}+00:00"
-    return json.dumps({"time": stamp, "message": message, "logger": logger, **fields})
+    return json.dumps(
+        {"severity": "INFO", "time": stamp, "message": message, "logger": logger, **fields}
+    )
 
 
 def sample(t: float, mem: float, anon: float, cpu_s: float, wrote: int, io: float = 0.0) -> str:
@@ -28,6 +30,7 @@ LOG = [
     sample(55, 12.0, 9.0, 130, 5 * GIB),
     sample(70, 15.0, 11.0, 160, 6 * GIB),
     "2026-09-29 18:23:50 - plain text lines are skipped",
+    "[##      ] | 5% Completed | 78.03 s" + sample(75, 16.0, 12.0, 170, 6 * GIB),  # progress bar first
     line(80, "Done", "__main__"),
 ]
 
@@ -50,7 +53,28 @@ def test_usage_joins_samples_to_the_step_window() -> None:
     assert write.peak_io_psi == 40.0
 
 
+def test_a_sample_after_a_dask_progress_bar_is_still_read() -> None:
+    records = report.parse(LOG)
+    emit = report.usage(records, report.steps(records)[2])
+    assert emit.samples == 3 and emit.peak_mem_gib == 16.0
+
+
 def test_table_has_a_row_per_step_and_survives_a_log_without_json() -> None:
     text = report.table(LOG)
     assert text.count("\n") == 3 and "write abc123" in text
     assert "no JSON log lines" in report.table(["plain text only"])
+
+
+def test_export_marks_its_own_steps_and_a_pod_without_marks_is_one_row() -> None:
+    export = [
+        line(0, "Reading emit scratch output for tile_id=20N_090W", "jdluc.export"),
+        sample(5, 1.0, 1.0, 5, 0),
+        line(30, "Writing staged GeoTIFF to path_to_geotiff=/localtmp/x.tif", "jdluc.export"),
+        sample(40, 2.0, 1.5, 20, GIB),
+    ]
+    assert [s.label for s in report.steps(report.parse(export))][:2] == [
+        "Reading emit scratch output for tile_id=20N_090W",
+        "Writing staged GeoTIFF to path_to_geotiff=/localtmp/x.tif",
+    ]
+    quiet = [sample(0, 1.0, 1.0, 0, 0), sample(15, 1.0, 1.0, 15, 0)]
+    assert [s.label for s in report.steps(report.parse(quiet))] == ["whole pod (no marked steps)"]

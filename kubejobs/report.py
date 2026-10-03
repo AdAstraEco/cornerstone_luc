@@ -13,6 +13,8 @@ import json
 import re
 import typing
 
+# Loggers whose lines mark a step: the phase script, and export (which logs its own steps).
+MARKERS = ("__main__", "jdluc.export")
 ZARR = re.compile(r"path_to_zarr=\S*?/([0-9a-f]+)\.zarr")
 
 
@@ -44,14 +46,17 @@ def parse(lines: typing.Iterable[str]) -> list[dict[str, typing.Any]]:
     """The JSON records among ``lines``, in time order; text lines are ignored."""
     records = []
     for line in lines:
-        if line.startswith("{"):
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if "time" in record:
-                record["_t"] = datetime.datetime.fromisoformat(record["time"])
-                records.append(record)
+        # dask's progress bar redraws with \r and no newline, so a JSON line can follow it
+        start = line.find('{"severity"')
+        if start < 0:
+            continue
+        try:
+            record = json.loads(line[start:])
+        except json.JSONDecodeError:
+            continue
+        if "time" in record:
+            record["_t"] = datetime.datetime.fromisoformat(record["time"])
+            records.append(record)
     return sorted(records, key=lambda r: r["_t"])
 
 
@@ -62,9 +67,12 @@ def steps(records: list[dict[str, typing.Any]]) -> list[Step]:
     marks = [
         r
         for r in records
-        if r.get("logger") == "__main__" and not r["message"].startswith(("phase ", "Done"))
+        if r.get("logger") in MARKERS
+        and not r["message"].startswith(("phase ", "Done", "Ingested "))
     ]
     last = records[-1]["_t"]
+    if not marks:
+        return [Step("whole pod (no marked steps)", records[0]["_t"], last)]
     out: list[Step] = []
     for i, mark in enumerate(marks):
         end = marks[i + 1]["_t"] if i + 1 < len(marks) else last
