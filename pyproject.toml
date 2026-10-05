@@ -70,7 +70,7 @@ root_packages = ["jdluc", "validation", "kubejobs"]
 include_external_packages = true
 
 [[tool.importlinter.contracts]]
-name = "The pipeline never imports the validator or the control plane"
+name = "The pipeline never imports the validator or the Kubernetes job layer"
 type = "forbidden"
 source_modules = [
     "jdluc",

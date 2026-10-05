@@ -34,7 +34,11 @@ def test_ingest_world_has_no_countries_and_compute_skips_ingest(make_settings) -
         "4",
     )
     assert "--skip-ingest" in jobs[Phase.COMPUTE].args  # type: ignore[union-attr]
-    assert "--tile-ids" not in jobs[Phase.REDUCE].args  # type: ignore[union-attr]
+    # reduce and mosaic take their tiles from the countries; a tile list could mis-name the output
+    for phase in (Phase.REDUCE, Phase.MOSAIC):
+        assert "--tile-ids" not in jobs[phase].args  # type: ignore[union-attr]
+        assert jobs[phase].args[-1] == "HND"  # type: ignore[union-attr]
+    assert jobs[Phase.EXPORT].args[-3:] == ("--tile-ids", "20N_090W", "HND")  # type: ignore[union-attr]
 
 
 def test_memory_request_equals_limit_and_roles_pick_pools(make_settings) -> None:  # type: ignore[no-untyped-def]

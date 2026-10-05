@@ -97,7 +97,7 @@ def phase_args(spec: RunSpec, phase: Phase) -> tuple[str, ...]:
         args += ["--concurrency", str(spec.ingest_concurrency)]
     if phase == Phase.COMPUTE and spec.skip_ingest:
         args.append("--skip-ingest")
-    if spec.aoi.tiles and (phase.is_per_tile or phase == Phase.MOSAIC):
+    if spec.aoi.tiles and phase.is_per_tile:
         args += ["--tile-ids", ",".join(spec.aoi.tiles)]
     if (
         phase != Phase.INGEST_WORLD
@@ -144,7 +144,7 @@ def job_for(settings: Settings, spec: RunSpec, phase: Phase) -> JobSpec:
         run_id=spec.run_id,
         completions=completions,
         parallelism=parallelism,
-        tiles=tiles if phase.is_per_tile or phase == Phase.MOSAIC else (),
+        tiles=tiles if phase.is_per_tile else (),
         command=COMMAND,
         args=phase_args(spec, phase),
         resources=ResourceSpec(

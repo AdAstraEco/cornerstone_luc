@@ -2,9 +2,8 @@
 
 The ``Phase`` values are the ``--phase`` contract with ``infra/run_phase.py``, which cannot
 import this package (the image installs ``jdluc`` only), so the two are kept equal by
-``phases_test.py``. Sizes come from the 29 Sept to 2 Oct 2026 single-tile run
-(docs/control-plane/01-kubernetes-library.md section 6); where a phase was not measured the old
-limit is kept and only the request is raised to equal it.
+``phases_test.py``. Sizes come from the 29 Sept to 2 Oct 2026 single-tile run;
+where a phase was not measured the old limit is kept and only the request is raised to equal it.
 """
 
 import dataclasses

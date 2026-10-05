@@ -66,7 +66,7 @@ def build_job(spec: JobSpec) -> Job:
             },
         ),
         volumeMounts=[
-            # Config.from_dot_env falls back to this file for any field the environment lacks
+            # Config.from_dot_env reads this file
             core_v1.VolumeMount(
                 name="dotenv", mountPath="/app/.env", subPath=".env", readOnly=True
             ),
