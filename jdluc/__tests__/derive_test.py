@@ -11,7 +11,6 @@ Read top to bottom as:
 
 import collections.abc
 import dataclasses
-import itertools
 import math
 import pathlib
 
@@ -20,7 +19,7 @@ import numpy
 import pytest
 import xarray
 
-from jdluc import derive, emit
+from jdluc import derive, emit, export
 from jdluc.__tests__.emit_test import get_harmonized_dset_for_every_case
 from jdluc.datasets.ipcc_climate_zones import Zone
 from jdluc.derive import CIE, CropClass, CropClassLayer, Factors, PeatRegime
@@ -427,9 +426,16 @@ def test_crop_class_layer_total_is_the_sum_of_its_terms() -> None:
 # ============================================================================================
 
 
-def get_band(dset: xarray.Dataset, field: str, *values: str) -> numpy.ndarray:
-    """`field`'s band, for its crop class and/or discounting (in that order) if it has them."""
-    return dset[derive.get_band_name(field, *values)].data
+def get_band(
+    dset: xarray.Dataset,
+    field: str,
+    crop_class: str | None = None,
+    discounting: str | None = None,
+) -> numpy.ndarray:
+    """`field`'s (y, x) values, at `crop_class` and/or `discounting` if it carries them."""
+    darray = dset[derive.get_variable_name(field)]
+    point = {derive.CROP_CLASS: crop_class, derive.DISCOUNTING: discounting}
+    return darray.sel({dim: point[dim] for dim in darray.dims if dim in point}).data
 
 
 @dataclasses.dataclass(frozen=True)
@@ -443,17 +449,8 @@ class Comparison:
     layer: xarray.Dataset
 
     def band(self, field: str) -> numpy.ndarray:
-        """The layer's band for `field`, at this comparison's crop class and discounting."""
-        dims = derive.FIELD_TO_DIMS[field]
-        values = [
-            value
-            for dim, value in (
-                (derive.CROP_CLASS, self.crop_class),
-                (derive.DISCOUNTING, self.discounting),
-            )
-            if dim in dims
-        ]
-        return get_band(self.layer, field, *values)
+        """The layer's `field`, at this comparison's crop class and discounting."""
+        return get_band(self.layer, field, self.crop_class, self.discounting)
 
     @property
     def to_cropland(self) -> numpy.ndarray:
@@ -491,23 +488,18 @@ def get_comparison(crop_class: CropClass) -> Comparison:
     )
 
 
-def test_derive_writes_one_band_per_field_crop_class_and_discounting() -> None:
+def test_derive_writes_every_field_with_the_requested_classes_and_discountings() -> (
+    None
+):
     output = emit.get_output_dset(dset=get_harmonized_dset_for_every_case())
-    crop_classes = (CropClass.ANNUAL, CropClass.PERENNIAL)
-    discountings = ("equal", "linear")
     layer = derive.derive(
-        dset=output, crop_classes=crop_classes, discountings=discountings
+        dset=output,
+        crop_classes=(CropClass.ANNUAL, CropClass.PERENNIAL),
+        discountings=("equal", "linear"),
     )
-    expected = []
-    for field, dims in derive.FIELD_TO_DIMS.items():
-        selections = [
-            crop_classes if derive.CROP_CLASS in dims else (None,),
-            discountings if derive.DISCOUNTING in dims else (None,),
-        ]
-        for crop_class, discounting in itertools.product(*selections):
-            values = [value for value in (crop_class, discounting) if value]
-            expected.append(derive.get_band_name(field, *values))
-    assert list(layer) == expected
+    assert list(layer) == [derive.get_variable_name(field) for field in derive.MENU]
+    assert list(layer[derive.CROP_CLASS].values) == ["annual", "perennial"]
+    assert list(layer[derive.DISCOUNTING].values) == ["equal", "linear"]
 
 
 def test_each_field_carries_the_dimensions_of_what_it_depends_on() -> None:
@@ -518,7 +510,9 @@ def test_each_field_carries_the_dimensions_of_what_it_depends_on() -> None:
         "peat_transformation_emissions_amortized",
     }
     both = {"mineral_soil_emissions_amortized", "total_emissions_amortized"}
-    for field, dims in derive.FIELD_TO_DIMS.items():
+    stand_in = derive.get_stand_in()
+    for field in derive.MENU:
+        dims = set(stand_in[derive.get_variable_name(field)].dims) - {"y", "x"}
         if field in by_class:
             assert dims == {derive.CROP_CLASS}, field
         elif field in discounted:
@@ -529,20 +523,32 @@ def test_each_field_carries_the_dimensions_of_what_it_depends_on() -> None:
             assert dims == set(), field
 
 
-def test_band_names_carry_their_units() -> None:
+def test_variable_names_carry_their_units() -> None:
     assert (
-        derive.get_band_name("total_emissions_amortized")
+        derive.get_variable_name("total_emissions_amortized")
         == "ccl-total-emissions-amortized:tco2e-per-ha"
     )
     assert (
-        derive.get_band_name("peat_occupation_emissions_per_year")
+        derive.get_variable_name("peat_occupation_emissions_per_year")
         == "ccl-peat-occupation-emissions-per-year:tco2e-per-ha-per-year"
     )
-    assert derive.get_band_name("flu") == "ccl-flu"
-    assert (
-        derive.get_band_name("total_emissions_amortized", CropClass.PADDY_RICE, "equal")
-        == "ccl-total-emissions-amortized:tco2e-per-ha:paddy-rice:equal"
+    assert derive.get_variable_name("flu") == "ccl-flu"
+
+
+def test_cog_band_names_append_the_crop_class_then_the_discounting() -> None:
+    deliverable = export.Deliverable(
+        name="one",
+        bands=(
+            derive.band(
+                "total_emissions_amortized",
+                crop_classes=(CropClass.PADDY_RICE,),
+                discountings=("equal",),
+            ),
+        ),
     )
+    assert export.get_band_names(deliverable) == [
+        "ccl-total-emissions-amortized:tco2e-per-ha:paddy-rice:equal"
+    ]
 
 
 def test_annual_agrees_with_derive_from_cie_on_cropland() -> None:
@@ -660,28 +666,40 @@ def test_read_cie_reads_missing_source_and_year_as_no_conversion() -> None:
 # ============================================================================================
 
 
-def test_a_deliverable_only_takes_bands_from_the_menu() -> None:
+def cog_band(dset: xarray.Dataset, field: str, *values: str) -> numpy.ndarray:
+    """A deliverable's COG band for `field` at `values` (crop class, then discounting)."""
+    return dset[":".join((derive.get_variable_name(field), *values))].data
+
+
+def to_cog_dataset(deliverable: export.Deliverable) -> xarray.Dataset:
+    output = emit.get_output_dset(dset=get_harmonized_dset_for_every_case()).compute()
+    return export.to_cog_dataset(
+        derive.derive_for_deliverable(output, deliverable), deliverable
+    ).compute()
+
+
+def test_a_band_only_takes_fields_from_the_menu() -> None:
     with pytest.raises(AssertionError, match="not on the menu"):
-        derive.Deliverable(name="typo", bands=(derive.Band("total_emisions"),))
+        derive.band("total_emisions")
 
 
 @pytest.mark.parametrize(
     "band",
     (
         pytest.param(
-            derive.Band("total_emissions_amortized", discountings=("linear",)),
+            derive.band("total_emissions_amortized", discountings=("linear",)),
             id="a crop-class field without classes",
         ),
         pytest.param(
-            derive.Band("total_emissions_amortized", crop_classes=(CropClass.ANNUAL,)),
+            derive.band("total_emissions_amortized", crop_classes=(CropClass.ANNUAL,)),
             id="a discounted field without discountings",
         ),
         pytest.param(
-            derive.Band("hectares_per_pixel", crop_classes=(CropClass.ANNUAL,)),
+            derive.band("hectares_per_pixel", crop_classes=(CropClass.ANNUAL,)),
             id="classes for a field that does not vary by them",
         ),
         pytest.param(
-            derive.Band(
+            derive.band(
                 "peat_occupation_emissions_per_year",
                 crop_classes=(CropClass.ANNUAL,),
                 discountings=("linear",),
@@ -691,108 +709,116 @@ def test_a_deliverable_only_takes_bands_from_the_menu() -> None:
     ),
 )
 def test_a_band_selects_exactly_the_dimensions_its_field_carries(
-    band: derive.Band,
+    band: export.Band,
 ) -> None:
     with pytest.raises(AssertionError, match="varies by"):
-        derive.check_deliverable(derive.Deliverable(name="bad", bands=(band,)))
-
-
-def test_a_deliverable_only_takes_known_discountings() -> None:
-    with pytest.raises(AssertionError, match="unknown discountings"):
-        derive.Deliverable(
-            name="typo",
-            bands=(derive.Band("discount_weight", discountings=("lineal",)),),
+        export.check_deliverable(
+            export.Deliverable(name="bad", bands=(band,)), derive.get_stand_in()
         )
 
 
+def test_a_band_only_takes_known_discountings() -> None:
+    with pytest.raises(AssertionError, match="unknown discountings"):
+        derive.band("discount_weight", discountings=("lineal",))
+
+
 @pytest.mark.parametrize("deliverable", list(derive.NAME_TO_DELIVERABLE.values()))
-def test_derive_deliverable_writes_its_bands_in_order(
-    deliverable: derive.Deliverable,
+def test_a_deliverable_is_built_for_only_the_classes_and_discountings_it_names(
+    deliverable: export.Deliverable,
 ) -> None:
     output = emit.get_output_dset(dset=get_harmonized_dset_for_every_case())
-    result = derive.derive_deliverable(dset=output, deliverable=deliverable)
-    assert list(result) == [
-        name for band in deliverable.bands for name in derive.get_band_names(band)
-    ]
+    layer = derive.derive_for_deliverable(output, deliverable)
+    selections = export.get_selections(deliverable)
+    for dim in (derive.CROP_CLASS, derive.DISCOUNTING):
+        assert list(layer[dim].values) == selections[dim]
+
+
+@pytest.mark.parametrize("deliverable", list(derive.NAME_TO_DELIVERABLE.values()))
+def test_a_deliverables_cog_bands_are_in_order(
+    deliverable: export.Deliverable,
+) -> None:
+    assert list(to_cog_dataset(deliverable)) == export.get_band_names(deliverable)
 
 
 def test_crop_class_emissions_carries_each_classs_total() -> None:
     output = emit.get_output_dset(dset=get_harmonized_dset_for_every_case()).compute()
     layer = derive.derive(dset=output).compute()
-    result = derive.derive_deliverable(
-        dset=output, deliverable=derive.CROP_CLASS_EMISSIONS
-    ).compute()
+    result = to_cog_dataset(derive.CROP_CLASS_EMISSIONS)
     for crop_class in CropClass:
-        numpy.testing.assert_array_equal(
-            get_band(result, "total_emissions_amortized", crop_class, "linear"),
+        # NB: the COG is float32; the layer keeps the precision of its inputs
+        numpy.testing.assert_allclose(
+            cog_band(result, "total_emissions_amortized", crop_class, "linear"),
             get_band(layer, "total_emissions_amortized", crop_class, "linear"),
+            rtol=1e-6,
         )
     # The classes really differ: perennials keep their soil carbon in the tropics
     assert not numpy.array_equal(
-        get_band(result, "total_emissions_amortized", CropClass.ANNUAL, "linear"),
-        get_band(result, "total_emissions_amortized", CropClass.PERENNIAL, "linear"),
+        cog_band(result, "total_emissions_amortized", CropClass.ANNUAL, "linear"),
+        cog_band(result, "total_emissions_amortized", CropClass.PERENNIAL, "linear"),
     )
 
 
 def test_perennial_discounting_comparison_discounts_each_term_both_ways() -> None:
     output = emit.get_output_dset(dset=get_harmonized_dset_for_every_case()).compute()
-    result = derive.derive_deliverable(
-        dset=output, deliverable=derive.PERENNIAL_DISCOUNTING_COMPARISON
-    ).compute()
+    result = to_cog_dataset(derive.PERENNIAL_DISCOUNTING_COMPARISON)
     cie = derive.read_cie(output)
     converted = derive.is_conversion(cie.conversion_source).data
     vegetation = numpy.where(converted, cie.vegetation_emissions_undiscounted.data, 0)
     # Equal discounting charges 1/20 of every conversion in the window, whatever its year
     in_window = (cie.conversion_year.data > 2000) & (cie.conversion_year.data <= 2020)
     numpy.testing.assert_allclose(
-        get_band(result, "vegetation_emissions_amortized", "equal"),
+        cog_band(result, "vegetation_emissions_amortized", "equal"),
         numpy.where(in_window, vegetation * 0.05, 0),
         rtol=1e-6,
     )
     assert not numpy.allclose(
-        get_band(result, "vegetation_emissions_amortized", "equal"),
-        get_band(result, "vegetation_emissions_amortized", "linear"),
+        cog_band(result, "vegetation_emissions_amortized", "equal"),
+        cog_band(result, "vegetation_emissions_amortized", "linear"),
     )
     # Peat occupation is one band, and each discounting's total is its own terms' sum
-    occupation = get_band(result, "peat_occupation_emissions_per_year", "perennial")
-    assert (
-        list(result).count(
-            derive.get_band_name("peat_occupation_emissions_per_year", "perennial")
-        )
-        == 1
-    )
+    occupation = cog_band(result, "peat_occupation_emissions_per_year", "perennial")
+    assert [name for name in result if "peat-occupation-emissions" in name] == [
+        "ccl-peat-occupation-emissions-per-year:tco2e-per-ha-per-year:perennial"
+    ]
     for discounting in ("equal", "linear"):
         numpy.testing.assert_allclose(
-            get_band(result, "total_emissions_amortized", "perennial", discounting),
-            get_band(result, "vegetation_emissions_amortized", discounting)
-            + get_band(
+            cog_band(result, "total_emissions_amortized", "perennial", discounting),
+            cog_band(result, "vegetation_emissions_amortized", discounting)
+            + cog_band(
                 result, "mineral_soil_emissions_amortized", "perennial", discounting
             )
-            + get_band(result, "peat_transformation_emissions_amortized", discounting)
+            + cog_band(result, "peat_transformation_emissions_amortized", discounting)
             + occupation,
             rtol=1e-5,
         )
 
 
-def test_export_workflow_writes_one_cog_per_deliverable(
+def test_export_workflow_writes_each_deliverable_in_its_format(
     monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
 ) -> None:
     import rasterio
 
     output = emit.get_output_dset(dset=get_harmonized_dset_for_every_case())
     monkeypatch.setattr(emit, "workflow", lambda tile_id: output)
-    names = [derive.CROP_CLASS_EMISSIONS.name, derive.PERENNIAL_DEBUG.name]
+    cog, zarr = derive.CROP_CLASS_EMISSIONS, derive.PERENNIAL_DEBUG
+    assert (cog.format, zarr.format) == (export.Format.COG, export.Format.ZARR)
     uris = derive.export_workflow(
-        tile_id="00N_000E", deliverable_names=names, output_root=str(tmp_path)
+        tile_id="00N_000E",
+        deliverable_names=[cog.name, zarr.name],
+        output_root=str(tmp_path),
     )
-    assert uris == [str(tmp_path / name / "00N_000E.tif") for name in names]
-    for uri, name in zip(uris, names, strict=True):
-        with rasterio.open(uri) as cog:
-            assert list(cog.descriptions) == [
-                band_name
-                for band in derive.NAME_TO_DELIVERABLE[name].bands
-                for band_name in derive.get_band_names(band)
-            ]
+    assert uris == [
+        str(tmp_path / cog.name / "00N_000E.tif"),
+        str(tmp_path / zarr.name / "00N_000E.zarr"),
+    ]
+    with rasterio.open(uris[0]) as dataset:
+        assert list(dataset.descriptions) == export.get_band_names(cog)
+    written = xarray.open_zarr(uris[1], consolidated=False)
+    assert set(written) == {band.variable for band in zarr.bands}
+    total = written[derive.get_variable_name("total_emissions_amortized")]
+    assert set(total.dims) == {derive.DISCOUNTING, derive.CROP_CLASS, "y", "x"}
+    assert list(total[derive.CROP_CLASS].values) == ["perennial"]
+    assert written.attrs["watershed-product-name"] == zarr.name
 
 
 # ============================================================================================

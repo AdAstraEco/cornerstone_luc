@@ -12,30 +12,28 @@ There is no destination gate: unlike `emit.derive_from_cie`, nothing here asks w
 the pixel actually became. Every pixel answers "what if this crop class were here?".
 
 The layer is lazy and never stored. What gets materialised is a deliverable: a named choice of
-crop class and layer fields, written per tile as a COG straight from the CIE zarr. A debugging
-export is just another deliverable, with more of the intermediate fields.
+layer fields, crop classes and discountings, written per tile by `export` straight from the
+CIE zarr. A debugging export is just another deliverable, with more of the intermediate fields.
 
 The file reads top to bottom as:
 
 1. Factor tables  -- the numbers, with their sources
 2. Calculations   -- one function per row of the layer, arithmetic only
-3. Deliverables   -- the products, each a crop class and a choice of layer fields
-4. Plumbing       -- reading CIE bands, table lookups, writing datasets and COGs
+3. Deliverables   -- the products, each a choice of layer fields, crop classes and discountings
+4. Plumbing       -- reading CIE bands, table lookups, and the call to `export`
 """
 
-import argparse
 import collections.abc
 import dataclasses
 import enum
-import itertools
 import logging
 import math
-import typing
 
 import numpy
+import numpy.typing
 import xarray
 
-from jdluc import config, emit, storage
+from jdluc import emit, export
 from jdluc.datasets.ipcc_climate_zones import Zone
 
 logger = logging.getLogger(__name__)
@@ -154,12 +152,15 @@ PEAT_TRANSFORMATION_FACTOR = 1.0
 # sums to 1. Conversions outside the window are charged nothing.
 LOOKBACK_YEARS = emit.LOOKBACK_YEARS
 CONVERSION_YEAR = "conversion_year"
+# The dimensions the layer adds beyond the pixel grid (see section 2)
+CROP_CLASS = "crop_class"
+DISCOUNTING = "discounting"
 ASSESSMENT_WINDOW = numpy.arange(
     REFERENCE_YEAR - LOOKBACK_YEARS + 1, REFERENCE_YEAR + 1
 )
 
 
-def get_discount_weights(weights: collections.abc.Sequence[float]) -> xarray.DataArray:
+def get_discount_weights(weights: numpy.typing.ArrayLike) -> xarray.DataArray:
     """`weights`, one per year of the assessment window, as a (conversion_year: 20) array."""
     return xarray.DataArray(
         numpy.asarray(weights, dtype=numpy.float64),
@@ -209,8 +210,8 @@ assert all(
     for weights in DISCOUNTING_TO_WEIGHTS.values()
 )
 assert numpy.allclose(
-    LINEAR_DISCOUNT_WEIGHTS.coarsen({CONVERSION_YEAR: 5}).mean(),
-    FIVE_YEAR_SPAN_DISCOUNT_WEIGHTS.coarsen({CONVERSION_YEAR: 5}).mean(),
+    LINEAR_DISCOUNT_WEIGHTS.values.reshape(-1, 5).mean(axis=1),
+    FIVE_YEAR_SPAN_DISCOUNT_WEIGHTS.values.reshape(-1, 5).mean(axis=1),
 )
 
 assert all(
@@ -459,100 +460,106 @@ def crop_class_layer(
 # ============================================================================================
 # 3. Deliverables
 #
-# A deliverable is a product written per tile, as a COG. Each band is a layer field and, for
-# the fields that vary by them, the crop classes and discounting schemes to write it for: one
-# COG band per combination. Any field of `CropClassLayer` is on the menu. Defining a new
-# product means adding an entry here.
+# A deliverable is a product written per tile (see `export`). Each band is a layer field and,
+# for the fields that vary by them, the crop classes and discounting schemes to write it for. In
+# a COG that is one band per combination; a zarr keeps them as dimensions. Any field of
+# `CropClassLayer` is on the menu. Defining a new product means adding an entry here.
 # ============================================================================================
 
 MENU: tuple[str, ...] = tuple(
     field.name for field in dataclasses.fields(CropClassLayer)
 )
+VARIABLE_PREFIX = "ccl-"
 
 
-@dataclasses.dataclass(frozen=True)
-class Band:
-    field: str
-    crop_classes: tuple[CropClass, ...] = ()
-    discountings: tuple[str, ...] = ()
+def get_variable_name(field: str) -> str:
+    """The variable a layer field is written as: `ccl-<field>[:<units>]`."""
+    words = [VARIABLE_PREFIX + field.replace("_", "-"), FIELD_TO_UNITS[field]]
+    return ":".join(word for word in words if word)
 
 
-@dataclasses.dataclass(frozen=True)
-class Deliverable:
-    name: str
-    bands: tuple[Band, ...]
+def band(
+    field: str,
+    crop_classes: collections.abc.Sequence[CropClass] = (),
+    discountings: collections.abc.Sequence[str] = (),
+) -> export.Band:
+    """A layer field, for the crop classes and discountings it should be written for."""
+    assert field in MENU, f"{field!r} is not on the menu"
+    unknown = set(discountings) - set(DISCOUNTING_TO_WEIGHTS)
+    assert not unknown, f"unknown discountings: {unknown}"
+    dim_to_values = {
+        CROP_CLASS: tuple(map(str, crop_classes)),
+        DISCOUNTING: tuple(discountings),
+    }
+    return export.Band(
+        variable=get_variable_name(field),
+        select={dim: values for dim, values in dim_to_values.items() if values},
+    )
 
-    def __post_init__(self) -> None:
-        unknown = {band.field for band in self.bands} - set(MENU)
-        assert not unknown, f"{self.name!r} asks for bands not on the menu: {unknown}"
-        unknown = {d for band in self.bands for d in band.discountings} - set(
-            DISCOUNTING_TO_WEIGHTS
-        )
-        assert not unknown, f"{self.name!r} asks for unknown discountings: {unknown}"
 
-
-CROP_CLASS_EMISSIONS = Deliverable(
+CROP_CLASS_EMISSIONS = export.Deliverable(
     name="crop-class-emissions",
     bands=(
-        Band(
+        band(
             "total_emissions_amortized",
             crop_classes=tuple(CropClass),
             discountings=("linear",),
         ),
-        Band("hectares_per_pixel"),
+        band("hectares_per_pixel"),
     ),
 )
 
-PERENNIAL_DEBUG = Deliverable(
+PERENNIAL_DEBUG = export.Deliverable(
     name="perennial-debug",
     bands=(
-        Band("conversion_source"),
-        Band("conversion_year"),
-        Band("climate_zone"),
-        Band("discount_weight", discountings=("linear",)),
-        Band("flu", crop_classes=(CropClass.PERENNIAL,)),
-        Band("peat_occupation_ef", crop_classes=(CropClass.PERENNIAL,)),
-        Band("vegetation_emissions_amortized", discountings=("linear",)),
-        Band(
+        band("conversion_source"),
+        band("conversion_year"),
+        band("climate_zone"),
+        band("discount_weight", discountings=("linear",)),
+        band("flu", crop_classes=(CropClass.PERENNIAL,)),
+        band("peat_occupation_ef", crop_classes=(CropClass.PERENNIAL,)),
+        band("vegetation_emissions_amortized", discountings=("linear",)),
+        band(
             "mineral_soil_emissions_amortized",
             crop_classes=(CropClass.PERENNIAL,),
             discountings=("linear",),
         ),
-        Band("peat_transformation_emissions_amortized", discountings=("linear",)),
-        Band("peat_occupation_emissions_per_year", crop_classes=(CropClass.PERENNIAL,)),
-        Band(
+        band("peat_transformation_emissions_amortized", discountings=("linear",)),
+        band("peat_occupation_emissions_per_year", crop_classes=(CropClass.PERENNIAL,)),
+        band(
             "total_emissions_amortized",
             crop_classes=(CropClass.PERENNIAL,),
             discountings=("linear",),
         ),
-        Band("hectares_per_pixel"),
+        band("hectares_per_pixel"),
     ),
+    format=export.Format.ZARR,
 )
 
-PERENNIAL_DISCOUNTING_COMPARISON = Deliverable(
+PERENNIAL_DISCOUNTING_COMPARISON = export.Deliverable(
     name="perennial-discounting-comparison",
     bands=(
-        Band("vegetation_emissions_amortized", discountings=("equal", "linear")),
-        Band(
+        band("vegetation_emissions_amortized", discountings=("equal", "linear")),
+        band(
             "mineral_soil_emissions_amortized",
             crop_classes=(CropClass.PERENNIAL,),
             discountings=("equal", "linear"),
         ),
-        Band(
+        band(
             "peat_transformation_emissions_amortized", discountings=("equal", "linear")
         ),
         # NB: a yearly rate, not discounted, so one band whatever the discounting
-        Band("peat_occupation_emissions_per_year", crop_classes=(CropClass.PERENNIAL,)),
-        Band(
+        band("peat_occupation_emissions_per_year", crop_classes=(CropClass.PERENNIAL,)),
+        band(
             "total_emissions_amortized",
             crop_classes=(CropClass.PERENNIAL,),
             discountings=("equal", "linear"),
         ),
-        Band("hectares_per_pixel"),
+        band("hectares_per_pixel"),
     ),
 )
 
-NAME_TO_DELIVERABLE: dict[str, Deliverable] = {
+NAME_TO_DELIVERABLE: dict[str, export.Deliverable] = {
     deliverable.name: deliverable
     for deliverable in (
         CROP_CLASS_EMISSIONS,
@@ -565,21 +572,6 @@ NAME_TO_DELIVERABLE: dict[str, Deliverable] = {
 # ============================================================================================
 # 4. Plumbing
 # ============================================================================================
-
-BAND_PREFIX = "ccl-"
-CROP_CLASS = "crop_class"
-DISCOUNTING = "discounting"
-# The dimensions a band can select on, in the order their values appear in band names
-SELECTABLE_DIMS = (CROP_CLASS, DISCOUNTING)
-
-
-def get_selection(band: Band) -> dict[str, tuple[str, ...]]:
-    """`band`'s chosen values, by dimension, for the dimensions it selects on."""
-    dim_to_values = {
-        CROP_CLASS: tuple(map(str, band.crop_classes)),
-        DISCOUNTING: band.discountings,
-    }
-    return {dim: values for dim, values in dim_to_values.items() if values}
 
 
 def read_cie(dset: xarray.Dataset) -> CIE:
@@ -678,86 +670,16 @@ def get_discount_weights_by_scheme(
     )
 
 
-def get_field_to_dims() -> dict[str, frozenset[str]]:
-    """Which selectable dimensions each layer field carries, from running the layer on a pixel."""
-    pixel = xarray.DataArray(numpy.zeros((1, 1)), dims=("y", "x"))
-    per_class = pixel.expand_dims({CROP_CLASS: 1})
-    layer = crop_class_layer(
-        cie=CIE(**{field.name: pixel for field in dataclasses.fields(CIE)}),
-        factors=Factors(flu=per_class, peat_occupation_ef=per_class),
-        discount_weights=get_discount_weights_by_scheme([DEFAULT_DISCOUNTING]),
+def to_dataset(layer: CropClassLayer) -> xarray.Dataset:
+    """Every field of `layer` as a variable, `crop_class` and `discounting` kept as dims."""
+    return xarray.Dataset(
+        {get_variable_name(field): getattr(layer, field).rename(None) for field in MENU}
     )
-    return {
-        field: frozenset(set(getattr(layer, field).dims) & set(SELECTABLE_DIMS))
-        for field in MENU
-    }
-
-
-FIELD_TO_DIMS = get_field_to_dims()
-
-
-def check_deliverable(deliverable: Deliverable) -> None:
-    """Each band selects on exactly the dimensions its field carries, and no band repeats."""
-    for band in deliverable.bands:
-        selected = set(get_selection(band))
-        carried = FIELD_TO_DIMS[band.field]
-        assert selected == carried, (
-            f"{deliverable.name!r}: {band.field!r} varies by {sorted(carried)}, "
-            f"but the band selects on {sorted(selected)}"
-        )
-    names = [name for band in deliverable.bands for name in get_band_names(band)]
-    assert len(set(names)) == len(names), f"{deliverable.name!r} repeats a band"
-
-
-def get_band_name(field: str, *values: str) -> str:
-    """The band a layer field is written to: `ccl-<field>:<units>[:<value>...]`.
-
-    `values` are the band's crop class and/or discounting, in `SELECTABLE_DIMS` order.
-    """
-    words = [BAND_PREFIX + field.replace("_", "-"), FIELD_TO_UNITS[field], *values]
-    return ":".join(str(word) for word in words if word)
-
-
-def iter_band_selections(
-    band: Band,
-) -> collections.abc.Iterator[tuple[str, dict[str, str]]]:
-    """Each COG band a `Band` expands to: its name, and its value on each selected dimension."""
-    selection = get_selection(band)
-    for values in itertools.product(*selection.values()):
-        yield (
-            get_band_name(band.field, *values),
-            dict(zip(selection, values, strict=True)),
-        )
-
-
-def get_band_names(band: Band) -> list[str]:
-    return [name for name, _ in iter_band_selections(band)]
-
-
-for _deliverable in NAME_TO_DELIVERABLE.values():
-    check_deliverable(_deliverable)
-
-
-def to_dataset(
-    layer: CropClassLayer, bands: collections.abc.Iterable[Band]
-) -> xarray.Dataset:
-    """`bands` of `layer`, one 2-D band per combination of selected values, in order.
-
-    `emit`-style encoding: float32, NaN no-data, chunked for the number of bands written.
-    """
-    name_to_darray = {
-        name: getattr(layer, band.field).rename(None).sel(point, drop=True)
-        for band in bands
-        for name, point in iter_band_selections(band)
-    }
-    dset = emit.get_dset_for_output(name_to_darray=name_to_darray)
-    assert list(dset) == list(name_to_darray)
-    return dset
 
 
 def get_layer(
     dset: xarray.Dataset,
-    crop_classes: collections.abc.Sequence[CropClass],
+    crop_classes: collections.abc.Sequence[CropClass] = tuple(CropClass),
     discountings: collections.abc.Sequence[str] = (DEFAULT_DISCOUNTING,),
 ) -> CropClassLayer:
     """Layer 2 for `crop_classes` and `discountings`, from an `emit` output dataset."""
@@ -791,100 +713,66 @@ def derive(
     discountings: collections.abc.Sequence[str] = (DEFAULT_DISCOUNTING,),
 ) -> xarray.Dataset:
     """All of layer 2 for `crop_classes` and `discountings`, as a lazy dataset."""
-    bands = [
-        Band(
-            field,
-            crop_classes=tuple(crop_classes) if CROP_CLASS in dims else (),
-            discountings=tuple(discountings) if DISCOUNTING in dims else (),
-        )
-        for field, dims in FIELD_TO_DIMS.items()
-    ]
-    return to_dataset(layer=get_layer(dset, crop_classes, discountings), bands=bands)
+    return to_dataset(get_layer(dset, crop_classes, discountings))
 
 
-def derive_deliverable(
-    dset: xarray.Dataset, deliverable: Deliverable
+def derive_for_deliverable(
+    dset: xarray.Dataset, deliverable: export.Deliverable
 ) -> xarray.Dataset:
-    """A deliverable's bands as a lazy dataset, from an `emit` output dataset.
-
-    Only the crop classes and discountings the deliverable names are built, so only they are
-    computed.
-    """
-    check_deliverable(deliverable)
-
-    def unique(values: collections.abc.Iterable[typing.Any]) -> list[typing.Any]:
-        return list(dict.fromkeys(values))
-
-    bands = deliverable.bands
-    layer = get_layer(
+    """Layer 2 for just the crop classes and discountings `deliverable` names, so only they
+    are computed."""
+    selections = export.get_selections(deliverable)
+    return derive(
         dset,
-        crop_classes=unique(c for band in bands for c in band.crop_classes),
-        discountings=unique(d for band in bands for d in band.discountings)
-        or [DEFAULT_DISCOUNTING],
+        crop_classes=[CropClass(c) for c in selections.get(CROP_CLASS, ())]
+        or tuple(CropClass),
+        discountings=selections.get(DISCOUNTING) or (DEFAULT_DISCOUNTING,),
     )
-    return to_dataset(layer=layer, bands=bands)
 
 
-def get_output_uri(deliverable: Deliverable, output_root: str, tile_id: str) -> str:
-    return storage.join_uri(
-        root=output_root, prefix=f"{deliverable.name:s}/{tile_id:s}.tif"
+def get_stand_in() -> xarray.Dataset:
+    """Layer 2 on one pixel, with every dimension it carries: for checking deliverables."""
+    pixel = xarray.DataArray(numpy.zeros((1, 1)), dims=("y", "x"))
+    per_class = pixel.expand_dims({CROP_CLASS: 1})
+    return to_dataset(
+        crop_class_layer(
+            cie=CIE(**{field.name: pixel for field in dataclasses.fields(CIE)}),
+            factors=Factors(flu=per_class, peat_occupation_ef=per_class),
+            discount_weights=get_discount_weights_by_scheme([DEFAULT_DISCOUNTING]),
+        )
     )
+
+
+for _deliverable in NAME_TO_DELIVERABLE.values():
+    export.check_deliverable(_deliverable, get_stand_in())
 
 
 def export_workflow(
     tile_id: str,
     deliverable_names: collections.abc.Sequence[str],
+    format: export.Format | None = None,
     output_root: str | None = None,
 ) -> list[str]:
-    """Write each named deliverable for one tile as a COG; return the URIs written.
-
-    `output_root` defaults to the export root; pass a local directory to inspect the output.
-    """
-    deliverables = [NAME_TO_DELIVERABLE[name] for name in deliverable_names]
-    if output_root is None:
-        output_root = config.Config.from_dot_env().export_root
-    logger.info(f"Reading emit scratch output for {tile_id=:s} (cache hit expected)")
+    """Write each named deliverable for one tile, from `emit`'s cached output; return the URIs."""
     dset = emit.workflow(tile_id=tile_id)
-
-    uris = []
-    for deliverable in deliverables:
-        uri = get_output_uri(deliverable, output_root=output_root, tile_id=tile_id)
-        storage.write_dataset_to_cog(
-            dset=derive_deliverable(dset, deliverable),
-            metadata=storage.get_cog_metadata(
-                product_name=deliverable.name, source_name="jdluc-derive"
-            ),
-            uri=uri,
+    return [
+        export.write_deliverable(
+            dset=derive_for_deliverable(dset, deliverable),
+            deliverable=deliverable,
+            format=format,
+            output_root=output_root,
+            source_name="jdluc-derive",
+            tile_id=tile_id,
         )
-        logger.info(f"Wrote {deliverable.name=:s} for {tile_id=:s} to {uri=:s}")
-        uris.append(uri)
-    return uris
-
-
-def main() -> int:
-    logging.basicConfig(
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        level=logging.INFO,
-    )
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("tile_id")
-    parser.add_argument(
-        "--deliverable",
-        action="append",
-        choices=sorted(NAME_TO_DELIVERABLE),
-        dest="deliverable_names",
-        required=True,
-        help="repeatable",
-    )
-    parser.add_argument("--output-root", help="defaults to the export root")
-    args = parser.parse_args()
-    export_workflow(
-        deliverable_names=args.deliverable_names,
-        output_root=args.output_root,
-        tile_id=args.tile_id,
-    )
-    return 0
+        for deliverable in map(NAME_TO_DELIVERABLE.__getitem__, deliverable_names)
+    ]
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(
+        export.main(
+            description=__doc__,
+            export_workflow=export_workflow,
+            name_to_deliverable=NAME_TO_DELIVERABLE,
+        )
+    )

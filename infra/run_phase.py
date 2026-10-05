@@ -17,12 +17,12 @@ The phases, in the order the driver (``infra/run_aoi.py``) submits them:
     One pod: ``trace.workflow`` for the whole AOI, which drives ``attribute.workflow``'s
     cross-tile merge. Every per-tile partial is warm by then, so this is a groupby-sum.
 ``export``
-    One pod per tile: ``export.workflow`` serialises ``emit``'s cached scratch output to an
-    emissions COG (docs/rooster-emissions-cog-spike.md). Additive and terminal -- nothing
+    One pod per tile: ``emit.export_workflow`` serialises ``emit``'s cached scratch output to
+    the CIE emissions COG (docs/rooster-emissions-cog-spike.md). Additive and terminal -- nothing
     downstream reads it -- so it runs after ``reduce`` and reads ``emit``'s warm cache with no
     recompute.
 ``mosaic``
-    One pod: ``export.mosaic_workflow`` stitches the per-tile emission COGs into one AOI-wide
+    One pod: ``export.mosaic_workflow`` stitches the per-tile CIE COGs into one AOI-wide
     read-time VRT. A tiny XML over the tiles (lazy, no materialisation); runs after ``export``.
 
 Chaining inside a pod is safe because every stage is wrapped in ``@storage.cache_to_*``:
@@ -281,7 +281,7 @@ def run_export(tile_id: str) -> None:
     other stage. Methodology-agnostic, since ``emit`` sits below the attribute legs, so it takes
     only the tile.
     """
-    uri = export.workflow(tile_id=tile_id)
+    (uri,) = emit.export_workflow(tile_id=tile_id)
     logger.info(f"exported emissions COG to {uri:s}")
 
 
@@ -292,6 +292,7 @@ def run_mosaic(iso_3166s: collections.abc.Sequence[str]) -> None:
     (ocean/edge, or an export the AOI never produced) are skipped. Methodology-agnostic.
     """
     uri = export.mosaic_workflow(
+        deliverable_name=emit.CIE_EMISSIONS.name,
         tile_ids=get_tile_ids(iso_3166s=iso_3166s),
         name="-".join(sorted(iso_3166s)),
     )

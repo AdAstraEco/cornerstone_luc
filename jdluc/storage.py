@@ -12,8 +12,6 @@ import numpy
 import pandas
 import xarray
 
-from jdluc import geo, utils
-
 logger = logging.getLogger(__name__)
 
 COMPUTE_LOCK = threading.RLock()
@@ -46,7 +44,9 @@ def join_uri(root: str, prefix: str) -> str:
     return f"{root.rstrip('/'):s}/{prefix:s}"
 
 
-def write_dask_dataset_to_zarr(dset: xarray.Dataset, path_to_zarr: str) -> None:
+def write_dask_dataset_to_zarr(
+    dset: xarray.Dataset, path_to_zarr: str, mode: typing.Literal["w", "w-"] = "w-"
+) -> None:
     assert dset.chunks is not None, f"{dset=:} is not a chunked dask array"
 
     import dask.config
@@ -97,7 +97,11 @@ def write_dask_dataset_to_zarr(dset: xarray.Dataset, path_to_zarr: str) -> None:
         for variable in to_write.variables.values():
             variable.encoding.pop("chunks", None)
         delayed = to_write.to_zarr(
-            compute=False, consolidated=False, group=None, store=path_to_zarr
+            compute=False,
+            consolidated=False,
+            group=None,
+            mode=mode,
+            store=path_to_zarr,
         )
         logger.info("Submitting task graph to dask scheduler")
         future = client.compute(delayed, retries=5)
@@ -134,24 +138,17 @@ def stack_bands(dset: xarray.Dataset) -> xarray.DataArray:
     return stacked.rio.write_crs(crs).rio.write_nodata(COG_NO_DATA)
 
 
-def get_cog_metadata(product_name: str, source_name: str) -> dict[str, str]:
-    return {
-        "watershed-processing-time": utils.get_utc_timestamp(),
-        "watershed-processing-version": utils.get_git_version(),
-        "watershed-product-name": product_name,
-        "watershed-remote-url": utils.get_git_remote_url(),
-        "watershed-source-name": source_name,
-    }
-
-
-def write_dataset_to_cog(
+def write_dask_dataset_to_cog(
     dset: xarray.Dataset, metadata: dict[str, str], uri: str
 ) -> None:
     """Materialise `dset` as a Cloud-Optimised GeoTIFF: one band per variable, named after it.
 
-    EPSG:4326, float32, NaN no-data. Computes the (lazy) dataset as it writes.
+    EPSG:4326, float32, NaN no-data. Computes the (lazy) dataset as it writes. Stages as
+    `datasets.base` ingest does: a local GeoTIFF, band names, validation, COG, upload.
     """
     import dask.diagnostics
+
+    from jdluc import geo
 
     stacked = stack_bands(dset=dset)
     with tempfile.TemporaryDirectory() as tmpdir:
