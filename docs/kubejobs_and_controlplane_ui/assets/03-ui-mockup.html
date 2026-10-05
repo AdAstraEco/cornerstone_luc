@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Cornerstone Console · UI mockup (fake data)</title>
+<!-- Optional: fonts only. Without network the stack falls back to Georgia / system-ui exactly like the existing dLUC viewer does. -->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Averia+Serif+Libre:wght@300;400&family=Nunito+Sans:wght@400;600;700&display=swap" />
+<style>
+/* Tokens copied verbatim from goose/dluc_viewer/templates/static/brand.css (ID-3056 spec §5) */
+:root{
+  --bg-dark-green:#051701; --sacramento-green:#0b2417; --sea-green:#318150; --mint:#64a77e; --yellow-hunyadi:#eca72c;
+  --bg-dark-blue:#081119; --rich-dark-blue:#0b1924; --paynes-gray-blue:#316681; --air-force-blue:#6491a7;
+  --white-pure:#ffffff; --white-80:#ffffffcc; --white-60:#ffffff99; --white-30:#ffffff4d;
+  --platinium-1:#fafaf5; --platinium-2:#f0f0eb; --platinium-3:#e6e6e1;
+  --data-emission-factor:#eca72c; --data-emission:#542344; --data-production:#3a8596; --data-forest-loss:#ad9baa;
+  --font-heading:"Averia Serif Libre",Georgia,"Times New Roman",serif;
+  --font-body:"Avenir","Avenir Next","Nunito Sans",system-ui,sans-serif;
+  --font-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --fs-1:14px; --fs-2:17px; --fs-3:22px; --fs-4:34px;
+  --sp-1:5px; --sp-2:10px; --sp-3:15px; --sp-4:20px; --sp-5:30px; --sp-6:45px;
+  --radius-1:2px; --radius-2:5px;
+  --shadow-3:0 2px 8px rgba(11,36,23,.12); --shadow-6:0 12px 40px rgba(11,36,23,.22);
+  /* Console-only additions (status semantics) */
+  --st-none:#e6e6e1; --st-ingested:#b9d9c5; --st-harmonized:#8fc3a3; --st-emit:#64a77e; --st-export:#318150;
+  --st-run:#eca72c; --st-fail:#c0563f;
+}
+*{box-sizing:border-box} body{margin:0;font-family:var(--font-body);font-size:var(--fs-1);color:var(--sacramento-green);background:var(--platinium-1)}
+h1,h2,h3{font-family:var(--font-heading);font-weight:300;margin:0}
+h2{font-size:var(--fs-3)} h3{font-size:16px}
+.app-nav{display:flex;gap:var(--sp-5);align-items:center;padding:var(--sp-3) var(--sp-5);background:var(--bg-dark-green)}
+.app-nav .brand{font-family:var(--font-heading);color:#fff;font-size:20px;font-weight:300;margin-right:var(--sp-4)}
+.app-nav .brand i{display:inline-block;width:22px;height:22px;border-radius:5px;background:var(--sacramento-green);vertical-align:-5px;margin-right:8px;position:relative}
+.app-nav .brand i:after{content:"";position:absolute;left:5px;top:5px;border:6px solid transparent;border-bottom:11px solid var(--mint);border-top:0}
+.nav-link{color:var(--white-60);text-decoration:none;letter-spacing:.02em;cursor:pointer;padding:4px 0;border-bottom:2px solid transparent;background:none;border-top:0;border-left:0;border-right:0;font:inherit}
+.nav-link:hover,.nav-link.active{color:#fff} .nav-link.active{border-bottom-color:var(--mint)}
+.nav-right{margin-left:auto;display:flex;gap:var(--sp-3);align-items:center;color:var(--white-60);font-size:12px}
+.ctx{padding:3px 10px;border:1px solid var(--white-30);border-radius:999px}
+.pill-ok{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--mint);margin-right:6px}
+.page{max-width:1760px;margin:0 auto;padding:var(--sp-4) var(--sp-5)}
+.eyebrow{text-transform:uppercase;letter-spacing:.14em;font-size:var(--fs-1);color:var(--yellow-hunyadi);margin:0 0 4px}
+.card{background:#fff;border-radius:var(--radius-2);box-shadow:var(--shadow-3);padding:var(--sp-4)}
+.muted{color:rgba(11,36,23,.6)} .mono{font-family:var(--font-mono)}
+.row{display:flex;gap:var(--sp-4);align-items:flex-start} .col{flex:1;min-width:0}
+.grid2{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:var(--sp-4)}
+.toolbar{display:flex;align-items:center;gap:var(--sp-4);flex-wrap:wrap;margin-bottom:var(--sp-2)}
+.lbl{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--sea-green)}
+.segmented{display:inline-flex;border:1px solid var(--platinium-3);border-radius:var(--radius-1);overflow:hidden;background:#fff}
+.segmented button{appearance:none;border:0;border-right:1px solid var(--platinium-2);background:transparent;color:var(--sacramento-green);font:inherit;padding:7px 14px;cursor:pointer}
+.segmented button:last-child{border-right:0} .segmented button.active{background:var(--sea-green);color:#fff;font-weight:600}
+.btn{font:inherit;padding:8px 16px;border:1px solid var(--sea-green);border-radius:var(--radius-2);background:var(--sea-green);color:#fff;cursor:pointer;font-weight:600}
+.btn:hover{background:#2a6e45} .btn.ghost{background:#fff;color:var(--sea-green)} .btn.ghost:hover{background:var(--platinium-1)}
+.btn.warn{background:#fff;color:#c0563f;border-color:#c0563f} .btn:disabled{opacity:.4;cursor:not-allowed}
+.btn.sm{padding:4px 10px;font-size:12px}
+:focus-visible{outline:2px solid var(--yellow-hunyadi);outline-offset:2px}
+input,select,textarea{font:inherit;padding:7px 10px;border:1px solid var(--platinium-3);border-radius:var(--radius-2);background:#fff;color:var(--sacramento-green);width:100%}
+label.f{display:block;margin-bottom:var(--sp-3)} label.f>span{display:block;margin-bottom:4px} .hint{font-size:12px;color:rgba(11,36,23,.55);margin-top:3px}
+input[type=range]{padding:0;accent-color:var(--sea-green)}
+.badge{display:inline-block;font-size:11px;font-weight:700;padding:2px 9px;border-radius:999px}
+.b-ok{background:rgba(49,129,80,.15);color:var(--sea-green)} .b-warn{background:rgba(236,167,44,.2);color:#9a6d12}
+.b-fail{background:rgba(192,86,63,.16);color:#c0563f} .b-none{background:var(--platinium-2);color:rgba(11,36,23,.6)}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:4px 6px 4px 11px;border:1px solid var(--platinium-3);border-radius:999px;background:#fff;font-size:12.5px;margin:0 6px 6px 0}
+.chip button{border:0;background:none;cursor:pointer;color:rgba(11,36,23,.5);font-size:14px;padding:0 3px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{background:var(--platinium-2);text-align:left;font-weight:700;font-size:12px;padding:8px 12px;position:sticky;top:0;cursor:pointer;white-space:nowrap}
+td{padding:6px 12px;border-top:1px solid var(--platinium-2)} tr.sel td{background:var(--platinium-1)} tbody tr:hover td{background:var(--platinium-1)}
+.tablewrap{max-height:300px;overflow:auto;border:1px solid var(--platinium-3);border-radius:var(--radius-2);background:#fff}
+.map-wrap{position:relative;border-radius:var(--radius-2);overflow:hidden;background:var(--platinium-2)}
+svg text{font-family:var(--font-body)}
+.legend{display:flex;flex-wrap:wrap;align-items:center;gap:var(--sp-2);margin-top:var(--sp-2);font-size:12px;font-family:var(--font-mono);color:rgba(11,36,23,.6)}
+.swatch{display:inline-block;width:14px;height:12px;border-radius:2px;vertical-align:middle;margin-right:4px}
+.drawer h3{margin-bottom:var(--sp-2)} .kv{display:grid;grid-template-columns:120px 1fr;gap:4px 10px;margin-bottom:var(--sp-3)} .kv b{font-weight:600;color:rgba(11,36,23,.6)}
+.view{display:none} .view.on{display:block}
+.pre{background:var(--bg-dark-blue);color:#cfe3d6;border-radius:var(--radius-2);padding:12px;font-family:var(--font-mono);font-size:12px;line-height:1.5;max-height:240px;overflow:auto;white-space:pre}
+.bar{height:6px;border-radius:3px;background:#e4ebe6;overflow:hidden} .bar i{display:block;height:100%;background:var(--sea-green)}
+.poolcard{border:1px solid var(--platinium-3);border-radius:var(--radius-2);padding:var(--sp-3);cursor:pointer;background:#fff}
+.poolcard.on{border-color:var(--sea-green);box-shadow:inset 0 0 0 1px var(--sea-green)}
+.poolcard h3{display:flex;justify-content:space-between;align-items:center}
+.cost{background:var(--platinium-1);border-radius:var(--radius-2);padding:var(--sp-3);display:flex;gap:var(--sp-5);flex-wrap:wrap}
+.cost div b{display:block;font-family:var(--font-heading);font-size:22px;font-weight:300}
+.banner{background:rgba(236,167,44,.15);border-left:3px solid var(--yellow-hunyadi);padding:8px 12px;border-radius:var(--radius-2);margin-bottom:var(--sp-3);font-size:13px}
+.note-mock{position:fixed;right:12px;bottom:10px;background:var(--bg-dark-green);color:var(--white-80);padding:6px 12px;border-radius:999px;font-size:11px;z-index:50;box-shadow:var(--shadow-6)}
+@media(max-width:1100px){.grid2{grid-template-columns:1fr}.row{flex-direction:column}}
+</style>
+</head>
+<body>
+<nav class="app-nav" aria-label="Main">
+  <span class="brand"><i></i>Cornerstone Console</span>
+  <button class="nav-link active" data-v="tiles">Tiles</button>
+  <button class="nav-link" data-v="map">Map</button>
+  <button class="nav-link" data-v="jobs">Jobs <span class="badge b-warn" id="navjobs">2 running</span></button>
+  <button class="nav-link" data-v="history">History</button>
+  <button class="nav-link" data-v="pools">Node pools</button>
+  <div class="nav-right"><span class="ctx">ns: yaroslav</span><span class="ctx">nonprod-shared-cluster</span><span><span class="pill-ok"></span>gcs ok · k8s ok</span></div>
+</nav>
+
+<!-- ============ TILES ============ -->
+<main class="page view on" id="v-tiles">
+  <p class="eyebrow">Tile browser</p>
+  <div class="toolbar">
+    <h2>Pipeline status by 10° tile</h2>
+    <span class="lbl">Stage</span>
+    <div class="segmented" id="stageSeg" role="group" aria-label="Stage">
+      <button data-s="ingest">Ingested</button><button data-s="harmonize">Harmonized</button><button data-s="emit" class="active">Emit</button><button data-s="export">Export COG</button>
+    </div>
+    <span class="muted" id="tilecount"></span>
+  </div>
+  <div class="grid2">
+    <div>
+      <div class="card" style="padding:var(--sp-3)">
+        <div class="map-wrap"><svg id="tilemap" viewBox="0 0 1080 450" width="100%" role="img" aria-label="World tile grid coloured by status"></svg></div>
+        <div class="legend" id="tilelegend"></div>
+        <p class="hint">Click a tile to open details; shift-click to add to the job selection. (Real app: MapLibre + Esri Light Gray basemap under a GeoJSON of the 280 tiles.)</p>
+      </div>
+      <div class="card" style="margin-top:var(--sp-4)">
+        <div class="toolbar"><h3>All tiles</h3>
+          <input id="q" placeholder="Filter: tile id or country (e.g. CIV)" style="max-width:260px" aria-label="Filter tiles" />
+          <select id="stf" style="max-width:160px" aria-label="Status filter"><option value="">any status</option><option>ok</option><option>failed</option><option>running</option><option>missing</option></select>
+          <span style="margin-left:auto"><button class="btn ghost sm" id="addsel">Add shown to job selection</button></span></div>
+        <div class="tablewrap"><table><thead><tr><th>Tile</th><th>Countries</th><th>Ingest</th><th>Harmonize</th><th>Emit</th><th>Export</th><th>Last run</th><th>Emit size</th></tr></thead><tbody id="tbody"></tbody></table></div>
+      </div>
+    </div>
+    <aside class="card drawer" id="drawer" aria-live="polite"></aside>
+  </div>
+</main>
+
+<!-- ============ MAP ============ -->
+<main class="page view" id="v-map">
+  <p class="eyebrow">Emissions overlay</p>
+  <div class="toolbar">
+    <h2 id="mapTitle">Tile 10N_010W</h2>
+    <span class="lbl">Source</span>
+    <div class="segmented" id="srcSeg"><button data-s="cog" class="active">Export COG</button><button data-s="zarr">Scratch zarr (emit)</button><button data-s="mosaic">Mosaic · CIV</button></div>
+    <label class="lbl" style="display:flex;gap:8px;align-items:center">Band
+      <select id="band" style="width:auto"><option value="0">cie-vegetation-emissions-undiscounted · tCO2e/ha</option><option value="1">cie-mineral-soil-carbon-at-risk · tCO2e/ha</option><option value="2">cie-peat-occupation-emissions · tCO2e/ha/yr</option><option value="3">cie-hectares-per-pixel · ha</option></select></label>
+    <label class="lbl" style="display:flex;gap:8px;align-items:center">Opacity <input type="range" id="op" min="0" max="100" value="85" style="width:110px" /></label>
+  </div>
+  <div class="grid2">
+    <div class="card" style="padding:var(--sp-3)">
+      <div class="map-wrap" style="height:560px"><canvas id="cv" width="1000" height="560" style="width:100%;height:100%;display:block"></canvas>
+        <div id="readout" class="card mono" style="position:absolute;left:12px;top:12px;padding:6px 10px;font-size:12px;pointer-events:none">hover the map</div>
+        <div style="position:absolute;right:10px;top:10px;display:flex;flex-direction:column;gap:2px"><button class="btn ghost sm" aria-label="Zoom in">+</button><button class="btn ghost sm" aria-label="Zoom out">−</button></div>
+      </div>
+      <div class="legend"><span id="lgmin">0</span><span id="lgbar" style="display:inline-block;width:260px;height:12px;border-radius:2px"></span><span id="lgmax">320</span><span id="lgunit">tCO2e/ha</span><span style="margin-left:auto"><span class="swatch" style="background:var(--platinium-2);border:1px solid var(--platinium-3)"></span>nodata (NaN) transparent</span></div>
+    </div>
+    <div class="card">
+      <h3>Layer</h3>
+      <div class="kv"><b>URI</b><span class="mono" style="word-break:break-all">gs://…-bucket/cornerstone/emissions/10N_010W.tif</span><b>Grid</b><span>EPSG:4326 · 40000 × 40000 · float32</span><b>Overviews</b><span>6 levels (tiles served from overview at this zoom)</span><b>Stretch</b><span>p2–p98 of overview, editable</span></div>
+      <label class="f"><span>Stretch min / max</span><div class="row" style="gap:8px"><input value="0" /><input value="320" /></div></label>
+      <label class="f"><span>Colour ramp</span><select><option>Emissions (cream → amber → plum)</option><option>Sequential green</option><option>Diverging (sink/source)</option></select></label>
+      <h3>Pixel under cursor</h3>
+      <table><tbody id="pixtab"></tbody></table>
+      <p class="hint">Overlay-only layers are tinted from the dLUC data palette: <span class="swatch" style="background:var(--data-emission-factor)"></span>emission factor <span class="swatch" style="background:var(--data-emission)"></span>emission</p>
+    </div>
+  </div>
+</main>
+
+<!-- ============ JOBS ============ -->
+<main class="page view" id="v-jobs">
+  <p class="eyebrow">Kubernetes jobs</p>
+  <div class="grid2" style="grid-template-columns:minmax(0,1fr) minmax(0,1.25fr)">
+    <section class="card">
+      <h2 style="margin-bottom:var(--sp-3)">Launch a run</h2>
+      <label class="f"><span>Phase</span><select id="ph"><option>compute (harmonize → emit → attribute)</option><option>export</option><option>mosaic</option><option>ingest-tiles</option><option>reduce</option><option>ingest-world</option></select></label>
+      <label class="f"><span>Tiles <span class="muted" id="ntiles"></span></span>
+        <div id="tchips" style="margin-bottom:6px"></div>
+        <div class="row" style="gap:8px"><input id="paste" placeholder="Paste ids, or a country code (CIV, GHA)…" /><button class="btn ghost sm" id="padd" style="white-space:nowrap">Add</button></div>
+        <div class="hint">Or click / shift-click tiles on the <a href="#" data-go="tiles">Tiles</a> map.</div></label>
+      <div class="row" style="gap:12px"><label class="f col"><span>Methodology</span><select><option>STATISTICAL</option><option>JURISDICTIONAL_DIRECT</option></select></label>
+        <label class="f col"><span>Parallelism <b id="parv">4</b></span><input type="range" id="par" min="1" max="16" value="4" /><div class="hint">Cap 16 · autoscaler max 8 nodes</div></label></div>
+      <details style="margin-bottom:var(--sp-3)"><summary style="cursor:pointer;color:var(--sea-green);font-weight:600">Resource overrides</summary>
+        <div class="row" style="gap:12px;margin-top:10px"><label class="f col"><span>CPU request/limit</span><input value="6 / 8" /></label><label class="f col"><span>Memory</span><input value="56Gi / 56Gi" /></label><label class="f col"><span>Local SSD</span><input value="200Gi" /></label></div></details>
+      <span class="lbl">Node pool</span>
+      <div class="row" style="gap:10px;margin:6px 0 6px" id="poolpick"></div>
+      <div class="hint" id="poolhint" style="margin:0 0 var(--sp-3)"></div>
+      <div class="row" style="gap:8px"><button class="btn ghost" id="dry">Dry-run preview</button><button class="btn" id="go" disabled>Confirm &amp; submit</button></div>
+      <div id="dryout" style="margin-top:var(--sp-3)"></div>
+    </section>
+    <section>
+      <div class="card">
+        <div class="toolbar" style="margin-bottom:var(--sp-3)"><h2>Active jobs</h2><span class="muted">auto-refresh 5 s · SSE</span></div>
+        <div id="joblist"></div>
+      </div>
+      <div class="card" style="margin-top:var(--sp-4)"><div class="toolbar"><h3 id="logt">Logs · cs-compute-0930 / pod 3 (10N_010W)</h3><span style="margin-left:auto"><label class="muted"><input type="checkbox" checked style="width:auto" /> follow</label> <button class="btn ghost sm">Open in Cloud Logging ↗</button></span></div><div class="pre" id="log"></div></div>
+    </section>
+  </div>
+</main>
+
+<!-- ============ HISTORY ============ -->
+<main class="page view" id="v-history">
+  <p class="eyebrow">History</p><h2 style="margin-bottom:var(--sp-3)">Past runs</h2>
+  <div class="card"><div class="tablewrap" style="max-height:none"><table><thead><tr><th>Run</th><th>Started</th><th>Phase(s)</th><th>AOI</th><th>Tiles</th><th>Result</th><th>Duration</th><th>Est. cost</th><th></th></tr></thead><tbody id="hist"></tbody></table></div></div>
+</main>
+
+<!-- ============ POOLS ============ -->
+<main class="page view" id="v-pools">
+  <p class="eyebrow">Node pools</p><h2 style="margin-bottom:var(--sp-3)">Capacity</h2>
+  <div class="grid2" style="grid-template-columns:1fr 1fr" id="poolgrid"></div>
+  <div class="card" style="margin-top:var(--sp-4)"><h3>Pending pods</h3><table><thead><tr><th>Pod</th><th>Reason</th><th>Waiting</th><th>Wants</th></tr></thead><tbody><tr><td class="mono">cs-compute-0930-6-x2f</td><td><span class="badge b-warn">Unschedulable</span> 0/3 nodes: Insufficient memory; scale-up triggered</td><td>1m 40s</td><td>yaroslav-power-node-pool</td></tr></tbody></table></div>
+</main>
+<div class="note-mock">MOCKUP · fake data · no network required (fonts optional)</div>
+
+<script>
+const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
+// ---------- nav
+function go(v){$$('.view').forEach(e=>e.classList.toggle('on',e.id==='v-'+v));$$('.nav-link').forEach(b=>b.classList.toggle('active',b.dataset.v===v));if(v==='map')drawMap();}
+$$('.nav-link').forEach(b=>b.onclick=()=>go(b.dataset.v));$$('[data-go]').forEach(a=>a.onclick=e=>{e.preventDefault();go(a.dataset.go)});
+// ---------- fake world: rough land boxes -> tiles
+const land=[[-130,-50,15,50],[-120,-95,10,30],[-95,-75,5,25],[-80,-35,-55,10],[-20,50,-35,35],[-10,40,35,70],[40,140,10,70],[95,125,-10,20],[110,155,-40,-10],[-10,35,-35,35],[-10,10,35,60],[25,45,-30,10],[65,90,5,35],[-20,-10,10,35],[-55,-35,60,80]];
+const tiles={};
+for(let lat=80;lat>-60;lat-=10)for(let lon=-180;lon<180;lon+=10){
+  const cx=lon+5,cy=lat-5; if(!land.some(b=>cx>b[0]&&cx<b[1]&&cy>b[2]&&cy<b[3]))continue;
+  const id=`${String(Math.abs(lat)).padStart(2,'0')}${lat>=0?'N':'S'}_${String(Math.abs(lon)).padStart(3,'0')}${lon>=0?'E':'W'}`;
+  tiles[id]={id,lat,lon,st:{ingest:'none',harmonize:'none',emit:'none',export:'none'},cty:'—'};}
+const set=(ids,ingest,h,e,x,cty,extra={})=>ids.forEach(id=>{if(tiles[id])Object.assign(tiles[id],{st:{ingest,harmonize:h,emit:e,export:x},cty,...extra})});
+set(['10N_010W','10N_000E','00N_010W','10N_020W'],'ok','ok','ok','ok','CIV · GHA · LBR');
+set(['10N_000E'],'ok','ok','ok','ok','GHA · TGO · BFA');
+set(['20N_090W'],'ok','ok','ok','none','MEX · GTM · BLZ');
+set(['20N_100W','30N_100W','40N_100W','40N_090W'],'ok','ok','running','none','USA · MEX');
+set(['00N_050W','00N_060W','10S_060W','10S_050W'],'ok','ok','failed','none','BRA',{err:'OOMKilled (exit 137) in emit; mem limit 56Gi'});
+set(['10S_070W','10S_080W','00N_070W'],'ok','none','none','none','BRA · PER');
+set(['10N_100E','00N_100E','00N_110E'],'ok','ok','ok','none','IDN · MYS');
+const ST={none:'--st-none',ok:'--st-emit',running:'--st-run',failed:'--st-fail'};
+const stageColor={ingest:'--st-ingested',harmonize:'--st-harmonized',emit:'--st-emit',export:'--st-export'};
+let stage='emit',selected=null,jobSel=new Set(['10N_010W','10N_000E','00N_010W']);
+const svg=$('#tilemap');
+function colorFor(t){const s=t.st[stage];return s==='ok'?`var(${stageColor[stage]})`:s==='running'?'var(--st-run)':s==='failed'?'var(--st-fail)':'var(--st-none)';}
+function drawTiles(){
+  svg.innerHTML=`<rect width="1080" height="450" fill="#f0f0eb"/>`+[...Array(37)].map((_,i)=>`<line x1="${i*30}" x2="${i*30}" y1="0" y2="450" stroke="#fafaf5" stroke-width="1"/>`).join('')+
+  Object.values(tiles).map(t=>{const x=(t.lon+180)*3,y=(80-t.lat)*3;
+   return `<rect x="${x+.5}" y="${y+.5}" width="29" height="29" rx="2" fill="${colorFor(t)}" opacity="${t.st[stage]==='none'?.55:1}" stroke="${t.id===selected?'#0b2417':jobSel.has(t.id)?'#eca72c':'transparent'}" stroke-width="${t.id===selected?2.5:2.5}" data-id="${t.id}" tabindex="0" role="button" aria-label="Tile ${t.id}, ${t.st[stage]}" style="cursor:pointer"><title>${t.id} · ${t.cty} · ${stage}: ${t.st[stage]}</title></rect>`}).join('');
+  $$('rect[data-id]',svg).forEach(r=>{r.onclick=e=>pick(r.dataset.id,e.shiftKey);r.onkeydown=e=>{if(e.key==='Enter')pick(r.dataset.id,e.shiftKey)}});
+  $('#tilelegend').innerHTML=[['none','not run'],['ok',stage==='ingest'?'ingested':stage==='export'?'COG written':stage],['running','running'],['failed','failed']].map(([k,l])=>`<span><span class="swatch" style="background:${k==='ok'?`var(${stageColor[stage]})`:`var(${ST[k]})`}"></span>${l}</span>`).join('')+`<span><span class="swatch" style="background:#fff;border:2px solid #eca72c"></span>in job selection (${jobSel.size})</span>`;
+  const vals=Object.values(tiles);$('#tilecount').textContent=`${vals.length} tiles · ${vals.filter(t=>t.st[stage]==='ok').length} done · ${vals.filter(t=>t.st[stage]==='failed').length} failed`;
+}
+const b=(s)=>`<span class="badge ${s==='ok'?'b-ok':s==='failed'?'b-fail':s==='running'?'b-warn':'b-none'}">${s==='none'?'—':s}</span>`;
+function table(){const q=$('#q').value.toLowerCase(),sf=$('#stf').value;
+ const rows=Object.values(tiles).filter(t=>t.st.ingest!=='none'||t.st.emit!=='none').filter(t=>(!q||t.id.toLowerCase().includes(q)||t.cty.toLowerCase().includes(q))&&(!sf||(sf==='missing'?t.st[stage]==='none':t.st[stage]===sf)));
+ $('#tbody').innerHTML=rows.map(t=>`<tr data-id="${t.id}" class="${t.id===selected?'sel':''}" style="cursor:pointer"><td class="mono">${t.id}</td><td>${t.cty}</td><td>${b(t.st.ingest)}</td><td>${b(t.st.harmonize)}</td><td>${b(t.st.emit)}</td><td>${b(t.st.export)}</td><td>${t.st.emit==='none'?'—':'29 Sep 18:55'}</td><td>${t.st.emit==='ok'?'1.4 GB':'—'}</td></tr>`).join('')||'<tr><td colspan=8 class="muted">No tiles match.</td></tr>';
+ $$('#tbody tr[data-id]').forEach(r=>r.onclick=e=>pick(r.dataset.id,e.shiftKey));}
+function drawer(){const el=$('#drawer');if(!selected){el.innerHTML=`<h3>Tile details</h3><p class="muted">Select a tile on the map or in the table. You will see its artifacts, sizes, last run, timings and logs here.</p>`;return}
+ const t=tiles[selected],ok=t.st.emit==='ok';
+ el.innerHTML=`<p class="eyebrow">Tile</p><h2>${t.id}</h2><p class="muted">${t.cty} · 10°×10° · ${t.lat}…${t.lat-10}°, ${t.lon}…${t.lon+10}°</p>
+  ${t.err?`<div class="banner" style="border-color:#c0563f;background:rgba(192,86,63,.1)"><b>Failed</b> — ${t.err}<br><a href="#" data-go="jobs">Retry with the power pool →</a></div>`:''}
+  <h3>Artifacts</h3><div class="tablewrap" style="max-height:none"><table><thead><tr><th>Stage</th><th>Artifact</th><th>Size</th><th></th></tr></thead><tbody>
+  <tr><td>ingest</td><td class="mono">8 rasters</td><td>1.7 GB</td><td>${b(t.st.ingest)}</td></tr>
+  <tr><td>harmonize</td><td class="mono">scratch/77da2f344be4.zarr</td><td>${t.st.harmonize==='ok'?'2.9 GB':'—'}</td><td>${b(t.st.harmonize)}</td></tr>
+  <tr><td>emit</td><td class="mono">scratch/94cbe56c057a.zarr</td><td>${ok?'1.4 GB':'—'}</td><td>${b(t.st.emit)}</td></tr>
+  <tr><td>export</td><td class="mono">emissions/${t.id}.tif</td><td>${t.st.export==='ok'?'0.6 GB':'—'}</td><td>${b(t.st.export)}</td></tr></tbody></table></div>
+  <h3 style="margin-top:var(--sp-3)">Last run</h3><div class="kv"><b>Run</b><span class="mono">cs-0929-civ</span><b>Phase</b><span>compute</span><b>Started</b><span>29 Sep 17:31</span><b>Timings</b><span>harmonize 12m · emit 38m · attribute 9m</span><b>Peak RAM</b><span>41 GiB of 56</span></div>
+  <div class="row" style="gap:8px;flex-wrap:wrap"><button class="btn sm" id="dmap" ${t.st.export==='ok'||ok?'':'disabled'}>Show on map</button><button class="btn ghost sm" id="djob">Add to job</button><button class="btn ghost sm">Logs ↗</button></div>`;
+ $('#dmap')&&($('#dmap').onclick=()=>{$('#mapTitle').textContent='Tile '+selected;go('map')});$('#djob').onclick=()=>{jobSel.add(selected);drawTiles();chips()};$$('[data-go]',el).forEach(a=>a.onclick=e=>{e.preventDefault();go(a.dataset.go)});}
+function pick(id,add){if(add){jobSel.has(id)?jobSel.delete(id):jobSel.add(id);chips()}else selected=id;drawTiles();table();drawer();}
+$$('#stageSeg button').forEach(bt=>bt.onclick=()=>{stage=bt.dataset.s;$$('#stageSeg button').forEach(x=>x.classList.toggle('active',x===bt));drawTiles();table()});
+$('#q').oninput=table;$('#stf').onchange=table;
+$('#addsel').onclick=()=>{$$('#tbody tr[data-id]').forEach(r=>jobSel.add(r.dataset.id));drawTiles();chips()};
+// ---------- map overlay (fake smooth noise)
+const cv=$('#cv'),cx=cv.getContext('2d');const bandMax=[320,180,12,1.0],ramps=[['#fbf6e8','#eca72c','#542344'],['#eef5f0','#64a77e','#0b2417'],['#e8f1f5','#3a8596','#081119'],['#f0f0eb','#ad9baa','#542344']];
+function f(x,y,b){return Math.max(0,Math.sin(x*.011+b)*Math.cos(y*.017-b)+Math.sin((x+y)*.006)*.8+Math.sin(x*.05)*.12)}
+const hex=h=>[1,3,5].map(i=>parseInt(h.slice(i,i+2),16));
+function ramp(t,r){const c=r.map(hex),s=t<.5?[c[0],c[1],t*2]:[c[1],c[2],(t-.5)*2];return s[0].map((v,i)=>Math.round(v+(s[1][i]-v)*s[2]))}
+function drawMap(){const b=+$('#band').value,r=ramps[b],op=$('#op').value/100;cx.clearRect(0,0,1000,560);cx.fillStyle='#f0f0eb';cx.fillRect(0,0,1000,560);
+ cx.strokeStyle='#fafaf5';for(let i=0;i<1000;i+=100){cx.beginPath();cx.moveTo(i,0);cx.lineTo(i,560);cx.stroke()}for(let j=0;j<560;j+=100){cx.beginPath();cx.moveTo(0,j);cx.lineTo(1000,j);cx.stroke()}
+ const im=cx.getImageData(0,0,1000,560),d=im.data;for(let y=40;y<520;y+=1)for(let x=60;x<940;x+=1){const v=f(x,y,b);if(v<.55||(x-500)**2/(420**2)+(y-280)**2/(230**2)>1)continue;const t=Math.min(1,v/2.1),c=ramp(t,r),i=(y*1000+x)*4;d[i]=d[i]*(1-op)+c[0]*op;d[i+1]=d[i+1]*(1-op)+c[1]*op;d[i+2]=d[i+2]*(1-op)+c[2]*op}
+ cx.putImageData(im,0,0);cx.strokeStyle='#0b2417';cx.setLineDash([6,4]);cx.strokeRect(60,40,880,480);cx.setLineDash([]);
+ $('#lgbar').style.background=`linear-gradient(90deg,${r.join(',')})`;$('#lgmax').textContent=bandMax[b];$('#lgunit').textContent=['tCO2e/ha','tCO2e/ha','tCO2e/ha/yr','ha'][b];}
+$('#band').onchange=drawMap;$('#op').oninput=drawMap;$$('#srcSeg button').forEach(x=>x.onclick=()=>{$$('#srcSeg button').forEach(y=>y.classList.toggle('active',y===x));drawMap()});
+cv.onmousemove=e=>{const r=cv.getBoundingClientRect(),x=(e.clientX-r.left)*1000/r.width,y=(e.clientY-r.top)*560/r.height,b=+$('#band').value,v=f(x,y,b)/2.1*bandMax[b];
+ const lon=(-10+x/1000*10).toFixed(4),lat=(10-y/560*10).toFixed(4);$('#readout').textContent=f(x,y,b)<.55?`${lat}°, ${lon}° · nodata`:`${lat}°, ${lon}° · ${v.toFixed(2)}`;
+ const names=['vegetation-emissions','mineral-soil-carbon','peat-occupation','hectares-per-pixel'];$('#pixtab').innerHTML=names.map((n,i)=>`<tr><td>${n}</td><td class="mono">${f(x,y,i)<.55?'nan':(f(x,y,i)/2.1*bandMax[i]).toFixed(2)}</td></tr>`).join('')};
+// ---------- jobs
+const pools=[{n:'yaroslav-worker-node-pool',m:'e2-standard-8',cpu:8,mem:'32 GiB',taint:'—',nodes:'3',as:'0–8',cost:'$0.27/h'},{n:'yaroslav-power-node-pool',m:'e2-highmem-8',cpu:8,mem:'64 GiB',taint:'worker=true:NoSchedule',nodes:'1',as:'0–8',cost:'$0.36/h'}];
+const ROLE={compute:'heavy',export:'light',mosaic:'light','ingest-tiles':'light','ingest-world':'light',reduce:'light'};
+const phaseName=()=>$('#ph').value.split(' ')[0];
+const defPool=()=>ROLE[phaseName()]==='heavy'?1:0;
+let pool=defPool();
+function pp(){const d=defPool();
+ $('#poolpick').innerHTML=pools.map((p,i)=>`<div class="poolcard col ${i===pool?'on':''}" data-i="${i}" role="radio" aria-checked="${i===pool}" tabindex="0"><h3>${p.n.replace('yaroslav-','')}<span class="badge ${i?'b-warn':'b-ok'}">${p.nodes} node${p.nodes>1?'s':''} now</span></h3><div class="muted">${p.m} · ${p.cpu} vCPU · ${p.mem}${i===d?' · <b>default for '+phaseName()+'</b>':''}</div><div class="hint">taints: ${p.taint} · autoscale ${p.as}</div></div>`).join('');
+ $('#poolhint').innerHTML=pool===d?`Default for <b>${phaseName()}</b> (${ROLE[phaseName()]}): <span class="mono">${pools[d].n}</span>. Click the other pool to override.`:`<b>Overridden</b>: the default is <span class="mono">${pools[d].n}</span>. <a href="#" id="poolreset">Reset to default</a>`;
+ const r=$('#poolreset');if(r)r.onclick=e=>{e.preventDefault();pool=d;pp();$('#go').disabled=true;$('#dryout').innerHTML=''};
+ $$('.poolcard').forEach(c=>c.onclick=()=>{pool=+c.dataset.i;pp();$('#go').disabled=true;$('#dryout').innerHTML=''})}
+$('#ph').onchange=()=>{pool=defPool();pp();$('#go').disabled=true;$('#dryout').innerHTML=''};
+function chips(){$('#tchips').innerHTML=[...jobSel].map(t=>`<span class="chip mono">${t}<button aria-label="Remove ${t}" data-t="${t}">×</button></span>`).join('')||'<span class="muted">No tiles selected</span>';$('#ntiles').textContent=`(${jobSel.size})`;$$('#tchips button').forEach(x=>x.onclick=()=>{jobSel.delete(x.dataset.t);chips();drawTiles()});$('#go').disabled=true}
+$('#par').oninput=()=>{$('#parv').textContent=$('#par').value;$('#go').disabled=true};
+$('#padd').onclick=()=>{const v=$('#paste').value.trim().toUpperCase();if(!v)return;v.split(/[\s,]+/).forEach(x=>{if(/^[A-Z]{3}$/.test(x))Object.values(tiles).filter(t=>t.cty.includes(x)).forEach(t=>jobSel.add(t.id));else if(tiles[x])jobSel.add(x)});$('#paste').value='';chips();drawTiles()};
+$('#dry').onclick=()=>{const bad=phaseName()==='compute'&&pool===0;const n=jobSel.size,p=pools[pool],par=+$('#par').value,waves=Math.ceil(n/par),hrs=waves*1.0;
+ $('#dryout').innerHTML=`<div class="cost"><div><span class="muted">Pods</span><b>${n}</b></div><div><span class="muted">Waves</span><b>${waves}</b></div><div><span class="muted">Est. wall time</span><b>~${(waves*0.9).toFixed(1)} h</b></div><div><span class="muted">Est. cost</span><b>$${(Math.min(n,par)*waves*0.9*parseFloat(p.cost.slice(1))).toFixed(2)}</b></div><div><span class="muted">Peak nodes</span><b>${Math.min(n,par)}</b></div></div>
+ ${bad?'<div class="banner" style="margin-top:10px;border-color:#c0563f;background:rgba(192,86,63,.1)"><b>Error:</b> compute requests 56 Gi, but an e2-standard-8 node has 27.6 GiB allocatable, so it would never schedule. Choose the power pool.</div>':''}
+ ${n>8?'<div class="banner" style="margin-top:10px">Parallelism × nodes would exceed the autoscaler max (8).</div>':''}
+ <details open style="margin-top:10px"><summary class="lbl" style="cursor:pointer">Rendered manifest (Job/cs-compute-0930, 1 of 1)</summary><div class="pre" style="margin-top:6px">apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cs-compute-0930
+  namespace: yaroslav          # allowlisted
+  labels: {app: cornerstone, phase: compute, run-id: "0930a"}
+spec:
+  completionMode: Indexed
+  completions: ${n}
+  parallelism: ${par}
+  template:
+    spec:
+      nodeSelector: {cloud.google.com/gke-nodepool: ${p.n}}
+      tolerations: [{key: worker, operator: Equal, value: "true", effect: NoSchedule}]
+      containers:
+      - name: phase
+        args: ["--phase","compute","--skip-ingest","--methodology-name","STATISTICAL",${[...jobSel].slice(0,3).map(x=>`"${x}"`).join(',')}…]
+        resources: {requests: {cpu: "6", memory: 56Gi}, limits: {cpu: "8", memory: 56Gi}}</div></details>`;$('#go').disabled=bad};
+$('#go').onclick=()=>{$('#dryout').innerHTML='<div class="banner" style="border-color:var(--sea-green);background:rgba(49,129,80,.1)">Submitted <b>cs-compute-0930</b> (audit #214). Watch it below.</div>';$('#go').disabled=true;jobs();};
+const spark=(a)=>`<svg width="90" height="22" viewBox="0 0 90 22" aria-hidden="true"><polyline fill="none" stroke="var(--sea-green)" stroke-width="1.5" points="${a.map((v,i)=>`${i*90/(a.length-1)},${22-v*20}`).join(' ')}"/></svg>`;
+const rnd=(n,b)=>[...Array(n)].map((_,i)=>Math.min(1,Math.max(.05,b+Math.sin(i*.7)*.15+Math.sin(i*2.3)*.08)));
+function jobs(){const J=[['cs-compute-0930','compute','Running','5 / 12',42,'14m','OOM risk'],['cs-export-0929','export','Running','3 / 4',75,'38m','']];
+ $('#joblist').innerHTML=J.map((j,k)=>`<div style="padding:12px 0;border-top:${k?'1px solid var(--platinium-2)':'0'}"><div class="row" style="align-items:center;gap:12px"><div class="col"><b class="mono">${j[0]}</b> <span class="badge b-warn">${j[2]}</span> <span class="muted">· ${j[1]} · age ${j[5]} · ${j[3]} pods done</span><div class="bar" style="margin-top:6px"><i style="width:${j[4]}%"></i></div></div><button class="btn warn sm">Cancel</button><button class="btn ghost sm">Delete</button></div>
+ ${k?'':`<div class="tablewrap" style="margin-top:8px;max-height:none"><table><thead><tr><th>Pod</th><th>Tile</th><th>Phase</th><th>Node</th><th>RAM</th><th>CPU</th><th>IO PSI</th></tr></thead><tbody>
+ ${[['10N_010W','Running',.72,.9,.1],['10N_000E','Running',.88,.7,.4],['00N_010W','Running',.5,.95,.05],['10N_020W','Pending',0,0,0]].map((p,i)=>`<tr style="cursor:pointer"><td class="mono">…-${i}-x${i}k</td><td class="mono">${p[0]}</td><td><span class="badge ${p[1]==='Running'?'b-ok':'b-warn'}">${p[1]}</span></td><td class="mono">${p[1]==='Pending'?'—':'n'+i}</td><td>${p[1]==='Pending'?'':spark(rnd(14,p[2]))+' '+Math.round(p[2]*56)+'G'}</td><td>${p[1]==='Pending'?'':spark(rnd(14,p[3]))}</td><td>${p[1]==='Pending'?'':spark(rnd(14,p[4]))}</td></tr>`).join('')}
+ </tbody></table></div>`}</div>`).join('');}
+const L=['2026-09-30 09:12:03 INFO  Running the harmonize workflow for tile_id=10N_010W','09:12:41 INFO  resource_sample {"rss_gib":9.1,"cpu":0.93,"io_psi_full_avg10":0.2}','09:19:55 INFO  Running the land conversion and emissions workflow for tile_id=10N_010W','09:20:10 INFO  resource_sample {"rss_gib":31.4,"cpu":0.88,"io_psi_full_avg10":1.1}','09:34:02 INFO  resource_sample {"rss_gib":40.2,"cpu":0.91,"io_psi_full_avg10":0.4}','09:41:18 WARN  memory at 72% of limit'];$('#log').textContent=L.join('\n');
+// ---------- history + pools
+$('#hist').innerHTML=[['cs-0929-civ','29 Sep 17:31','ingest → compute → reduce → export','CIV','4','ok','2h 41m','$3.10'],['cs-0929-bra','29 Sep 20:02','compute','BRA (partial)','4','failed 4/4 · OOM','1h 12m','$1.80'],['cs-0930-test','30 Sep 08:40','export','CIV','1','ok','6m','$0.05']].map(r=>`<tr style="cursor:pointer"><td class="mono">${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td>${r[3]}</td><td>${r[4]}</td><td><span class="badge ${r[5]==='ok'?'b-ok':'b-fail'}">${r[5]}</span></td><td>${r[6]}</td><td>${r[7]}</td><td><button class="btn ghost sm">Re-run with these settings</button></td></tr>`).join('');
+$('#poolgrid').innerHTML=pools.map((p,i)=>`<div class="card"><h2>${p.n}</h2><div class="kv" style="margin-top:10px"><b>Machine</b><span>${p.m} · ${p.cpu} vCPU · ${p.mem}</span><b>Taints</b><span class="mono">${p.taint}</span><b>Labels</b><span class="mono">cloud.google.com/gke-nodepool=${p.n}</span><b>Autoscaler</b><span>${p.as} nodes</span><b>Nodes now</b><span>${p.nodes}</span><b>Allocatable</b><span>${i?'7.9 CPU · 58 GiB':'7.9 CPU · 28 GiB'} per node</span><b>On-demand</b><span>${p.cost}/node</span></div><div class="row" style="gap:8px"><button class="btn ghost sm" disabled title="Phase 3 — needs GKE API IAM">Set max nodes…</button></div></div>`).join('');
+drawTiles();table();drawer();chips();pp();jobs();
+</script>
+</body>
+</html>
