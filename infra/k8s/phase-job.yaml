@@ -65,6 +65,10 @@ spec:
             # the balance_dirty_pages write-throttle -- see docs/gke-disk-io-findings.md.
             - {name: TMPDIR, value: /localtmp}
             - {name: CPL_TMPDIR, value: /localtmp}
+            # Stamped on every line when run_phase.py logs as JSON (LOG_FORMAT=json).
+            - {name: RUN_ID, value: "${RUN_ID}"}
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
           resources:
             # ephemeral-storage here guards only the container's OWN overlay (logs, anything
             # not under /localtmp): a small deterministic per-pod eviction guard, so a stray

@@ -38,6 +38,14 @@ Run inside the container (the Job does this for you)::
 
     python infra/run_phase.py --phase compute HND              # tile from JOB_COMPLETION_INDEX
     python infra/run_phase.py --phase compute --tile-id 20N_090W HND
+    python infra/run_phase.py --phase ingest-tiles --tile-ids 20N_090W,20N_080W   # no countries
+
+``--tile-ids`` names the tile list outright, so a pod needs no boundary read and no country
+argument; the countries are only needed by the phases that attribute or name by country
+(``compute``, ``reduce``, ``mosaic``); ``reduce`` and ``mosaic`` take their tiles from them and
+reject ``--tile-ids``. ``ingest-world`` needs neither: it writes the boundaries.
+Set ``LOG_FORMAT=json`` (or ``--log-format json``) for one JSON object per line on stdout, with
+``RUN_ID`` and ``POD_NAME`` from the environment stamped on every line.
 """
 
 import argparse
@@ -47,6 +55,7 @@ import logging
 import os
 
 import resource_monitor
+import structured_logging
 
 from jdluc import (
     attribute,
@@ -137,12 +146,12 @@ def get_tile_ids(iso_3166s: collections.abc.Iterable[str]) -> list[str]:
 
 
 def get_tile_id_for_index(
-    iso_3166s: collections.abc.Iterable[str], tile_index: int
+    tile_ids: collections.abc.Sequence[str], tile_index: int
 ) -> str:
-    tile_ids = get_tile_ids(iso_3166s=iso_3166s)
+    """``tile_ids`` is the AOI's sorted tile list, however it was derived."""
     assert 0 <= tile_index < len(tile_ids), (
-        f"{tile_index=:d} is outside the {len(tile_ids):d} tile(s) of {sorted(iso_3166s)}; "
-        "the Job's completions and the pod's country arguments must agree"
+        f"{tile_index=:d} is outside the {len(tile_ids):d} tile(s) {list(tile_ids)}; "
+        "the Job's completions and the pod's tile arguments must agree"
     )
     return tile_ids[tile_index]
 
@@ -298,22 +307,54 @@ def run_mosaic(iso_3166s: collections.abc.Sequence[str]) -> None:
     logger.info(f"mosaicked AOI emissions VRT to {uri:s}")
 
 
+def ten_degree_tile_id(value: str) -> str:
+    if not tiling.PARTITIONING_TO_IS_VALID_TILE_ID[tiling.Partitioning.TEN_DEGREE_TILE](
+        value
+    ):
+        raise argparse.ArgumentTypeError(f"{value!r} is not a ten-degree tile id")
+    return value
+
+
+def tile_ids_arg(value: str) -> list[str]:
+    return sorted({ten_degree_tile_id(v) for v in value.split(",") if v})
+
+
+def resolve_tile_ids(
+    explicit: collections.abc.Sequence[str] | None,
+    iso_3166s: collections.abc.Sequence[str],
+) -> list[str] | None:
+    """The sorted tile list pod ``i`` indexes into: named outright, else from the countries.
+
+    ``None`` when neither was given. Only the countries branch reads the boundary layer.
+    """
+    if explicit:
+        return sorted(explicit)
+    if iso_3166s:
+        return get_tile_ids(iso_3166s=iso_3166s)
+    return None
+
+
 def main() -> int:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "iso_3166s",
-        nargs=argparse.ONE_OR_MORE,
+        nargs=argparse.ZERO_OR_MORE,
         type=worldbank_jurisdictions.iso_3166_str,
-        help="the AOI: cover exactly the tiles these countries' boundaries touch",
+        help="the AOI: cover exactly the tiles these countries' boundaries touch "
+        "(required by compute, reduce and mosaic; optional with --tile-ids elsewhere)",
     )
     parser.add_argument("--phase", choices=[str(p) for p in Phase], required=True)
     parser.add_argument(
         "--tile-id",
+        type=ten_degree_tile_id,
         help="run this tile instead of the one JOB_COMPLETION_INDEX picks (per-tile phases)",
+    )
+    parser.add_argument(
+        "--tile-ids",
+        type=tile_ids_arg,
+        help="comma-separated tiles that define the AOI instead of the countries' boundaries; "
+        "pod i runs the i'th of them, sorted (per-tile phases; reduce and mosaic always take "
+        "their tiles from the countries)",
     )
     parser.add_argument(
         "--tile-index",
@@ -337,12 +378,30 @@ def main() -> int:
         action="store_true",
         help="compute phase: read a pre-warmed INGEST_ROOT and never touch a source",
     )
+    parser.add_argument(
+        "--log-format",
+        choices=("text", "json"),
+        default=os.environ.get("LOG_FORMAT", "text"),
+        help="json: one object per line on stdout for Cloud Logging; defaults to $LOG_FORMAT",
+    )
     args = parser.parse_args()
 
     phase = Phase(args.phase)
     methodology = attribute.Methodology[str(args.methodology_name)]
     iso_3166s: list[str] = sorted(args.iso_3166s)
 
+    if phase in (Phase.COMPUTE, Phase.REDUCE, Phase.MOSAIC) and not iso_3166s:
+        parser.error(f"phase {phase!s} needs the AOI's countries")
+    if phase in (Phase.REDUCE, Phase.MOSAIC) and args.tile_ids:
+        # mosaic names its output from the countries, so a tile list that differs from theirs
+        # would write a partial mosaic under a country's name
+        parser.error(f"{phase!s} derives its tiles from the countries; drop --tile-ids")
+    if args.tile_id and args.tile_ids:
+        parser.error("pass --tile-id or --tile-ids, not both")
+
+    # Everything below the ingest-world fix reads the boundary layer only when it must: the
+    # country-derived list is resolved lazily, and never for ingest-world (it creates that layer).
+    tile_ids: list[str] | None = None
     tile_id: str | None = None
     if phase.is_per_tile:
         if args.tile_id:
@@ -353,28 +412,48 @@ def main() -> int:
                 f"${COMPLETION_INDEX_ENV_VAR} (the Indexed Job sets it)"
             )
         else:
+            tile_ids = resolve_tile_ids(args.tile_ids, iso_3166s)
+            if tile_ids is None:
+                parser.error(f"phase {phase!s} needs --tile-ids or the AOI's countries")
             tile_id = get_tile_id_for_index(
-                iso_3166s=iso_3166s, tile_index=int(args.tile_index)
+                tile_ids=tile_ids, tile_index=int(args.tile_index)
             )
+
+    structured_logging.configure(
+        log_format=args.log_format,
+        context={
+            "run_id": os.environ.get("RUN_ID"),
+            "phase": str(phase),
+            "tile": tile_id,
+            "pod": os.environ.get("POD_NAME"),
+        },
+    )
     logger.info(f"phase {phase!s} for {iso_3166s} {tile_id=} {methodology.name=:s}")
 
     # Sample this pod's own resource use (disk-write throttling, memory, CPU) to its logs,
     # so we can see which resource capped without infra tooling -- see resource_monitor.py
     # and docs/gke-disk-io-findings.md.
-    monitor_label = f"{phase!s}:{tile_id or '-'.join(iso_3166s)}"
+    monitor_label = f"{phase!s}:{tile_id or '-'.join(iso_3166s) or 'world'}"
     with resource_monitor.monitor(label=monitor_label):
         match phase:
-            case Phase.INGEST_WORLD | Phase.INGEST_TILES:
+            case Phase.INGEST_WORLD:
+                # Whole-world datasets ignore the tile set, and the boundary layer they
+                # sit beside is what *this* phase writes, so never resolve countries here.
                 return run_ingest(
                     concurrency=int(args.concurrency),
                     dataset_names=get_dataset_names_for_phase(
                         methodology=methodology, phase=phase
                     ),
-                    # A whole-world dataset ignores the tile set, so ingest-world's pod passes
-                    # the AOI's whole list and ingest.workflow collapses it.
-                    tile_ids=[tile_id]
-                    if tile_id
-                    else get_tile_ids(iso_3166s=iso_3166s),
+                    tile_ids=[tiling.WHOLE_WORLD_TILE_ID],
+                )
+            case Phase.INGEST_TILES:
+                assert tile_id
+                return run_ingest(
+                    concurrency=int(args.concurrency),
+                    dataset_names=get_dataset_names_for_phase(
+                        methodology=methodology, phase=phase
+                    ),
+                    tile_ids=[tile_id],
                 )
             case Phase.COMPUTE:
                 assert tile_id

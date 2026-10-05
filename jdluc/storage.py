@@ -1,6 +1,5 @@
 import dataclasses
 import functools
-import hashlib
 import inspect
 import logging
 import os
@@ -9,6 +8,8 @@ import typing
 
 import pandas
 import xarray
+
+from jdluc import cache_key
 
 logger = logging.getLogger(__name__)
 
@@ -191,21 +192,19 @@ def get_cache_decorator(
             bound = inspect.signature(func).bind(*args, **kwargs)
             bound.apply_defaults()
             ignored = set(ignored_args or ())
-            hash_tokens = (
-                # func.__module__ (e.g. "jdluc.emit") replaces a former
-                # git.Repo()-relative file path: identical string for in-package
-                # modules, but no .git needed at runtime (so the image can drop it).
-                func.__module__,
-                func.__qualname__,
-                version,
-                *(
+            # func.__module__ (e.g. "jdluc.emit") replaces a former git.Repo()-relative
+            # file path: identical string for in-package modules, but no .git needed at
+            # runtime (so the image can drop it).
+            hash_key = cache_key.cache_key(
+                module=func.__module__,
+                qualname=func.__qualname__,
+                version=version,
+                arguments=(
                     (name, value)
                     for name, value in bound.arguments.items()
                     if name not in ignored
                 ),
             )
-            data = "|".join(map(str, hash_tokens)).encode()
-            hash_key = hashlib.sha1(data=data).hexdigest()[:12]
             config = Config.from_dot_env()
             cacher = typing.cast(
                 CacherProtocol[R],
