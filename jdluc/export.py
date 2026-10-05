@@ -18,19 +18,18 @@ import logging
 import math
 import os
 import tempfile
-import xml.etree.ElementTree as ElementTree
+from xml.etree import ElementTree
 
-import numpy
 import rasterio
 import xarray
 
-from jdluc import config, emit, geo, storage, utils
+from jdluc import config, emit, storage
 
 logger = logging.getLogger(__name__)
 
 CIE_PREFIX = "cie-"
 
-NO_DATA = float("nan")
+NO_DATA = storage.COG_NO_DATA
 
 
 def get_band_names(dset: xarray.Dataset) -> tuple[str, ...]:
@@ -42,26 +41,9 @@ def get_band_names(dset: xarray.Dataset) -> tuple[str, ...]:
 
 def build_bands(dset: xarray.Dataset) -> xarray.DataArray:
     """Stack an ``emit`` dataset's ``cie-`` bands into the ordered multi-band array."""
-    import rioxarray  # noqa: F401
-
     band_names = get_band_names(dset=dset)
     assert band_names, f"no {CIE_PREFIX!r} bands in the emit output"
-    stacked = xarray.concat([dset[name] for name in band_names], dim="band").astype(
-        numpy.float32
-    )
-    stacked = stacked.assign_coords(band=("band", list(band_names)))
-    crs = dset.rio.crs or "EPSG:4326"
-    return stacked.rio.write_crs(crs).rio.write_nodata(NO_DATA)
-
-
-def _metadata() -> dict[str, str]:
-    return {
-        "watershed-processing-time": utils.get_utc_timestamp(),
-        "watershed-processing-version": utils.get_git_version(),
-        "watershed-product-name": "cie-emissions-cog",
-        "watershed-remote-url": utils.get_git_remote_url(),
-        "watershed-source-name": "jdluc-emit",
-    }
+    return storage.stack_bands(dset=dset[list(band_names)])
 
 
 def _output_uri(tile_id: str) -> str:
@@ -69,25 +51,6 @@ def _output_uri(tile_id: str) -> str:
         root=config.Config.from_dot_env().export_root,
         prefix=f"{tile_id:s}.tif",
     )
-
-
-def _write_geotiff(stacked: xarray.DataArray, path_to_geotiff: str) -> None:
-    import dask.diagnostics
-
-    with dask.diagnostics.ProgressBar(dt=5, minimum=1):
-        logger.info(f"Writing staged GeoTIFF to {path_to_geotiff=:s}")
-        stacked.rio.to_raster(
-            path_to_geotiff,
-            blockxsize=512,
-            blockysize=512,
-            compress="ZSTD",
-            driver="GTiff",
-            dtype="float32",
-            lock=True,
-            num_threads="all_cpus",
-            tiled=True,
-            BIGTIFF="IF_SAFER",
-        )
 
 
 def workflow(tile_id: str, output_uri: str | None = None) -> str:
@@ -100,25 +63,16 @@ def workflow(tile_id: str, output_uri: str | None = None) -> str:
     logger.info(f"Reading emit scratch output for {tile_id=:s} (cache hit expected)")
     dset = emit.workflow(tile_id=tile_id)
 
-    stacked = build_bands(dset=dset)
+    band_names = get_band_names(dset=dset)
+    assert band_names, f"no {CIE_PREFIX!r} bands in the emit output"
     uri = output_uri if output_uri is not None else _output_uri(tile_id=tile_id)
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        path_to_geotiff = os.path.join(tmpdir, "geotiff.tif")
-        _write_geotiff(stacked=stacked, path_to_geotiff=path_to_geotiff)
-        geo.set_band_names_for_geotiff(
-            band_names=list(map(str, stacked.band.values)),
-            path_to_geotiff=path_to_geotiff,
-        )
-        geo.validate_geotiff(dtype="float32", path_to_geotiff=path_to_geotiff)
-        path_to_cog = os.path.join(tmpdir, "cog.tif")
-        geo.convert_geotiff_to_cog(
-            metadata=_metadata(),
-            no_data=NO_DATA,
-            path_to_cog=path_to_cog,
-            path_to_geotiff=path_to_geotiff,
-        )
-        storage.put_file(local_path=path_to_cog, uri=uri)
+    storage.write_dataset_to_cog(
+        dset=dset[list(band_names)],
+        metadata=storage.get_cog_metadata(
+            product_name="cie-emissions-cog", source_name="jdluc-emit"
+        ),
+        uri=uri,
+    )
 
     logger.info(f"Wrote emissions COG for {tile_id=:s} to {uri=:s}")
     return uri

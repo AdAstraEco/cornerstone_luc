@@ -4,11 +4,15 @@ import hashlib
 import inspect
 import logging
 import os
+import tempfile
 import threading
 import typing
 
+import numpy
 import pandas
 import xarray
+
+from jdluc import geo, utils
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +118,73 @@ def open_zarr_to_dask_dataset(path_to_zarr: str) -> xarray.Dataset:
     return dset.rio.write_crs(4326)
 
 
+COG_NO_DATA = float("nan")
+
+
+def stack_bands(dset: xarray.Dataset) -> xarray.DataArray:
+    """`dset`'s variables as one float32 array along `band`, in the dataset's order."""
+    import rioxarray  # noqa: F401
+
+    band_names = list(map(str, dset.data_vars))
+    stacked = xarray.concat([dset[name] for name in band_names], dim="band").astype(
+        numpy.float32
+    )
+    stacked = stacked.assign_coords(band=("band", band_names))
+    crs = dset.rio.crs or "EPSG:4326"
+    return stacked.rio.write_crs(crs).rio.write_nodata(COG_NO_DATA)
+
+
+def get_cog_metadata(product_name: str, source_name: str) -> dict[str, str]:
+    return {
+        "watershed-processing-time": utils.get_utc_timestamp(),
+        "watershed-processing-version": utils.get_git_version(),
+        "watershed-product-name": product_name,
+        "watershed-remote-url": utils.get_git_remote_url(),
+        "watershed-source-name": source_name,
+    }
+
+
+def write_dataset_to_cog(
+    dset: xarray.Dataset, metadata: dict[str, str], uri: str
+) -> None:
+    """Materialise `dset` as a Cloud-Optimised GeoTIFF: one band per variable, named after it.
+
+    EPSG:4326, float32, NaN no-data. Computes the (lazy) dataset as it writes.
+    """
+    import dask.diagnostics
+
+    stacked = stack_bands(dset=dset)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path_to_geotiff = os.path.join(tmpdir, "geotiff.tif")
+        with dask.diagnostics.ProgressBar(dt=5, minimum=1):
+            logger.info(f"Writing staged GeoTIFF to {path_to_geotiff=:s}")
+            stacked.rio.to_raster(
+                path_to_geotiff,
+                blockxsize=512,
+                blockysize=512,
+                compress="ZSTD",
+                driver="GTiff",
+                dtype="float32",
+                lock=True,
+                num_threads="all_cpus",
+                tiled=True,
+                BIGTIFF="IF_SAFER",
+            )
+        geo.set_band_names_for_geotiff(
+            band_names=list(map(str, stacked.band.values)),
+            path_to_geotiff=path_to_geotiff,
+        )
+        geo.validate_geotiff(dtype="float32", path_to_geotiff=path_to_geotiff)
+        path_to_cog = os.path.join(tmpdir, "cog.tif")
+        geo.convert_geotiff_to_cog(
+            metadata=metadata,
+            no_data=COG_NO_DATA,
+            path_to_cog=path_to_cog,
+            path_to_geotiff=path_to_geotiff,
+        )
+        put_file(local_path=path_to_cog, uri=uri)
+
+
 P = typing.ParamSpec("P")
 R = typing.TypeVar("R")
 
@@ -173,7 +244,7 @@ class CacherDecoratorProtocol(typing.Protocol[R]):
 
 
 def get_cache_decorator(
-    cacher_cls: type[ParquetCacher] | type[ZarrCacher],
+    cacher_cls: type[ParquetCacher | ZarrCacher],
     version: int,
     ignored_args: list[str] | None = None,
 ) -> CacherDecoratorProtocol[typing.Any]:
