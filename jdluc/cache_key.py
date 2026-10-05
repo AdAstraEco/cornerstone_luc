@@ -1,9 +1,9 @@
-"""The scratch-cache key, as a pure function with no third-party imports.
+"""The scratch-cache key: the recipe ``storage`` hashes an artifact's identity with.
 
-Kept apart from ``storage`` (which pulls in pandas and xarray) so tools that only need to
-*name* a cache artifact, such as the control plane's tile-status check, can import it cheaply.
-Changing this changes every key and so orphans every cached artifact: ``cache_key_test.py``
-pins a key that exists in the bucket.
+A pure function with no third-party imports, kept out of ``storage`` (which pulls in pandas and
+xarray) so it stays cheap to import and easy to test. ``cache_key_test.py`` pins a key that
+exists in the bucket: changing this recipe changes every key and so orphans every cached
+artifact.
 """
 
 import collections.abc
@@ -20,7 +20,9 @@ def cache_key(
     """12 hex chars identifying ``module.qualname`` at ``version`` called with ``arguments``.
 
     ``arguments`` are the bound ``(name, value)`` pairs with defaults applied and ignored
-    arguments already removed, in signature order.
+    arguments already removed, in signature order. Each value is hashed through ``str()``, and
+    the key does not cover the code of the function: a changed body keeps its key unless
+    ``version`` is bumped.
     """
     data = "|".join(map(str, (module, qualname, version, *arguments))).encode()
     return hashlib.sha1(data=data).hexdigest()[:12]

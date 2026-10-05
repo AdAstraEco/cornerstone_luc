@@ -26,13 +26,13 @@ cp infra/cloud.env.example infra/cloud.env   # then edit; infra/cloud.env is git
 
 The roots live under the `cornerstone/` prefix of the bucket in `cluster.env`: `INGEST_ROOT = gs://$GCS_BUCKET/cornerstone/ingest` and `.../cornerstone/scratch`.
 
-`Config.from_dot_env()` reads each field from the process environment first and falls back to a `.env` file, so these pods mount `infra/cloud.env` as a Secret at `/app/.env` (setting the same names as container environment variables would override it, no file needed):
+`Config.from_dot_env()` reads a `.env` **file**, not process env, so the pods mount `infra/cloud.env` as a Secret at `/app/.env`:
 
 ```bash
 kubectl -n "$K8S_NAMESPACE" create secret generic "$K8S_SECRET" --from-file=.env=infra/cloud.env
 ```
 
-Every field must be set (in the environment or the file) or `Config.from_dot_env()` raises: `INGEST_ROOT`, `SCRATCH_ROOT`, `EXPORT_ROOT` (where the emissions COGs / mosaic VRTs are written — a terminal deliverable, sibling to scratch), `NUMBER_OF_DASK_WORKERS` (the *inner* per-pod dask worker count — keep it ≤ the pod's cpu limit), `USDA_NASS_API_KEY`, `HARVARD_DATAVERSE_GUESTBOOK_JSON`.
+All six fields must be **present** or `Config.from_dot_env()` raises: `INGEST_ROOT`, `SCRATCH_ROOT`, `EXPORT_ROOT` (where the emissions COGs / mosaic VRTs are written — a terminal deliverable, sibling to scratch), `NUMBER_OF_DASK_WORKERS` (the *inner* per-pod dask worker count — keep it ≤ the pod's cpu limit), `USDA_NASS_API_KEY`, `HARVARD_DATAVERSE_GUESTBOOK_JSON`.
 
 Only the two ingest phases actually *use* the API keys. To keep them off the compute nodes, create a second Secret whose key fields are present but blank, and point `K8S_SECRET_COMPUTE` at it:
 

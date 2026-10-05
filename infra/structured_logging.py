@@ -4,7 +4,8 @@ GKE ships a container's stdout to Cloud Logging, and a line that is a JSON objec
 structured: ``severity`` sets the entry's severity (plain text on stderr is all ``ERROR``),
 ``message`` its text, and every other key a queryable field. ``configure`` stamps the run's
 fixed identifiers (``run_id``, ``phase``, ``tile``, ``pod``) on every line so a query by run
-or tile needs no regex on text. ``text`` stays the default for local runs.
+or tile needs no regex on text. ``text`` stays the default for local runs; note that both modes write to stdout, where the old
+text mode wrote to stderr (so ``run_phase.py ... 2> errors.log`` no longer captures log lines).
 
 A record may carry ``fields`` (``logger.info(..., extra={"fields": {...}})``): in JSON mode
 they are merged into the top level and ``kind`` becomes the message; in text mode the logged

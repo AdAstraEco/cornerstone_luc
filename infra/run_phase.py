@@ -42,7 +42,8 @@ Run inside the container (the Job does this for you)::
 
 ``--tile-ids`` names the tile list outright, so a pod needs no boundary read and no country
 argument; the countries are only needed by the phases that attribute or name by country
-(``compute``, ``reduce``, ``mosaic``). ``ingest-world`` needs neither: it writes the boundaries.
+(``compute``, ``reduce``, ``mosaic``); ``reduce`` and ``mosaic`` take their tiles from them and
+reject ``--tile-ids``. ``ingest-world`` needs neither: it writes the boundaries.
 Set ``LOG_FORMAT=json`` (or ``--log-format json``) for one JSON object per line on stdout, with
 ``RUN_ID`` and ``POD_NAME`` from the environment stamped on every line.
 """
@@ -293,17 +294,14 @@ def run_export(tile_id: str) -> None:
     logger.info(f"exported emissions COG to {uri:s}")
 
 
-def run_mosaic(
-    iso_3166s: collections.abc.Sequence[str],
-    tile_ids: collections.abc.Sequence[str],
-) -> None:
+def run_mosaic(iso_3166s: collections.abc.Sequence[str]) -> None:
     """Stitch the AOI's per-tile emission COGs into one read-time VRT (one pod, after ``export``).
 
     Mirrors ``reduce``'s shape: a single AOI-wide pod over the same sorted tile list. Absent tiles
     (ocean/edge, or an export the AOI never produced) are skipped. Methodology-agnostic.
     """
     uri = export.mosaic_workflow(
-        tile_ids=tile_ids,
+        tile_ids=get_tile_ids(iso_3166s=iso_3166s),
         name="-".join(sorted(iso_3166s)),
     )
     logger.info(f"mosaicked AOI emissions VRT to {uri:s}")
@@ -355,7 +353,8 @@ def main() -> int:
         "--tile-ids",
         type=tile_ids_arg,
         help="comma-separated tiles that define the AOI instead of the countries' boundaries; "
-        "pod i runs the i'th of them, sorted (per-tile phases and mosaic)",
+        "pod i runs the i'th of them, sorted (per-tile phases; reduce and mosaic always take "
+        "their tiles from the countries)",
     )
     parser.add_argument(
         "--tile-index",
@@ -393,8 +392,10 @@ def main() -> int:
 
     if phase in (Phase.COMPUTE, Phase.REDUCE, Phase.MOSAIC) and not iso_3166s:
         parser.error(f"phase {phase!s} needs the AOI's countries")
-    if phase == Phase.REDUCE and args.tile_ids:
-        parser.error("reduce derives its tiles from the countries; drop --tile-ids")
+    if phase in (Phase.REDUCE, Phase.MOSAIC) and args.tile_ids:
+        # mosaic names its output from the countries, so a tile list that differs from theirs
+        # would write a partial mosaic under a country's name
+        parser.error(f"{phase!s} derives its tiles from the countries; drop --tile-ids")
     if args.tile_id and args.tile_ids:
         parser.error("pass --tile-id or --tile-ids, not both")
 
@@ -473,9 +474,7 @@ def main() -> int:
                 assert tile_id
                 run_export(tile_id=tile_id)
             case Phase.MOSAIC:
-                mosaic_tile_ids = resolve_tile_ids(args.tile_ids, iso_3166s)
-                assert mosaic_tile_ids  # the countries are required above
-                run_mosaic(iso_3166s=iso_3166s, tile_ids=mosaic_tile_ids)
+                run_mosaic(iso_3166s=iso_3166s)
     logger.info(f"Done: phase {phase!s}{f' for {tile_id:s}' if tile_id else ''}")
     return 0
 

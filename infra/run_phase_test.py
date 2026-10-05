@@ -86,6 +86,7 @@ def test_pod_index_picks_from_the_explicit_sorted_tile_list(
     [
         ["--phase", "compute", "--tile-ids", "20N_090W"],  # compute needs the countries
         ["--phase", "reduce", "--tile-ids", "20N_090W", "HND"],  # reduce derives tiles
+        ["--phase", "mosaic", "--tile-ids", "20N_090W", "HND"],  # so does mosaic
         ["--phase", "ingest-tiles", "--tile-id", "20N_090W", "--tile-ids", "20N_090W"],
         ["--phase", "ingest-tiles"],  # per-tile but no index
     ],
@@ -122,3 +123,20 @@ def test_json_log_line_carries_the_run_context(
         "tile": "20N_090W",
         "kind": "k",
     }
+
+
+def test_mosaic_takes_its_tiles_from_the_countries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A country-named mosaic is stitched from that country's tiles, never a caller's list."""
+    seen: dict[str, object] = {}
+
+    def fake_mosaic(tile_ids: list[str], name: str) -> str:
+        seen.update(tile_ids=tile_ids, name=name)
+        return "gs://b/emissions/HND.vrt"
+
+    monkeypatch.setattr(run_phase, "get_tile_ids", lambda **_: ["20N_080W", "20N_090W"])
+    monkeypatch.setattr(run_phase.export, "mosaic_workflow", fake_mosaic)
+    monkeypatch.setattr(sys, "argv", ["run_phase.py", "--phase", "mosaic", "HND"])
+    assert run_phase.main() == 0
+    assert seen == {"tile_ids": ["20N_080W", "20N_090W"], "name": "HND"}
