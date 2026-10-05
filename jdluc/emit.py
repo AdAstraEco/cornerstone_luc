@@ -32,7 +32,7 @@ import typing
 import numpy
 import xarray
 
-from jdluc import geo, harmonize, storage, tiling, utils
+from jdluc import export, geo, harmonize, storage, tiling, utils
 from jdluc.datasets import (
     descals_oil_palm,
     gnw_global_peatlands,
@@ -973,6 +973,52 @@ def get_output_dset(dset: xarray.Dataset) -> xarray.Dataset:
         )
         | cie
     )
+
+
+# The Crop-Independent Emissions, as `get_crop_independent_emissions` names them in the output
+CIE_EMISSIONS = export.Deliverable(
+    name="cie-emissions",
+    bands=tuple(
+        export.Band(variable)
+        for variable in (
+            "cie-climate-zone",
+            "cie-continent",
+            "cie-conversion-source",
+            "cie-conversion-year",
+            "cie-destination-dataset",
+            "cie-hectares-per-pixel:ha",
+            "cie-mineral-soil-carbon-at-risk:tco2e-per-ha",
+            "cie-peat-occupation-emissions:tco2e-per-ha-per-year",
+            "cie-peat-transformation-emissions-undiscounted:tco2e-per-ha",
+            "cie-vegetation-emissions-undiscounted:tco2e-per-ha",
+        )
+    ),
+)
+
+NAME_TO_DELIVERABLE: dict[str, export.Deliverable] = {
+    deliverable.name: deliverable for deliverable in (CIE_EMISSIONS,)
+}
+
+
+def export_workflow(
+    tile_id: str,
+    deliverable_names: collections.abc.Sequence[str] = (CIE_EMISSIONS.name,),
+    format: export.Format | None = None,
+    output_root: str | None = None,
+) -> list[str]:
+    """Write each named deliverable for one tile from the cached `workflow`; return the URIs."""
+    dset = workflow(tile_id=tile_id)
+    return [
+        export.write_deliverable(
+            dset=dset,
+            deliverable=NAME_TO_DELIVERABLE[name],
+            format=format,
+            output_root=output_root,
+            source_name="jdluc-emit",
+            tile_id=tile_id,
+        )
+        for name in deliverable_names
+    ]
 
 
 def main() -> int:

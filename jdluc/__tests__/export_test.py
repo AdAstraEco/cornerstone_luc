@@ -1,3 +1,5 @@
+import dataclasses
+
 import numpy
 import pytest
 import rasterio
@@ -15,42 +17,123 @@ CIE_BAND_NAMES = (
 
 def _darray(value: float) -> xarray.DataArray:
     return xarray.DataArray(
-        coords={"y": range(2), "x": range(3)},
+        coords={"y": [1.5, 0.5], "x": [0.5, 1.5, 2.5]},  # north up, as a raster
         data=numpy.full((2, 3), value, dtype=numpy.float32),
         dims=("y", "x"),
     )
 
 
-def _emit_like_dataset() -> xarray.Dataset:
-    """A stand-in for emit.workflow output, using emit's units-infixed band names."""
+def _dataset() -> xarray.Dataset:
+    """A step's output: a plain (y, x) variable, and one that varies by `scheme`."""
+    by_scheme = xarray.concat(
+        [_darray(1), _darray(2), _darray(3)], dim="scheme"
+    ).assign_coords(scheme=["a", "b", "c"])
     return xarray.Dataset(
-        {
-            # decoys: emit's existing bands, which the COG must not carry
-            "emissions-per-hectare:tco2e-per-ha": _darray(999),
-            "vegetation-emissions:tco2e-per-ha:2000-2005": _darray(999),
-            # NB: declared out of order, to check the COG orders by name
-            "cie-vegetation-emissions-undiscounted:tco2e-per-ha": _darray(3),
-            "cie-climate-zone": _darray(1),
-            "cie-conversion-source": _darray(2),
-        }
+        {"area:ha": _darray(7).astype(numpy.int16), "total:t": by_scheme}
+    ).chunk({"x": 2})
+
+
+DELIVERABLE = export.Deliverable(
+    name="example",
+    bands=(
+        export.Band("total:t", select={"scheme": ("c", "a")}),
+        export.Band("area:ha"),
+    ),
+)
+
+
+def test_get_selections_collects_every_selected_value_in_order() -> None:
+    deliverable = export.Deliverable(
+        name="two",
+        bands=(
+            export.Band("total:t", select={"scheme": ("c",)}),
+            export.Band("other", select={"scheme": ("a", "c")}),
+        ),
     )
+    assert export.get_selections(deliverable) == {"scheme": ["c", "a"]}
 
 
-def test_build_bands_selects_and_orders_cie_bands() -> None:
-    stacked = export.build_bands(dset=_emit_like_dataset())
-    assert list(stacked.band.values) == list(CIE_BAND_NAMES)
-    assert stacked.dtype == numpy.float32
+def test_band_names_append_the_selected_values() -> None:
+    assert export.get_band_names(DELIVERABLE) == ["total:t:c", "total:t:a", "area:ha"]
 
 
-def test_build_bands_copies_values() -> None:
-    stacked = export.build_bands(dset=_emit_like_dataset())
-    for name, value in zip(CIE_BAND_NAMES, (1, 2, 3), strict=True):
-        numpy.testing.assert_allclose(stacked.sel(band=name).values, value)
+@pytest.mark.parametrize(
+    ("band", "match"),
+    (
+        (export.Band("missing"), "no variable"),
+        (export.Band("total:t"), "varies by"),
+        (export.Band("area:ha", select={"scheme": ("a",)}), "varies by"),
+    ),
+)
+def test_check_deliverable_rejects_bands_that_do_not_fit(
+    band: export.Band, match: str
+) -> None:
+    with pytest.raises(AssertionError, match=match):
+        export.check_deliverable(
+            export.Deliverable(name="bad", bands=(band,)), _dataset()
+        )
 
 
-def test_build_bands_rejects_no_cie_bands() -> None:
-    with pytest.raises(AssertionError):
-        export.build_bands(dset=xarray.Dataset({"conversion": _darray(1)}))
+def test_check_deliverable_rejects_a_repeated_band() -> None:
+    band = export.Band("area:ha")
+    with pytest.raises(AssertionError, match="repeats a band"):
+        export.check_deliverable(
+            export.Deliverable(name="bad", bands=(band, band)), _dataset()
+        )
+
+
+def test_to_cog_dataset_writes_one_float32_band_per_selection() -> None:
+    result = export.to_cog_dataset(_dataset(), DELIVERABLE).compute()
+    assert list(result) == export.get_band_names(DELIVERABLE)
+    for name, value in zip(result, (3, 1, 7), strict=True):
+        assert result[name].dims == ("y", "x")
+        assert result[name].dtype == numpy.float32
+        numpy.testing.assert_array_equal(result[name].values, value)
+
+
+def test_to_zarr_dataset_keeps_the_selected_dimension() -> None:
+    result = export.to_zarr_dataset(_dataset(), DELIVERABLE).compute()
+    assert result["total:t"].dims == ("scheme", "y", "x")
+    assert list(result["scheme"].values) == ["c", "a"]
+    numpy.testing.assert_array_equal(result["total:t"].sel(scheme="a").values, 1)
+    assert result["area:ha"].dtype == numpy.float32
+
+
+@pytest.mark.parametrize("format", list(export.Format))
+def test_write_deliverable_writes_the_format_under_the_deliverables_name(
+    format: export.Format, tmp_path
+) -> None:
+    uri = export.write_deliverable(
+        dset=_dataset(),
+        deliverable=DELIVERABLE,
+        format=format,
+        output_root=str(tmp_path),
+        source_name="test",
+        tile_id="00N_000E",
+    )
+    assert uri == str(
+        tmp_path / "example" / f"00N_000E{export.FORMAT_TO_EXTENSION[format]:s}"
+    )
+    match format:
+        case export.Format.COG:
+            with rasterio.open(uri) as dataset:
+                assert list(dataset.descriptions) == export.get_band_names(DELIVERABLE)
+                assert dataset.tags()["watershed-product-name"] == "example"
+        case export.Format.ZARR:
+            written = xarray.open_zarr(uri, consolidated=False)
+            assert set(written) == {"total:t", "area:ha"}
+            assert written.attrs["watershed-product-name"] == "example"
+
+
+def test_write_deliverable_takes_the_deliverables_format_by_default(tmp_path) -> None:
+    uri = export.write_deliverable(
+        dset=_dataset(),
+        deliverable=dataclasses.replace(DELIVERABLE, format=export.Format.ZARR),
+        output_root=str(tmp_path),
+        source_name="test",
+        tile_id="00N_000E",
+    )
+    assert uri.endswith(".zarr")
 
 
 def _write_tile(
@@ -136,3 +219,26 @@ def test_mosaic_rejects_grid_mismatch(tmp_path) -> None:
 def test_mosaic_raises_when_nothing_exists(tmp_path) -> None:
     with pytest.raises(FileNotFoundError):
         export.mosaic([str(tmp_path / "nope.tif")], str(tmp_path / "m.vrt"))
+
+
+def test_mosaic_workflow_reads_the_deliverables_tiles(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        export,
+        "get_output_uri",
+        lambda deliverable_name, format, tile_id: str(
+            tmp_path / deliverable_name / f"{tile_id:s}.tif"
+        ),
+    )
+    (tmp_path / "example").mkdir()
+    _write_tile(
+        str(tmp_path / "example" / "a.tif"), west=0, north=10, pixel=1, values=[1.0] * 3
+    )
+    out = str(tmp_path / "m.vrt")
+    assert (
+        export.mosaic_workflow(
+            deliverable_name="example", tile_ids=["a"], name="aoi", output_uri=out
+        )
+        == out
+    )
+    with rasterio.open(out) as dataset:
+        assert (dataset.width, dataset.height) == (4, 4)

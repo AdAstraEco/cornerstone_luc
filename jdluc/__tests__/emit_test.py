@@ -6,6 +6,7 @@ import numpy
 import pytest
 import xarray
 
+from jdluc import emit, export
 from jdluc.datasets.descals_oil_palm import DATASET as OIL_PALM
 from jdluc.datasets.gnw_global_peatlands import DATASET as PEATLANDS
 from jdluc.datasets.gnw_harris_agb import DATASET as ABOVEGROUND_BIOMASS
@@ -1422,3 +1423,11 @@ def test_derive_from_cie_reproduces_every_band_it_replaces() -> None:
     # Every conversion, and both a charged and a dropped pixel, occur in the grid
     assert set(numpy.unique(output["conversion"].data)) == set(map(float, Conversion))
     assert float(output["dropped-emissions:tco2e-per-ha"].sum()) > 0
+
+
+def test_cie_emissions_carries_every_cie_band() -> None:
+    dset = emit.get_output_dset(dset=get_harmonized_dset_for_every_case())
+    export.check_deliverable(emit.CIE_EMISSIONS, dset)
+    assert [band.variable for band in emit.CIE_EMISSIONS.bands] == sorted(
+        name for name in map(str, dset.data_vars) if name.startswith("cie-")
+    )
