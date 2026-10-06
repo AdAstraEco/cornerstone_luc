@@ -3,19 +3,19 @@
 import collections.abc
 import re
 
-from kubejobs import preflight
-from kubejobs.models import (
+from kuberjobtower import preflight
+from kuberjobtower.models import (
     JobSpec,
     PhasePlan,
     ResourceSpec,
     RunPlan,
     RunSpec,
 )
-from kubejobs.phases import DEFAULT_SPECS, Phase, PoolRole, SecretRole
-from kubejobs.settings import Settings
+from kuberjobtower.phases import DEFAULT_SPECS, Phase, PoolRole, SecretRole
+from kuberjobtower.settings import Settings
 
 COMMAND = ("python", "infra/run_phase.py")
-MANAGED_BY = "cornerstone-kubejobs"
+MANAGED_BY = "kuber-job-tower"
 MAX_NAME = 63
 RUN_ID = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,14}[a-z0-9])?")
 CPU = re.compile(r"\d+(?:\.\d+)?m?")

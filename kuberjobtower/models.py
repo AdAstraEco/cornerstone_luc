@@ -4,7 +4,7 @@ import collections.abc
 import dataclasses
 import typing
 
-from kubejobs.phases import Phase
+from kuberjobtower.phases import Phase
 
 
 @dataclasses.dataclass(frozen=True)

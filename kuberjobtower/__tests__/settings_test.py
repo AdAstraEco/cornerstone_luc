@@ -2,7 +2,7 @@ import pathlib
 
 import pytest
 
-from kubejobs.settings import Settings, SettingsError
+from kuberjobtower.settings import Settings, SettingsError
 
 
 def test_defaults_and_derived_values(make_settings) -> None:  # type: ignore[no-untyped-def]
@@ -19,8 +19,8 @@ def test_every_problem_is_reported_at_once(make_settings) -> None:  # type: igno
     with pytest.raises(SettingsError) as exc:
         make_settings(BUCKET=None, IMAGE=None, MAX_TILES="many")
     message = str(exc.value)
-    assert "KUBEJOBS_BUCKET" in message
-    assert "KUBEJOBS_IMAGE" in message
+    assert "KJT_BUCKET" in message
+    assert "KJT_IMAGE" in message
     assert "MAX_TILES" in message
 
 
@@ -31,8 +31,8 @@ def test_environment_beats_the_file(
     make_settings()
     s = Settings.load(
         {
-            "KUBEJOBS_ENV_FILE": str(tmp_path / "test.env"),
-            "KUBEJOBS_NAMESPACE": "other",
+            "KJT_ENV_FILE": str(tmp_path / "test.env"),
+            "KJT_NAMESPACE": "other",
         }
     )
     assert s.namespace == "other"

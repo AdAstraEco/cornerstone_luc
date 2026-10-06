@@ -7,9 +7,9 @@ with ``cluster.py``.
 
 import collections.abc
 
-from kubejobs.models import Check, JobSpec, RunSpec
-from kubejobs.phases import Phase
-from kubejobs.settings import Settings
+from kuberjobtower.models import Check, JobSpec, RunSpec
+from kuberjobtower.phases import Phase
+from kuberjobtower.settings import Settings
 
 NEEDS_COUNTRIES = (Phase.COMPUTE, Phase.REDUCE, Phase.MOSAIC)
 
@@ -28,7 +28,7 @@ def check(
             Check(
                 "parallelism",
                 "error",
-                f"parallelism {spec.parallelism} exceeds KUBEJOBS_MAX_PARALLELISM={settings.max_parallelism}",
+                f"parallelism {spec.parallelism} exceeds KJT_MAX_PARALLELISM={settings.max_parallelism}",
             )
         )
     tiles = spec.aoi.tiles or ()
@@ -37,7 +37,7 @@ def check(
             Check(
                 "tiles",
                 "error",
-                f"{len(tiles)} tiles exceed KUBEJOBS_MAX_TILES={settings.max_tiles}",
+                f"{len(tiles)} tiles exceed KJT_MAX_TILES={settings.max_tiles}",
             )
         )
     elif len(tiles) >= settings.confirm_tiles:
@@ -45,7 +45,7 @@ def check(
             Check(
                 "tiles",
                 "warning",
-                f"{len(tiles)} tiles is at or above KUBEJOBS_CONFIRM_TILES="
+                f"{len(tiles)} tiles is at or above KJT_CONFIRM_TILES="
                 f"{settings.confirm_tiles}: needs --i-know",
             )
         )
@@ -69,7 +69,7 @@ def check(
                     "completions",
                     "error",
                     f"{job.phase}: {job.completions} completions exceed "
-                    f"KUBEJOBS_MAX_COMPLETIONS_PER_JOB={settings.max_completions_per_job} (splitting is not built yet)",
+                    f"KJT_MAX_COMPLETIONS_PER_JOB={settings.max_completions_per_job} (splitting is not built yet)",
                 )
             )
         if not settings.pool_allowed(job.node_pool):
@@ -77,7 +77,7 @@ def check(
                 Check(
                     "pool",
                     "warning" if allow_foreign_pool else "error",
-                    f"{job.phase}: pool {job.node_pool!r} does not match KUBEJOBS_ALLOWED_POOL_REGEX"
+                    f"{job.phase}: pool {job.node_pool!r} does not match KJT_ALLOWED_POOL_REGEX"
                     + (
                         ""
                         if allow_foreign_pool

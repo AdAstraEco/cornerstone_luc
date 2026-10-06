@@ -1,8 +1,8 @@
 import pytest
 
-from kubejobs import run
-from kubejobs.models import Aoi, RunSpec
-from kubejobs.phases import Phase
+from kuberjobtower import run
+from kuberjobtower.models import Aoi, RunSpec
+from kuberjobtower.phases import Phase
 
 
 def spec(**kw) -> RunSpec:  # type: ignore[no-untyped-def]

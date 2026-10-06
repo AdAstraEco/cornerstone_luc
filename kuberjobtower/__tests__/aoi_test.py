@@ -1,6 +1,6 @@
 import pytest
 
-from kubejobs import aoi
+from kuberjobtower import aoi
 
 
 def test_explicit_tiles_are_validated_without_reading_a_boundary() -> None:

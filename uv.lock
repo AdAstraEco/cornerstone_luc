@@ -964,7 +964,7 @@ dev = [
     { name = "types-pyyaml" },
     { name = "types-requests" },
 ]
-kubejobs = [
+kuberjobtower = [
     { name = "google-auth" },
     { name = "lightkube" },
     { name = "pyyaml" },
@@ -1005,7 +1005,7 @@ dev = [
     { name = "types-pyyaml" },
     { name = "types-requests" },
 ]
-kubejobs = [
+kuberjobtower = [
     { name = "google-auth" },
     { name = "lightkube" },
     { name = "pyyaml" },

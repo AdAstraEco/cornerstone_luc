@@ -1,6 +1,6 @@
 """Every cluster, bucket and path identifier is a setting; nothing else names a target.
 
-Precedence: process environment, then the env file (``.env``, or ``KUBEJOBS_ENV_FILE``),
+Precedence: process environment, then the env file (``.env``, or ``KJT_ENV_FILE``),
 then the default.
 """
 
@@ -12,7 +12,7 @@ import typing
 
 import dotenv
 
-PREFIX = "KUBEJOBS_"
+PREFIX = "KJT_"
 
 
 class SettingsError(ValueError):

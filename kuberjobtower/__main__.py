@@ -1,13 +1,13 @@
-"""``uv run python -m kubejobs ...``: argparse subcommands over the library."""
+"""``uv run python -m kuberjobtower ...``: argparse subcommands over the library."""
 
 import argparse
 import datetime
 import sys
 
-from kubejobs import aoi, manifest, run
-from kubejobs import settings as settings_module
-from kubejobs.models import Aoi, RunPlan, RunSpec
-from kubejobs.phases import Phase
+from kuberjobtower import aoi, manifest, run
+from kuberjobtower import settings as settings_module
+from kuberjobtower.models import Aoi, RunPlan, RunSpec
+from kuberjobtower.phases import Phase
 
 
 def summary(plan: RunPlan, settings: settings_module.Settings) -> str:
@@ -95,7 +95,7 @@ def cmd_submit(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="kubejobs", description=__doc__)
+    parser = argparse.ArgumentParser(prog="kuberjobtower", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser(
         "doctor", help="validate the settings and print the target"
