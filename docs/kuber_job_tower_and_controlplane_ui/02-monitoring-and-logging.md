@@ -1,4 +1,4 @@
-# Plan 02 - Step 2: monitoring Job logs and resources (`kubejobs.collect`)
+# Plan 02 - Step 2: monitoring Job logs and resources (`kuberjobtower.collect`)
 
 Status: merged plan, 2 Oct 2026; plan only, no code written. Date of verification: 2026-10-02 (run under study: 2026-09-29, run-ids `hnd1`, `hnd2`, `cmp1`-`cmp4`, `boot1`-`boot3`). Sibling plans: 01, 03, 04 (plan 04 owns the run database; this plan only defines record shapes).
 
@@ -136,7 +136,7 @@ Phase 0 - make the logs worth collecting (S, do first; biggest value/effort)
 2. Make `compare-emit-layers` (and any long tool) log + flush incrementally (per layer/per chunk: "layer X done, n/N, elapsed, peak mem"). Cheapest high-value fix: the 60 GiB pod died three times with no trace.
 3. Add `memory.stat` (`anon`, `file`, `active_file`, `inactive_file`) and `memory.events` (`high,max,oom,oom_kill`) to each `resource_sample` (see section 8).
 
-Phase 1 - collector + persistence (M) 4. A small `kubejobs.collect` module used by `kubejobs submit` (and callable standalone for a past run):
+Phase 1 - collector + persistence (M) 4. A small `kuberjobtower.collect` module used by `kuberjobtower submit` (and callable standalone for a past run):
 
 - **Lifecycle watcher**: Kubernetes watch (python `kubernetes` client or `kubectl get pods,jobs -l run-id=X -o json -w`) records pod phase transitions, node, `lastState.terminated` (`reason`, `exitCode`), `status.reason` (catch `Evicted`), restarts, start/finish. Write immediately; this is what raw polling in `JobStatus.get` lacks.
 - **Events fetcher**: `kubectl get events --field-selector involvedObject.kind=Pod` live, Cloud Logging `logName:"events"` after (retained, proved). Capture `Evicted, OOMKilling, FailedScheduling, TriggeredScaleUp, BackOff`.
@@ -157,6 +157,7 @@ Persistence (belt and braces)
 - Primary: Cloud Logging `_Default`, 30 d. Nothing to build; fixed by Phase 0 for structure.
 - Secondary: GCS NDJSON archive per pod at phase end (Phase 1, step 5), plus the extracted samples/summaries in the DB (kept indefinitely, tiny).
 - Do not rely on `kubectl logs` after the fact (TTL). Do not extend TTL.
+- A **failed pod's log is copied to the archive as soon as the pod is first seen failed** (idea from the PyPI `kubejobs`, doc 01 section 5.15): the case where the log matters most is also the case where the 30-minute TTL is about to remove it, and an eviction or OOM can end a pod before anyone is looking.
 
 Live tail
 
@@ -293,7 +294,7 @@ ______________________________________________________________________
 | 2   | Incremental progress logs + flush in `compare-emit-layers` and other long tools                                                                                                               | S      | none                                |
 | 3   | `memory.stat`, `memory.events`, `cpu.stat`, pod-wide write bytes, SIGTERM flush (section 8)                                                                                                   | S-M    | 1                                   |
 | 4   | Verdict function (pure, unit-tested against the real 29 Sep sample JSON as fixtures: ingest => `cache_only_memory`+`disk_bound`, compute => `memory_pressure` near end, compare => `evicted`) | S      | none                                |
-| 5   | `kubejobs.collect` module: k8s watch, events, Cloud Logging reader (parse text and JSON forms), GCM reader                                                                                    | M      | 1 (can start against old text logs) |
+| 5   | `kuberjobtower.collect` module: k8s watch, events, Cloud Logging reader (parse text and JSON forms), GCM reader                                                                               | M      | 1 (can start against old text logs) |
 | 6   | DB writers per record shape                                                                                                                                                                   | S      | plan 04 schema                      |
 | 7   | GCS NDJSON archive at phase end                                                                                                                                                               | S-M    | 5                                   |
 | 8   | UI charts + verdict chips + run banner                                                                                                                                                        | M      | 5, 6                                |
@@ -327,7 +328,7 @@ ______________________________________________________________________
 | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Who runs the collector in v1?                 | **The user's laptop**, with their gcloud user credentials. Later, a Cloud Run service whose own service account is granted `roles/logging.viewer` and `roles/monitoring.viewer` (see doc 05); this is one more reason the design reads Cloud Logging and Cloud Monitoring and does not depend on the shared Prometheus, which a Cloud Run service could not reach without a tunnel. |
 | Touch `run_phase.py` / `resource_monitor.py`? | **Yes**: JSON-to-stdout logging with severity and fixed `run_id` / `phase` / `tile` / `pod` fields, incremental flushes, `memory.stat` and `memory.events` in each sample, CPU usage, pod-wide write bytes.                                                                                                                                                                         |
-| Package                                       | **`kubejobs`**; the collector is `kubejobs.collect`, reading through the cluster layer (doc 01) and writing through `kubejobs.history` (doc 04).                                                                                                                                                                                                                                    |
+| Package                                       | **`kuberjobtower`**; the collector is `kuberjobtower.collect`, reading through the cluster layer (doc 01) and writing through `kuberjobtower.history` (doc 04).                                                                                                                                                                                                                     |
 | Resource sizing                               | **Approved**: request equal to limit (doc 01 section 6). The `node_eviction_risk` verdict below checks it at submit time as well.                                                                                                                                                                                                                                                   |
 
 **Defaults applied unless the user objects:**

@@ -1,8 +1,8 @@
-# Plan 01 - Steps 1+2: `kubejobs`, a Kubernetes library and command line for pipeline jobs and node pools
+# Plan 01 - Steps 1+2: `kuberjobtower`, a Kubernetes library and command line for pipeline jobs and node pools
 
 Status: **merged plan, 2 Oct 2026.** Combines two independent investigations and applies the user's decisions (section 4, section 10). Implementation status is in the README build order. Siblings: 02 (monitoring), 03 (UI), 04 (history), 05 (configuration and Cloud Run).
 
-Naming (2 Oct 2026): this plan is the `kubejobs` package. It is a library and command line with **no UI**, usable on its own; the UI (doc 03) is a separate later package named `controlplane` that imports `kubejobs`. Wherever this plan says "UI" it means a future consumer, never a dependency.
+Naming (2 Oct 2026): this plan is the `kuberjobtower` package. It is a library and command line with **no UI**, usable on its own; the UI (doc 03) is a separate later package named `controlplane` that imports `kuberjobtower`. Wherever this plan says "UI" it means a future consumer, never a dependency.
 
 Evidence convention: **[V]** = verified when this was written (code read, command run, live read-only cluster call). **[C]** = computed/derived from [V] facts. **[U]** = unverified, must be checked before relying on it.
 
@@ -102,7 +102,7 @@ Why not kubectl subprocess: it is what works today and inherits auth/context, bu
 
 - For `kubernetes`: official, 55x the community, the team already uses it (celery-autoscaler), maximum StackOverflow coverage, no young transitive deps.
 - For `lightkube`: the only candidate mypy can actually check (this repo runs mypy in pre-commit over every package), typed `Job(...)` construction catches field typos at lint time instead of at `kubectl apply`, server-side apply and `AsyncClient` included, 1 s connect, tiny footprint, same OpenAPI-generated models. Auth against our real GKE cluster verified.
-- Risk accepted for lightkube: bus factor 1 and `httpx2` youth. Mitigation: **all client calls live in one module (`kubejobs/cluster.py`) behind a small `Protocol`**; swapping to `kubernetes` is a one-file change, and import-linter enforces the confinement (section 5.3).
+- Risk accepted for lightkube: bus factor 1 and `httpx2` youth. Mitigation: **all client calls live in one module (`kuberjobtower/cluster.py`) behind a small `Protocol`**; swapping to `kubernetes` is a one-file change, and import-linter enforces the confinement (section 5.3).
 
 ### 3.3 What "manage node pools" can honestly mean on GKE
 
@@ -117,17 +117,33 @@ The Kubernetes API has **no** resource for GKE node pools. Pool create/resize/au
 
 Pool mutation is where a mistake costs real money on a shared cluster (200-node max x per-namespace pools), the autoscaler already does 0->N, and scale-from-zero latency is not a measured problem. Creating a **dedicated Local-SSD pool** (the recommendation in `docs/gke-disk-io-findings.md`, which cannot mix with boot-disk emptyDir pods) is a one-time infra task for the platform owners, not a runtime library feature.
 
+### 3.4 Reusing an existing package: the PyPI `kubejobs` (checked 6 Oct 2026, [V] from its source, not installed)
+
+Another author's `kubejobs` (v0.4.8, MIT, 32 stars, last upload April 2025) "creates and runs Kubernetes Jobs". It would only help if it replaced code we have to write, and it does not:
+
+| We need                                                                                                     | PyPI `kubejobs`                                                                          |
+| ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Indexed Jobs (`completions`, `parallelism`), `backoffLimitPerIndex`, `maxFailedIndexes`, `podFailurePolicy` | none of these fields exist in its code                                                   |
+| Node pool selection with a taint toleration, per-pod scratch volume                                         | a bare `nodeSelector` only, no tolerations, no ephemeral volumes                         |
+| Building a CPU-only batch Job                                                                               | `KubernetesJob` requires a Kueue queue name and asserts `gpu_limit > 0`                  |
+| Typed, unit-testable construction                                                                           | dictionaries to YAML, written to `temp_job.yaml` in the working directory                |
+| Submission                                                                                                  | `subprocess` `kubectl apply` (what `run_aoi.py` did), no API calls, no watch, no dry-run |
+| Status, logs, cleanup                                                                                       | `kubectl get -o json` parsed in a Streamlit page and shell one-liners                    |
+| Dependencies                                                                                                | `kubernetes`, `streamlit`, `pandas`, `rich`, `fire`                                      |
+
+It is built for GPU experiments on one cluster (labels such as `eidf/user`, Kueue queues, NFS, W&B). Our Job builder is about 170 lines on typed `lightkube` models; reusing theirs would save none of it, since every field we care about would have to be added or overridden, and it would add a second Kubernetes client and a UI framework as dependencies. **Decision: do not depend on it.** Its name also collides with ours on PyPI, which is why the package is `kuberjobtower`. A few of its ideas are worth taking, see section 5.15.
+
 ______________________________________________________________________
 
 ## 4. Recommendation
 
 Items marked ✓ were confirmed by the user on 2 Oct 2026.
 
-01. ✓ **Library: `lightkube` 1.0.x**, confined to one module, in the dependency group `kubejobs`. Fallback, documented: the official `kubernetes` client behind the same `ClusterAPI` protocol (a one-file swap).
-02. ✓ **Package: top-level `kubejobs/`**, run as `uv run python -m kubejobs ...`, with sub-packages `collect` (doc 02) and `history` (doc 04); it has no UI and no UI dependency. The UI (doc 03) is a **separate** top-level package, `controlplane/`, that imports `kubejobs`. The pipeline never imports either; `kubejobs` reaches `jdluc` through exactly one module (`kubejobs/aoi.py`) for tile and country resolution and methodology names. `infra/` stays "things baked into or run inside the image" (`Dockerfile`, `run_phase.py`, `resource_monitor.py`).
+01. ✓ **Library: `lightkube` 1.0.x**, confined to one module, in the dependency group `kuberjobtower`. Fallback, documented: the official `kubernetes` client behind the same `ClusterAPI` protocol (a one-file swap).
+02. ✓ **Package: top-level `kuberjobtower/`**, run as `uv run python -m kuberjobtower ...`, with sub-packages `collect` (doc 02) and `history` (doc 04); it has no UI and no UI dependency. The UI (doc 03) is a **separate** top-level package, `controlplane/`, that imports `kuberjobtower`. The pipeline never imports either; `kuberjobtower` reaches `jdluc` through exactly one module (`kuberjobtower/aoi.py`) for tile and country resolution and methodology names. `infra/` stays "things baked into or run inside the image" (`Dockerfile`, `run_phase.py`, `resource_monitor.py`).
 03. **Typed Job construction replaces the YAML template**, with golden-file tests and a one-time parity test against the old template, then delete `phase-job.yaml`. `--dry-run` prints YAML so reviewability is not lost.
 04. **Explicit tiles are the primary AOI form**; countries resolve to tiles lazily (only when a phase needs `completions`), which also removes the cold-start deadlock.
-05. ✓ **Node pools: selectable per phase and per job, with role defaults; read-only inspection; no pool mutation.** Heavy phases default to the power pool (`KUBEJOBS_POOL_HEAVY`, v1 `yaroslav-power-node-pool`), light phases to the standard-machine pool (`KUBEJOBS_POOL_LIGHT`, v1 `yaroslav-worker-node-pool`). The UI form shows those defaults and lets the user change them. The pool allow-list is a setting, not code, because the next cluster names its pools differently (section 5.5).
+05. ✓ **Node pools: selectable per phase and per job, with role defaults; read-only inspection; no pool mutation.** Heavy phases default to the power pool (`KJT_POOL_HEAVY`, v1 `yaroslav-power-node-pool`), light phases to the standard-machine pool (`KJT_POOL_LIGHT`, v1 `yaroslav-worker-node-pool`). The UI form shows those defaults and lets the user change them. The pool allow-list is a setting, not code, because the next cluster names its pools differently (section 5.5).
 06. **Failure policy:** `podFailurePolicy` fails an index immediately on exit 137, ignores `DisruptionTarget` (node scale-down, eviction), per-phase retry budgets.
 07. ✓ **Memory request equals limit** for every phase, sized from the 29 Sept measurements (section 6). This addresses the compare-tool evictions directly.
 08. ✓ **Configuration through a local `.env`**, overlaid by process environment variables: every cluster, bucket and path identifier is a setting, so moving to Cloud Run with a different cluster and bucket is a configuration change (doc 05).
@@ -141,8 +157,8 @@ ______________________________________________________________________
 ### 5.1 Module tree
 
 ```
-kubejobs/
-  __init__.py        # EMPTY (keep imports light; `kubejobs status` must not import jdluc/geopandas)
+kuberjobtower/
+  __init__.py        # EMPTY (keep imports light; `kuberjobtower status` must not import jdluc/geopandas)
   __main__.py        # argparse subcommands; thin; mirrors validation/__main__.py
   settings.py        # Settings from .env (python-dotenv) overlaid by os.environ; context guard (doc 05)
   phases.py          # Phase(StrEnum), PhaseSpec, PoolRole, DEFAULT_SPECS   (stdlib only)
@@ -253,7 +269,7 @@ Verified in a scratch package (forbidden contracts, `allow_indirect_imports`, `i
 
 ```toml
 [tool.importlinter]
-root_packages = ["jdluc", "validation", "kubejobs"]
+root_packages = ["jdluc", "validation", "kuberjobtower"]
 include_external_packages = true     # needed for the lightkube contract; harmless to the layers contract
 
 # AMEND the existing first contract (rename + extend):
@@ -261,38 +277,38 @@ include_external_packages = true     # needed for the lightkube contract; harmle
 name = "The pipeline never imports the validator or the Kubernetes job layer"
 type = "forbidden"
 source_modules = ["jdluc"]
-forbidden_modules = ["validation", "kubejobs"]
+forbidden_modules = ["validation", "kuberjobtower"]
 
-# NEW: kubejobs reaches the pipeline through ONE module (history also gets the pure cache_key)
+# NEW: kuberjobtower reaches the pipeline through ONE module (history also gets the pure cache_key)
 [[tool.importlinter.contracts]]
-name = "The Kubernetes job layer reaches the pipeline only through kubejobs.aoi"
+name = "The Kubernetes job layer reaches the pipeline only through kuberjobtower.aoi"
 type = "forbidden"
-source_modules = ["kubejobs"]
+source_modules = ["kuberjobtower"]
 forbidden_modules = ["jdluc"]
-allow_indirect_imports = true        # kubejobs.aoi -> jdluc.* is allowed; transitive chains are not policed
+allow_indirect_imports = true        # kuberjobtower.aoi -> jdluc.* is allowed; transitive chains are not policed
 ignore_imports = [
-    "kubejobs.aoi -> jdluc.**",
-    "kubejobs.history -> jdluc.cache_key",   # stdlib-only module (pure cache_key()); added with history
+    "kuberjobtower.aoi -> jdluc.**",
+    "kuberjobtower.history -> jdluc.cache_key",   # stdlib-only module (pure cache_key()); added with history
 ]
 
 # NEW: the Kubernetes client has one home
 [[tool.importlinter.contracts]]
-name = "Only kubejobs.cluster and kubejobs.manifest touch the Kubernetes client"
+name = "Only kuberjobtower.cluster and kuberjobtower.manifest touch the Kubernetes client"
 type = "forbidden"
-source_modules = ["jdluc", "validation", "kubejobs"]
+source_modules = ["jdluc", "validation", "kuberjobtower"]
 forbidden_modules = ["lightkube"]
 allow_indirect_imports = true
 ignore_imports = [
-    "kubejobs.cluster -> lightkube",         # added with cluster.py
-    "kubejobs.manifest -> lightkube",
+    "kuberjobtower.cluster -> lightkube",         # added with cluster.py
+    "kuberjobtower.manifest -> lightkube",
 ]
 ```
 
-Doc 03 section 7.1 adds the contracts for the separate UI package `controlplane` (`kubejobs` never imports it; it reaches the cluster and the pipeline only through `kubejobs`) and doc 04 section 7.4 the history-specific ones. `kubejobs.__tests__` is deliberately in no `source_modules` list, so tests may import both `jdluc` (parity tests) and `lightkube` (cluster tests).
+Doc 03 section 7.1 adds the contracts for the separate UI package `controlplane` (`kuberjobtower` never imports it; it reaches the cluster and the pipeline only through `kuberjobtower`) and doc 04 section 7.4 the history-specific ones. `kuberjobtower.__tests__` is deliberately in no `source_modules` list, so tests may import both `jdluc` (parity tests) and `lightkube` (cluster tests).
 
-What `kubejobs.aoi` may import from `jdluc` (justified): `jdluc.tiling` (`GLOBAL_NATURE_WATCH_TILE_IDS`, tile-id validity: pure, no I/O, validates explicit tile lists with **no boundary file needed**), `jdluc.datasets.worldbank_jurisdictions` (country to tiles, `iso_3166_str`; needs the boundary FlatGeobuf, hence lazy), `jdluc.attribute.Methodology` (names only, imported lazily inside a function so `status`, `logs` and `top` never pay the dask and xarray import). Nothing else: no `ingest`, `harmonize`, `emit`, `storage` or `config`.
+What `kuberjobtower.aoi` may import from `jdluc` (justified): `jdluc.tiling` (`GLOBAL_NATURE_WATCH_TILE_IDS`, tile-id validity: pure, no I/O, validates explicit tile lists with **no boundary file needed**), `jdluc.datasets.worldbank_jurisdictions` (country to tiles, `iso_3166_str`; needs the boundary FlatGeobuf, hence lazy), `jdluc.attribute.Methodology` (names only, imported lazily inside a function so `status`, `logs` and `top` never pay the dask and xarray import). Nothing else: no `ingest`, `harmonize`, `emit`, `storage` or `config`.
 
-`infra/run_phase.py` does **not** import `kubejobs.phases`: in the image the project is installed editable as `jdluc` only, and `python infra/run_phase.py` puts `/app/infra` (not `/app`) on `sys.path`, so `import kubejobs` would fail without Dockerfile and packaging changes, and it would couple the pipeline image to `kubejobs`. Instead `kubejobs/phases.py` duplicates the six `--phase` strings and `is_per_tile`, and `kubejobs/__tests__/phases_test.py` asserts parity with `infra/run_phase.Phase` (the test inserts `infra/` on `sys.path`; it imports the pipeline, which is fine in a test).
+`infra/run_phase.py` does **not** import `kuberjobtower.phases`: in the image the project is installed editable as `jdluc` only, and `python infra/run_phase.py` puts `/app/infra` (not `/app`) on `sys.path`, so `import kuberjobtower` would fail without Dockerfile and packaging changes, and it would couple the pipeline image to `kuberjobtower`. Instead `kuberjobtower/phases.py` duplicates the six `--phase` strings and `is_per_tile`, and `kuberjobtower/__tests__/phases_test.py` asserts parity with `infra/run_phase.Phase` (the test inserts `infra/` on `sys.path`; it imports the pipeline, which is fine in a test).
 
 ### 5.4 Dependency change (exact)
 
@@ -306,9 +322,9 @@ dev = [
     "types-geopandas",
     "types-networkx",
     "types-requests",
-    { include-group = "kubejobs" },
+    { include-group = "kuberjobtower" },
 ]
-kubejobs = [
+kuberjobtower = [
     "google-auth",      # already in uv.lock transitively (gcsfs); pin explicitly, used for GKE REST pool reads
     "lightkube",
     "pyyaml",           # manifest dry-run / goldens (already transitive); explicit
@@ -316,9 +332,9 @@ kubejobs = [
 ]
 ```
 
-Pre-commit: `entry: uv run mypy jdluc validation kubejobs`. Marker text: extend the `integration` marker description to "live GCS credentials **or cluster access**". No mypy override needed (lightkube ships `py.typed`; the official `kubernetes` would need `ignore_missing_imports` like the existing `rasterio` override).
+Pre-commit: `entry: uv run mypy jdluc validation kuberjobtower`. Marker text: extend the `integration` marker description to "live GCS credentials **or cluster access**". No mypy override needed (lightkube ships `py.typed`; the official `kubernetes` would need `ignore_missing_imports` like the existing `rasterio` override).
 
-Verified in a toy project with this exact structure \[V\]: `uv sync --frozen --no-dev` installs **only** `dependencies` (no lightkube, no pytest); plain `uv sync` (dev, as in CI) installs lightkube. So the pipeline image (`--no-dev`) does not bloat, while `uv run python -m kubejobs ...` works for developers and CI. `uv lock` will add about 10 packages (`anyio` if absent, `h11`, `h2`, `hpack`, `hyperframe`, `httpcore2`, `httpx2`, `lightkube`, `lightkube-models`, `msgspec`, `truststore`, `wsproto`); the existing uv-lock pre-commit hook handles it. Do **not** put `kubejobs` in `[tool.uv] default-groups` as a separate entry: `--no-dev` removes only `dev`, so a second default group would leak into the image.
+Verified in a toy project with this exact structure \[V\]: `uv sync --frozen --no-dev` installs **only** `dependencies` (no lightkube, no pytest); plain `uv sync` (dev, as in CI) installs lightkube. So the pipeline image (`--no-dev`) does not bloat, while `uv run python -m kuberjobtower ...` works for developers and CI. `uv lock` will add about 10 packages (`anyio` if absent, `h11`, `h2`, `hpack`, `hyperframe`, `httpcore2`, `httpx2`, `lightkube`, `lightkube-models`, `msgspec`, `truststore`, `wsproto`); the existing uv-lock pre-commit hook handles it. Do **not** put `kuberjobtower` in `[tool.uv] default-groups` as a separate entry: `--no-dev` removes only `dev`, so a second default group would leak into the image.
 
 The UI's dependencies live in a second group, `ui` (doc 03 section 7.1). `dev` includes both, so CI and developers get everything while the pipeline image (`uv sync --frozen --no-dev`) gets neither.
 
@@ -326,19 +342,19 @@ The UI's dependencies live in a second group, `ui` (doc 03 section 7.1). `dev` i
 
 - `manifest.build_job(spec: JobSpec) -> lightkube Job` built from `batch_v1.JobSpec / core_v1.PodSpec / EphemeralVolumeSource` models \[V: I built a full Indexed Job with ephemeral `premium-rwo` PVC, tolerations, resources and `to_dict()`+`yaml.safe_dump` locally; mypy clean\]. A `spec_hash()` over the canonical dict is stored as annotation `cornerstone.adastra.eco/spec-hash`; the sorted tile list as `cornerstone.adastra.eco/tiles` (CSV, \<3 KB for 280 tiles) so `status` can show tile-per-index without re-resolving countries.
 - Preserved from today's template: Indexed, `restartPolicy Never`, per-pod `activeDeadlineSeconds`, KSA, `imagePullPolicy Always`, `TMPDIR/CPL_TMPDIR=/localtmp`, `.env` Secret at `/app/.env`, ephemeral `/localtmp`, ephemeral-storage 2Gi/8Gi, toleration `worker=true:NoSchedule`. **Command is exec-form** `["python","infra/run_phase.py"]` and `JobSpec.command` is validated to not start with `sh/bash` or contain `-l*` (lesson e: `/bin/sh -lc` resets PATH and drops `/app/.venv/bin`; a unit test enforces it).
-- Labels on Job and pod template: `app=cornerstone`, `phase`, `run-id`, `aoi` (slug), `app.kubernetes.io/managed-by=cornerstone-kubejobs`; `tile-id` only when `completions == 1`. For multi-tile Jobs a pod template cannot carry a per-pod tile, so tile comes from the native pod label `batch.kubernetes.io/job-completion-index` (+ pod names embed the index, e.g. `cornerstone-compare-cmp4-0-m4xd7` [V]) mapped through the `tiles` annotation. Cloud Logging labels already include `k8s-pod/run-id`, `phase`, `job-completion-index` (plan 02 section 2.3).
+- Labels on Job and pod template: `app=cornerstone`, `phase`, `run-id`, `aoi` (slug), `app.kubernetes.io/managed-by=kuber-job-tower`; `tile-id` only when `completions == 1`. For multi-tile Jobs a pod template cannot carry a per-pod tile, so tile comes from the native pod label `batch.kubernetes.io/job-completion-index` (+ pod names embed the index, e.g. `cornerstone-compare-cmp4-0-m4xd7` [V]) mapped through the `tiles` annotation. Cloud Logging labels already include `k8s-pod/run-id`, `phase`, `job-completion-index` (plan 02 section 2.3).
 - **Failure policy** (new): `backoffLimitPerIndex = retries_per_index`; `maxFailedIndexes = completions` (default: a failed tile never cancels in-flight tiles) or `0` with `--fail-fast`; `podFailurePolicy` = `[FailIndex on exitCode 137 for container "phase"]` and `[Ignore on pod condition DisruptionTarget]` (autoscaler scale-down / eviction does not burn the retry budget). An OOM retried on the same node type fails identically, so retrying it is pure waste; flaky-source ingest keeps `retries_per_index = 2`. `FailIndex` requires `backoffLimitPerIndex` (already set) and `restartPolicy: Never` (set). `podFailurePolicy` semantics for an *evicted* pod (reason `Evicted`, no 137) are \[U\]: needs an integration check; the `Ignore DisruptionTarget` rule is the intended handling.
 - **Resource overrides**: `--set PHASE.FIELD=VALUE` (repeatable), `FIELD` in `{cpu, cpu-limit, memory, localtmp, pool, secret, deadline, retries}`; `memory` sets request == limit unless `memory-request` is also given. Quantities validated with a regex before any API call. Overrides participate in `spec_hash`.
 - **`--skip-ingest`**: today always passed to `compute`. Keep as `RunSpec.skip_ingest=True` default; `--no-skip-ingest` makes `compute` run the ingest chain *and* switches its secret to `SecretRole.KEYS` (refuse at plan time if the keys Secret is not configured). Ingest phases always use `KEYS`; all others `NOKEYS`.
-- **Pool selection (decided 2 Oct 2026).** Each phase has a `PoolRole`: `HEAVY` for `compute`, `LIGHT` for `ingest-world`, `ingest-tiles`, `reduce`, `export` and `mosaic`. The role resolves to a pool from settings: `KUBEJOBS_POOL_HEAVY` and `KUBEJOBS_POOL_LIGHT` (v1: `yaroslav-power-node-pool` and `yaroslav-worker-node-pool`). Per phase and per job the user can override with `--pool PHASE=POOL` or `--set PHASE.pool=POOL`; the UI exposes the same choice as a per-phase dropdown that starts on the default (doc 03 section 3.3). Changing a pool re-runs pre-flight (fit, pods per node, estimate).
-- **Pool guard.** A pool must match `KUBEJOBS_ALLOWED_POOL_REGEX` (v1: `^yaroslav-` plus the shared `standard-node-pool`). The pattern is a setting rather than code because the namespace-prefix convention verified on this cluster (`<namespace>-{worker,power}-node-pool`) will not hold on the new one. `standard-node-pool` is untainted, always on (3 nodes), shared with other workloads and has a small maximum: selectable with a warning, never a default. **Confirmed 2 Oct 2026:** "standard pool" for light jobs means the `e2-standard-8` worker pool above, not that shared one.
+- **Pool selection (decided 2 Oct 2026).** Each phase has a `PoolRole`: `HEAVY` for `compute`, `LIGHT` for `ingest-world`, `ingest-tiles`, `reduce`, `export` and `mosaic`. The role resolves to a pool from settings: `KJT_POOL_HEAVY` and `KJT_POOL_LIGHT` (v1: `yaroslav-power-node-pool` and `yaroslav-worker-node-pool`). Per phase and per job the user can override with `--pool PHASE=POOL` or `--set PHASE.pool=POOL`; the UI exposes the same choice as a per-phase dropdown that starts on the default (doc 03 section 3.3). Changing a pool re-runs pre-flight (fit, pods per node, estimate).
+- **Pool guard.** A pool must match `KJT_ALLOWED_POOL_REGEX` (v1: `^yaroslav-` plus the shared `standard-node-pool`). The pattern is a setting rather than code because the namespace-prefix convention verified on this cluster (`<namespace>-{worker,power}-node-pool`) will not hold on the new one. `standard-node-pool` is untainted, always on (3 nodes), shared with other workloads and has a small maximum: selectable with a warning, never a default. **Confirmed 2 Oct 2026:** "standard pool" for light jobs means the `e2-standard-8` worker pool above, not that shared one.
 - **Contention preflight** (S): before submit, list pods on the chosen pool that are not `app=cornerstone` (e.g. `celery-worker-*` share `yaroslav-power-node-pool` [V]) and warn.
 
 ### 5.6 Lifecycle: idempotent resubmission, barriers, events, hooks
 
 ```mermaid
 flowchart TD
-  A["kubejobs submit (RunSpec)"] --> B["plan(): resolve phases -> JobSpecs<br/>tiles explicit, or lazily from countries"]
+  A["kuberjobtower submit (RunSpec)"] --> B["plan(): resolve phases -> JobSpecs<br/>tiles explicit, or lazily from countries"]
   B --> C{"--dry-run?"}
   C -- "yes (client)" --> P["print summary + YAML; no cluster needed"]
   C -- "yes (server)" --> S["create_job(dry_run=True)"]
@@ -362,7 +378,7 @@ flowchart TD
   N --> D
 ```
 
-- **Name** stays `cornerstone-{aoi_slug}-{phase}-{run_id}` (\<=63 chars, property-tested). Same run-id + same inputs = resume; the barrier process dying is harmless (`kubejobs submit` again, or `kubejobs status --watch`).
+- **Name** stays `cornerstone-{aoi_slug}-{phase}-{run_id}` (\<=63 chars, property-tested). Same run-id + same inputs = resume; the barrier process dying is harmless (`kuberjobtower submit` again, or `kuberjobtower status --watch`).
 - **Lazy tile resolution (this is the cold-start fix on the submit side).** `ingest-world` needs no tile list (`ingest.workflow` replaces `tile_ids` with `(WHOLE_WORLD_TILE_ID,)` for whole-world datasets: `jdluc/ingest.py` lines 42-44 on main [V]). So `plan()` produces `ingest-world` without resolving countries; for a country AOI the tile list is resolved **after** that phase's barrier (boundaries now exist), then `ingest-tiles`/`compute`/... get `completions=len(tiles)`. Dry-run on a cold root prints "tiles: unresolved (boundaries not ingested yet)". With `--tile` given, boundaries are never read at submit time.
 - **Barrier**: poll `get_job` every 15-30 s with exponential backoff on transient `ApiError(5xx)`/connection errors (keeps the 0c7b9b3 behaviour), terminal on `Complete`/`Failed` conditions or when `succeeded + failed_indexes >= completions` (keeps the existing belt-and-braces rule), bounded by `deadline * ceil(completions/parallelism) + slack`. Default policy is **strict** (stop on any failed index; ingest is already best-effort inside the pod). Optional `--continue-on-partial` (M, later): run the next phase over `completed_indexes` mapped through the `tiles` annotation.
 - **Events/status stream for a UI**: `Cluster.watch(run_id) -> Iterator[RunEvent]`, `RunEvent = JobChanged | PodChanged | K8sEvent`, each a frozen dataclass with a monotonic `seq`. v1 implementation = snapshot-diff polling (robust, trivially testable); v2 swaps to `client.watch(Job/Pod, labels=...)` with `resource_version` resume and 410-Gone relist, without changing the iterator contract. lightkube's `AsyncClient` makes an async UI backend possible without a second library.
@@ -380,42 +396,43 @@ class RunObserver(Protocol):  # must not raise; exceptions are logged and swallo
 # i.e. before TTL, so a collector can snapshot logs / final usage while the pod still exists.
 ```
 
-Plan 02's finding makes this a safety net, not the primary mechanism: Cloud Logging already retains pod logs after TTL deletion [V]. `kubejobs logs` therefore reads the k8s API while the pod exists and **falls back to a Cloud Logging query** (filter `labels."k8s-pod/run-id"` + pod name) once it is gone; the fallback's implementation is owned by plan 02 behind `LogSource`, this plan only reserves the seam. TTL default stays 1800 s with `--ttl` as a knob: also because generic-ephemeral PVCs are (I believe, [U]) deleted only with the *pod*, so long TTLs keep `100-200 Gi` pd-ssd volumes alive per finished pod; verify when the next run finishes (`kubectl get pvc` after `Succeeded`).
+Plan 02's finding makes this a safety net, not the primary mechanism: Cloud Logging already retains pod logs after TTL deletion [V]. `kuberjobtower logs` therefore reads the k8s API while the pod exists and **falls back to a Cloud Logging query** (filter `labels."k8s-pod/run-id"` + pod name) once it is gone; the fallback's implementation is owned by plan 02 behind `LogSource`, this plan only reserves the seam. TTL default stays 1800 s with `--ttl` as a knob: also because generic-ephemeral PVCs are (I believe, [U]) deleted only with the *pod*, so long TTLs keep `100-200 Gi` pd-ssd volumes alive per finished pod; verify when the next run finishes (`kubectl get pvc` after `Succeeded`).
 
 - `Run` persistence (run-record-after-TTL) is plan 02/04's: `RunSpec` and `JobSpec` are plain frozen dataclasses with `dataclasses.asdict`-friendly fields so they can be stored as JSON by whoever owns the DB.
 
 ### 5.7 Required `infra/run_phase.py` changes (cross-plan interface; flagged, not designed here)
 
-These are the minimum `kubejobs` needs. The user approved editing `run_phase.py` and `resource_monitor.py` on 2 Oct 2026; plans 02 to 04 also touch them, so everything below lands as **one small, separately reviewable change** and the others rebase onto it:
+These are the minimum `kuberjobtower` needs. The user approved editing `run_phase.py` and `resource_monitor.py` on 2 Oct 2026; plans 02 to 04 also touch them, so everything below lands as **one small, separately reviewable change** and the others rebase onto it:
 
-1. **`--tile-ids T1,T2,...`** (sorted internally; pod i = `sorted(tile_ids)[i]`) as an alternative to resolving countries; **positional ISO codes become optional** (`nargs="*"`), required only by phases that need them (compute: per-(tile,country) attribute leg; reduce; mosaic name). Plan time check in `kubejobs` mirrors this.
+1. **`--tile-ids T1,T2,...`** (sorted internally; pod i = `sorted(tile_ids)[i]`) as an alternative to resolving countries; **positional ISO codes become optional** (`nargs="*"`), required only by phases that need them (compute: per-(tile,country) attribute leg; reduce; mosaic name). Plan time check in `kuberjobtower` mirrors this.
 2. **Cold-start fix for `ingest-world`**: it currently calls `get_tile_ids(iso_3166s)` unconditionally (`run_phase.py` main, `tile_ids=[tile_id] if tile_id else get_tile_ids(...)`), which reads the boundary FlatGeobuf that only `ingest-world` itself can create. Change the `INGEST_WORLD` branch to pass `(tiling.WHOLE_WORLD_TILE_ID,)` (or `--tile-ids`) and never resolve countries. This is safe because `get_dataset_names_for_phase(INGEST_WORLD)` yields only `Partitioning.WHOLE_WORLD` datasets and `ingest.workflow` overrides their tile set anyway [V]. `BOUNDARY_DATASET_NAMES` are first in `get_dataset_names`, so boundaries are written before datasets that reference them. **[U]** whether any whole-world dataset's `ingest_a_tile` itself reads the boundary file: `usda_nass_quickstats.py` and `faostat_production.py` import `worldbank_jurisdictions` but, from grep, only for `AdminLevel`/`iso_3166_str`; confirm with the cold-start e2e test in step 9. A separate `bootstrap` phase is **not** needed (YAGNI): `ingest-world` *is* the bootstrap once it stops needing tiles.
 3. Optional (later): `--stages harmonize,emit` so an explicit-tile run with no countries can warm tiles without the attribute leg.
 4. **Structured logging and labels (doc 02, phase 0):** JSON to stdout with `severity`, `message`, `time` and fixed `run_id`, `phase`, `tile`, `pod` fields (from the Downward API and the arguments); incremental flushes for long tools; in `resource_monitor.py` add `memory.stat` (`anon`, `file`), `memory.events`, CPU usage and pod-wide write bytes (doc 02 section 8).
 5. **Two small edits under `jdluc/` (approved 2 Oct 2026):** a stdlib-only `jdluc/cache_key.py` holding the pure `cache_key()` that `storage.get_cache_decorator` calls (keys must not change; a golden test pins `94cbe56c057a` and `ca71c82005a9`); and **environment-first reading of every `Config` field** in `Config.from_dot_env` (issue #8 proposal 17, approved 2 Oct 2026): a process environment variable overrides the `.env` file and the file is only a fallback, so `NUMBER_OF_DASK_WORKERS`, the three storage roots and the source-API settings can each be set per run, or by a Cloud Run service, without a file. A missing `.env` becomes an error only if a field is still unresolved after the environment has been read. **Superseded 5 Oct 2026:** environment-first `Config` was dropped after review of PR #12 (README, "Review of PR #12").
 
-### 5.8 CLI surface (`uv run python -m kubejobs ...`)
+### 5.8 CLI surface (`uv run python -m kuberjobtower ...`)
 
 Extends the existing convention (`python -m validation`, `python -m jdluc.ingest`); argparse, no new CLI dependency.
 
 ```
-kubejobs submit   [--country ISO ...] [--tile ID ...] [--phases P ...] [--methodology-name N]
+kuberjobtower submit   [--country ISO ...] [--tile ID ...] [--phases P ...] [--methodology-name N]
              [--parallelism N] [--concurrency N] [--run-id ID] [--image REF] [--ttl 30m]
              [--pool PHASE=POOL ...] [--set PHASE.FIELD=VALUE ...] [--no-skip-ingest] [--fail-fast] [--retry-failed]
              [--allow-foreign-pool] [--dry-run[=client|server]] [-o summary|yaml] [--detach]
-kubejobs status   [RUN_ID] [--watch] [--pods] [--events]
-kubejobs logs     RUN_ID --phase P [--tile ID | --index N] [--follow] [--tail N] [--save DIR]
-kubejobs top      [RUN_ID] [--watch]
-kubejobs pools    [--gke]
-kubejobs cancel   RUN_ID [--phase P] [--yes]
-kubejobs cleanup  [--older-than 2h] [--state succeeded|failed|all] [--yes]
+kuberjobtower status   [RUN_ID] [--mine] [--watch] [--pods] [--events]
+kuberjobtower logs     RUN_ID --phase P [--tile ID | --index N] [--follow] [--tail N] [--save DIR]
+kuberjobtower top      [RUN_ID] [--watch]
+kuberjobtower pools    [--gke]
+kuberjobtower cancel   RUN_ID [--phase P] [--yes]
+kuberjobtower cleanup  [RUN_ID] [--mine] [--older-than 2h] [--state succeeded|failed|pending|all] [--yes]
+kuberjobtower problems [--stuck-after 15m]        # section 5.15: stuck pods, overdue Jobs, leftover PVCs
 ```
 
 Example 1: the single-tile run that needed `submit_one.sh` (explicit tile, no country resolution, no boundary read):
 
 ```
-$ uv run python -m kubejobs submit --tile 20N_090W --country HND --phases ingest-world ingest-tiles compute export --dry-run
-context    gke_maverick-reloaded_us-central1-b_nonprod-shared-cluster   (matches KUBEJOBS_KUBE_CONTEXT)
+$ uv run python -m kuberjobtower submit --tile 20N_090W --country HND --phases ingest-world ingest-tiles compute export --dry-run
+context    gke_maverick-reloaded_us-central1-b_nonprod-shared-cluster   (matches KJT_KUBE_CONTEXT)
 namespace  yaroslav   image .../nonprod-maverick/cornerstone:latest   run-id 1002-1410   STATISTICAL
 AOI        1 tile (explicit: 20N_090W)  countries HND  -> boundaries not read
 phase         jobs idx par  cpu(req/lim)  mem(req=lim)  localtmp  pool                       secret
@@ -430,9 +447,9 @@ preflight  non-cornerstone pods on yaroslav-power-node-pool: 0 (ok)
 Example 2: country AOI, whole chain, with a resource override, then detach and later resume:
 
 ```
-$ uv run python -m kubejobs submit --country HND SLV --parallelism 16 --set compute.deadline=4h --detach
+$ uv run python -m kuberjobtower submit --country HND SLV --parallelism 16 --set compute.deadline=4h --detach
 submitted cornerstone-hnd-slv-ingest-world-1002-1415   (1 pod)     # tiles resolve after this barrier
-$ uv run python -m kubejobs submit --country HND SLV --parallelism 16 --run-id 1002-1415    # same run-id = resume
+$ uv run python -m kuberjobtower submit --country HND SLV --parallelism 16 --run-id 1002-1415    # same run-id = resume
 ingest-world   adopted, succeeded
 resolved 4 tiles from boundaries: 10N_090W 10N_080W 20N_090W 20N_080W
 ingest-tiles   submitted 4 idx, 4 at a time ...
@@ -441,10 +458,10 @@ ingest-tiles   submitted 4 idx, 4 at a time ...
 Example 3 (illustrative output, format not yet built):
 
 ```
-$ uv run python -m kubejobs status --watch
+$ uv run python -m kuberjobtower status --watch
 RUN        PHASE         STATE    DONE  ACT  FAIL  AGE   NOTES
 1002-1415  ingest-tiles  running  1/4   3    0     41m   idx 0..3 -> 10N_080W 10N_090W 20N_080W 20N_090W
-$ uv run python -m kubejobs status 1002-1415 --pods
+$ uv run python -m kuberjobtower status 1002-1415 --pods
 POD (idx tile)                          NODE POOL                  PHASE    EXIT  MEM_NOW/LIM    NOTE
 ...-ingest-tiles-1002-1415-2-xxxxx 20N_080W yaroslav-worker-node-pool Running  -  19.2/24Gi
 ...-compute-...-1-yyyyy            10N_090W yaroslav-power-node-pool  Failed  137  -              OOMKilled -> index failed, not retried
@@ -453,33 +470,33 @@ POD (idx tile)                          NODE POOL                  PHASE    EXIT
 Example 4 (real data from today's read-only calls; machine/size columns from `gcloud`, counts from the autoscaler ConfigMap):
 
 ```
-$ uv run python -m kubejobs pools
+$ uv run python -m kuberjobtower pools
 POOL                       MACHINE        TAINT              NODES  CA target  min..max  ALLOC mem  OURS  SOURCES
 yaroslav-worker-node-pool  e2-standard-8  worker=true:NoSch  0      0          0..200    -          0     gke,ca
 yaroslav-power-node-pool   e2-highmem-8   worker=true:NoSch  0      0          0..200    -          0     gke,ca
 standard-node-pool         e2-standard-8  -                  3      3          -         27.6 GiB   0     nodes,gke,ca   (shared; not ours)
-note: pools with 0 nodes show no allocatable; last-known allocatable cached in `.cache/kubejobs/pools.json` once a node has existed
+note: pools with 0 nodes show no allocatable; last-known allocatable cached in `.cache/kuberjobtower/pools.json` once a node has existed
 ```
 
-Example 5: `kubejobs top` = live PodMetrics (`metrics.k8s.io`, verified readable) as % of request/limit per pod, plus per-pool rollup. It shows *current* usage only (about 60 s granularity [U]); peaks and PSI are plan 02's (Cloud Monitoring + our sampler), and `top` must not draw "100% memory" as an alarm because page cache fills the cgroup (plan 02 section 6).
+Example 5: `kuberjobtower top` = live PodMetrics (`metrics.k8s.io`, verified readable) as % of request/limit per pod, plus per-pool rollup. It shows *current* usage only (about 60 s granularity [U]); peaks and PSI are plan 02's (Cloud Monitoring + our sampler), and `top` must not draw "100% memory" as an alarm because page cache fills the cgroup (plan 02 section 6).
 
-**`infra/run_aoi.py`: keep as a ~15-line compatibility shim for one release**, translating `run_aoi.py HND --phases compute --parallelism 16` into `kubejobs submit --country HND ...` with a deprecation warning, then delete it and `infra/k8s/phase-job.yaml` after the parity test has gone green and one real run has used `kubejobs` (section 10, default 1). `infra/k8s/README.md` gets the new commands. Settings come from a local `.env` (python-dotenv) overlaid by the process environment, with `KUBEJOBS_`-prefixed names; the full list and precedence are in doc 05. `infra/cluster.env` is retired for `kubejobs`: the legacy `run_aoi.py` shim still reads it while it exists, and its hand-written parser is deleted with the shim.
+**`infra/run_aoi.py`: keep as a ~15-line compatibility shim for one release**, translating `run_aoi.py HND --phases compute --parallelism 16` into `kuberjobtower submit --country HND ...` with a deprecation warning, then delete it and `infra/k8s/phase-job.yaml` after the parity test has gone green and one real run has used `kuberjobtower` (section 10, default 1). `infra/k8s/README.md` gets the new commands. Settings come from a local `.env` (python-dotenv) overlaid by the process environment, with `KJT_`-prefixed names; the full list and precedence are in doc 05. `infra/cluster.env` is retired for `kuberjobtower`: the legacy `run_aoi.py` shim still reads it while it exists, and its hand-written parser is deleted with the shim.
 
 ### 5.9 Module/contract picture
 
 ```mermaid
 flowchart LR
-  CLI["kubejobs.__main__"] --> RUN["kubejobs.run"]
-  CLI --> POOLS["kubejobs.pools"]
-  RUN --> MAN["kubejobs.manifest"]
-  RUN --> AOI["kubejobs.aoi"]
-  RUN --> CLUSTER["kubejobs.cluster"]
+  CLI["kuberjobtower.__main__"] --> RUN["kuberjobtower.run"]
+  CLI --> POOLS["kuberjobtower.pools"]
+  RUN --> MAN["kuberjobtower.manifest"]
+  RUN --> AOI["kuberjobtower.aoi"]
+  RUN --> CLUSTER["kuberjobtower.cluster"]
   POOLS --> CLUSTER
-  MAN --> PH["kubejobs.phases / kubejobs.models"]
+  MAN --> PH["kuberjobtower.phases / kuberjobtower.models"]
   CLUSTER --> LK[("lightkube")]
   MAN --> LK
   AOI -- "tiling, worldbank_jurisdictions,<br/>attribute.Methodology (lazy)" --> JD[("jdluc")]
-  JD -. "FORBIDDEN: pipeline never imports kubejobs" .-> CLI
+  JD -. "FORBIDDEN: pipeline never imports kuberjobtower" .-> CLI
   POOLS -- "google.auth + requests (GKE REST, read-only)" --> GKE[("container.googleapis.com")]
   CLUSTER --> API[("GKE API server (namespace yaroslav)")]
   RUN -. "RunObserver hook (plan 02/04)" .-> OBS["collector / UI"]
@@ -529,10 +546,10 @@ stateDiagram-v2
 
 | Guardrail            | Behaviour                                                                                                                                                                                                                                  |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Context guard        | Refuse if the active kube context is not `KUBEJOBS_KUBE_CONTEXT`; print cluster and namespace before any write. Skipped in-cluster and on Cloud Run (token mode), where the target is the configured endpoint. celery-autoscaler had none. |
-| Namespace allow-list | Default `[KUBEJOBS_NAMESPACE]`; any other namespace is an error. The user's RBAC would allow it (verified), so this is the only fence.                                                                                                     |
-| Pool allow-list      | `KUBEJOBS_ALLOWED_POOL_REGEX` (section 5.5). Needed because the cluster hosts 14 other pools and the user holds project-wide `container.clusters.update`.                                                                                  |
-| Max parallelism      | Config hard cap (`KUBEJOBS_MAX_PARALLELISM`, 16 in v1; the driver's default stays 8) and a node-count cap derived from the pool maximum.                                                                                                   |
+| Context guard        | Refuse if the active kube context is not `KJT_KUBE_CONTEXT`; print cluster and namespace before any write. Skipped in-cluster and on Cloud Run (token mode), where the target is the configured endpoint. celery-autoscaler had none.      |
+| Namespace allow-list | Default `[KJT_NAMESPACE]`; any other namespace is an error. The user's RBAC would allow it (verified), so this is the only fence.                                                                                                          |
+| Pool allow-list      | `KJT_ALLOWED_POOL_REGEX` (section 5.5). Needed because the cluster hosts 14 other pools and the user holds project-wide `container.clusters.update`.                                                                                       |
+| Max parallelism      | Config hard cap (`KJT_MAX_PARALLELISM`, 16 in v1; the driver's default stays 8) and a node-count cap derived from the pool maximum.                                                                                                        |
 | Dry run              | `plan()` is the default for the UI preview and `--dry-run` on the CLI; it never writes.                                                                                                                                                    |
 | Confirmation         | `submit` prints plan, estimate and warnings and needs `--yes` or an interactive "y". Above a configured threshold (v1: 20 tiles or an estimated $5), `--yes` is not enough: the CLI wants `--i-know`, the UI a typed "RUN".                |
 | Scoped delete        | `delete_run` selects by `managed-by` plus `run-id`; `delete_job(name)` reads labels first and refuses unlabelled Jobs.                                                                                                                     |
@@ -568,7 +585,7 @@ Log persistence \[V\]: `gcloud logging read` returned `cornerstone-compare-cmp4-
 
 ### 5.13 Authentication modes and RBAC
 
-`KUBEJOBS_AUTH=auto|kubeconfig|incluster|token` (default `auto`: in-cluster when the service-account token path exists, otherwise kubeconfig).
+`KJT_AUTH=auto|kubeconfig|incluster|token` (default `auto`: in-cluster when the service-account token path exists, otherwise kubeconfig).
 
 - **`kubeconfig`**: the laptop. Uses the user's identity through `gke-gcloud-auth-plugin` [V working]; the context guard applies.
 - **`incluster`**: a service running inside a cluster, under its own ServiceAccount. Create a dedicated one; do not reuse `yaroslav-scaler-sa` (wildcard Role) or `yaroslav-sa` (carries the GCS Workload Identity binding).
@@ -577,7 +594,7 @@ Log persistence \[V\]: `gcloud logging read` returned `cornerstone-compare-cmp4-
 Least-privilege RBAC for the last two modes (the user can create these \[V `can-i create roles/rolebindings/clusterroles`\]):
 
 ```yaml
-kind: Role                      # namespace: the value of KUBEJOBS_NAMESPACE
+kind: Role                      # namespace: the value of KJT_NAMESPACE
 rules:
   - {apiGroups: [batch], resources: [jobs], verbs: [get, list, watch, create, patch, delete]}
   - {apiGroups: [""], resources: [pods, events], verbs: [get, list, watch]}
@@ -599,18 +616,30 @@ The `secrets get` rule necessarily lets the service read those two `.env` values
 
 [Issue #8](https://github.com/AdAstraEco/cornerstone_luc/issues/8) proposes 1° work tiles, named runs, a run config file and one command per run. None of that exists in the pipeline yet, but a few small choices now keep it an addition later (the full list is doc 06 section 4):
 
-- **Tile ids are a scheme** (`kubejobs/tiles.py`, stdlib only): `Gfw10` (`20N_090W`) today, `Lattice1` (`x279y082`) later. Nothing else hard-codes an id pattern.
+- **Tile ids are a scheme** (`kuberjobtower/tiles.py`, stdlib only): `Gfw10` (`20N_090W`) today, `Lattice1` (`x279y082`) later. Nothing else hard-codes an id pattern.
 - **`RunSpec` gains optional fields**, all defaulted to today's behaviour: `tiles_per_pod` (1), `tiles_uri` (unset; used instead of an annotation or arguments once a run exceeds a few hundred tiles), `run_name` and `config_path` (unset until named runs exist). `completions = ceil(len(tiles) / tiles_per_pod)`; pod `i` handles tiles `[i·k, (i+1)·k)` of the sorted list.
 - **One function builds the pod command** from the phase, tiles and settings: `infra/run_phase.py ...` today, `jdluc run ...` later.
 - **`PhaseSpec` is looked up by phase and tile edge**; only the 10° row is filled, and other edges report "unmeasured".
-- **Completions cap** per Job as a setting (`KUBEJOBS_MAX_COMPLETIONS_PER_JOB`, default 10,000, confirmed 2 Oct 2026), splitting a larger run into several Jobs. Verified limits are in doc 06 section 2.2.
+- **Completions cap** per Job as a setting (`KJT_MAX_COMPLETIONS_PER_JOB`, default 10,000, confirmed 2 Oct 2026), splitting a larger run into several Jobs. Verified limits are in doc 06 section 2.2.
 - **Pool information carries `spot`.**
+
+### 5.15 Ideas taken from the PyPI `kubejobs` (6 Oct 2026)
+
+Small, and all inside the generic core (no cornerstone knowledge):
+
+1. **An owner label on every Job** (`kuber-job-tower/owner`, from the submitter's user name), so that `status --mine` and `cleanup --mine` work on a shared cluster without touching someone else's run.
+2. **`cleanup` by state and age**, beyond one run: `--state failed|succeeded|pending|all --older-than 2h`, `--mine`. Deletes only Jobs carrying our `managed-by` label.
+3. **A `problems` report** (the `gc` of section 5.11): pods stuck Pending or ContainerCreating past a threshold with the scheduler's reason, Jobs past their worst-case wall time, and leftover PersistentVolumeClaims from the per-pod scratch volumes. It only reports; deleting needs `--apply`.
+4. **A failed pod's log is saved before the TTL removes it**: the first piece of the collector (doc 02, section 5).
+5. **Generic knobs in the pipeline descriptor**, added only when a second pipeline needs them: extra environment variables, shared-memory size, extra volume mounts, GPU limits. Until then, "any job" means any pipeline expressible as phases of indexed pods, not a general workflow engine.
+
+Not taken: `kubectl` subprocesses, `generateName` (our deterministic names plus the spec-hash check are what make a run resumable), NFS, Kueue and W&B helpers, the Streamlit page.
 
 ______________________________________________________________________
 
 ## 6. Per-phase resource recommendations
 
-Inputs: your 29 Sept measurements (ingest-world about 12 min; ingest-tiles about 75 min, `io_psi_full_avg10` 59.6, 19-24 GiB incl. page cache; compute about 66 min, peak about 53 GiB of 60 GiB, dask pause at 80%; compare tool OOM), plan 02 section 2.3 (evidence that the compare pods were **evicted** at 59.5 GiB used vs 48 Gi *request* on a 64 GiB node, plus one true cgroup OOM; ingest-tiles non-evictable memory up to 19.8 GiB), and node allocatable [V: standard node 27.6 GiB]. **[C]** e2-highmem-8 allocatable is about 57-58 GiB by the GKE reserved-memory formula (my formula gives 28.3 GiB for the 32 GiB node vs the measured 27.6 GiB, so treat the highmem figure as +/-1 GiB); `kubejobs pools` will print the real value once a power node exists.
+Inputs: your 29 Sept measurements (ingest-world about 12 min; ingest-tiles about 75 min, `io_psi_full_avg10` 59.6, 19-24 GiB incl. page cache; compute about 66 min, peak about 53 GiB of 60 GiB, dask pause at 80%; compare tool OOM), plan 02 section 2.3 (evidence that the compare pods were **evicted** at 59.5 GiB used vs 48 Gi *request* on a 64 GiB node, plus one true cgroup OOM; ingest-tiles non-evictable memory up to 19.8 GiB), and node allocatable [V: standard node 27.6 GiB]. **[C]** e2-highmem-8 allocatable is about 57-58 GiB by the GKE reserved-memory formula (my formula gives 28.3 GiB for the 32 GiB node vs the measured 27.6 GiB, so treat the highmem figure as +/-1 GiB); `kuberjobtower pools` will print the real value once a power node exists.
 
 Why `memory request == limit`: a Burstable pod whose usage exceeds its *request* is the kubelet's first eviction candidate under node memory pressure, before its own cgroup limit trips (that is what happened to compare cmp1/cmp3 per plan 02). Request == limit makes eviction track the limit. CPU request may stay below limit.
 
@@ -639,18 +668,18 @@ ______________________________________________________________________
 
 ## 7. Ordered implementation steps (effort: S \<= half day, M 1-2 days, L > 2 days)
 
-| #   | Step                                                                                                                                                                                            | Effort           | Depends             |
-| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- | ------------------- |
-| 1   | `pyproject.toml`: `kubejobs` group, `dev` include, import-linter contracts + `root_packages`, mypy hook path, marker text; `uv lock`; empty `kubejobs/` skeleton; run `lint-imports` and `mypy` | S                | -                   |
-| 2   | `phases.py`, `models.py`, `settings.py` (python-dotenv, context guard); unit tests incl. name-length property test, `Phase` parity test vs `infra/run_phase.py`                                 | M                | 1                   |
-| 3   | `manifest.py` typed builder + `spec_hash`; golden YAMLs per phase; **parity test** old `phase-job.yaml` render vs new builder for identical inputs (dict equality, run once then retired)       | M                | 2                   |
-| 4   | `cluster.py` (`Cluster`, `ClusterAPI`, `FakeCluster`): get/create/list/delete/pods/logs/events/usage; error mapping (404, 409, 422, 5xx -> typed errors)                                        | M                | 2                   |
-| 5   | `aoi.py` + `run.py`: explicit/country AOI, lazy resolution, idempotent submit (hash compare), barrier, observers, failure policy (`podFailurePolicy`), resume/`--retry-failed`                  | L                | 3, 4                |
-| 6   | `__main__.py`: `submit` (+`--dry-run client/server`), `status`, `cancel`, `cleanup`; shim `infra/run_aoi.py`                                                                                    | M                | 5                   |
-| 7   | `infra/run_phase.py` changes: `--tile-ids`, optional ISO, `ingest-world` cold-start fix (**coordinate with plans 03/04**)                                                                       | S-M              | - (parallel with 5) |
-| 8   | `logs`, `top`, `pools` (CA parser + node labels first; GKE REST second, behind `try`); trimmed real `ca_status.yaml` fixture                                                                    | M                | 4                   |
-| 9   | Integration tests (opt-in, section 9) incl. the **cold-start e2e** on a throwaway `INGEST_ROOT` prefix and a >1 h barrier to exercise exec-token refresh                                        | M                | 6, 7                |
-| 10  | Apply section 6 spec table; run E1-E3; update `infra/k8s/README.md`, docs; delete `phase-job.yaml` and the shim after one real run on `kubejobs`                                                | S + cluster time | 9                   |
+| #   | Step                                                                                                                                                                                                      | Effort           | Depends             |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- | ------------------- |
+| 1   | `pyproject.toml`: `kuberjobtower` group, `dev` include, import-linter contracts + `root_packages`, mypy hook path, marker text; `uv lock`; empty `kuberjobtower/` skeleton; run `lint-imports` and `mypy` | S                | -                   |
+| 2   | `phases.py`, `models.py`, `settings.py` (python-dotenv, context guard); unit tests incl. name-length property test, `Phase` parity test vs `infra/run_phase.py`                                           | M                | 1                   |
+| 3   | `manifest.py` typed builder + `spec_hash`; golden YAMLs per phase; **parity test** old `phase-job.yaml` render vs new builder for identical inputs (dict equality, run once then retired)                 | M                | 2                   |
+| 4   | `cluster.py` (`Cluster`, `ClusterAPI`, `FakeCluster`): get/create/list/delete/pods/logs/events/usage; error mapping (404, 409, 422, 5xx -> typed errors)                                                  | M                | 2                   |
+| 5   | `aoi.py` + `run.py`: explicit/country AOI, lazy resolution, idempotent submit (hash compare), barrier, observers, failure policy (`podFailurePolicy`), resume/`--retry-failed`                            | L                | 3, 4                |
+| 6   | `__main__.py`: `submit` (+`--dry-run client/server`), `status`, `cancel`, `cleanup`; shim `infra/run_aoi.py`                                                                                              | M                | 5                   |
+| 7   | `infra/run_phase.py` changes: `--tile-ids`, optional ISO, `ingest-world` cold-start fix (**coordinate with plans 03/04**)                                                                                 | S-M              | - (parallel with 5) |
+| 8   | `logs`, `top`, `pools` (CA parser + node labels first; GKE REST second, behind `try`); trimmed real `ca_status.yaml` fixture                                                                              | M                | 4                   |
+| 9   | Integration tests (opt-in, section 9) incl. the **cold-start e2e** on a throwaway `INGEST_ROOT` prefix and a >1 h barrier to exercise exec-token refresh                                                  | M                | 6, 7                |
+| 10  | Apply section 6 spec table; run E1-E3; update `infra/k8s/README.md`, docs; delete `phase-job.yaml` and the shim after one real run on `kuberjobtower`                                                     | S + cluster time | 9                   |
 
 Rough total: 8-11 developer days. Vertical slice order if time-boxed: 1 -> 2 -> 3 -> 6(dry-run only) gives reviewable manifests with zero cluster risk.
 
@@ -667,7 +696,7 @@ ______________________________________________________________________
 07. **Shared power pool contention** with Maverick celery workers (same `yaroslav-power-node-pool`, shared autoscaler). Preflight warns; node-fit math (request 56Gi + celery 13Gi > allocatable) prevents co-scheduling in practice [C].
 08. **`:latest` image drift mid-run** (compute and reduce could pull different builds; `imagePullPolicy: Always`). Record the image in an annotation now; pin by digest at submit time (section 10, default 7; doc 04 section 9.1).
 09. **Ephemeral PVC lifetime on finished pods** \[U\]: could make long TTL expensive at scale (200 Gi x N). Short TTL + `cleanup` + Cloud Logging (plan 02) is the safe default.
-10. **Cross-plan collision on `infra/run_phase.py`** (3 plans may edit it). Mitigation: step 7 is a tiny, separately reviewable PR; the CLI contract (`--tile-ids`, optional ISO) is the only thing `kubejobs` depends on.
+10. **Cross-plan collision on `infra/run_phase.py`** (3 plans may edit it). Mitigation: step 7 is a tiny, separately reviewable PR; the CLI contract (`--tile-ids`, optional ISO) is the only thing `kuberjobtower` depends on.
 11. **Metrics lag:** `top` is about 1 min stale and shows usage, not peak or PSI; do not treat it as an OOM predictor.
 12. **mdformat/pre-commit** will rewrite this file's tables; harmless.
 13. **Cloud Run reaching a different cluster:** needs the new cluster's control-plane endpoint to be reachable from Cloud Run and the service account mapped into Kubernetes RBAC (doc 05). Not testable until that cluster exists.
@@ -685,9 +714,9 @@ ______________________________________________________________________
   - `aoi_test.py`: explicit tile validation against `GLOBAL_NATURE_WATCH_TILE_IDS` (no I/O); country resolution mocked at the `worldbank_jurisdictions` seam.
   - `cluster_test.py`: lightkube `Client` replaced with a stub to test error mapping and label selectors (the thin layer; real behaviour is integration-tested).
   - `count_indexes`-style parsing of `"0,3-5"` -> `frozenset` (port the existing function and its edge cases).
-- **mypy:** `uv run mypy jdluc validation kubejobs` clean with lightkube typed models (no `ignore_missing_imports`; scratch run showed typed `Job`/`JobStatus | None`). `ruff` per the existing hook selection.
+- **mypy:** `uv run mypy jdluc validation kuberjobtower` clean with lightkube typed models (no `ignore_missing_imports`; scratch run showed typed `Job`/`JobStatus | None`). `ruff` per the existing hook selection.
 - **import-linter:** the three contracts above run in pre-commit; add a deliberate-violation check once by hand during step 1.
-- **Integration (`@pytest.mark.integration`, excluded by default; marker text updated):** (a) server-side `dry_run=True` create of every phase Job in `yaroslav` (validates schema, admission, PVC template, quota); (b) read-only: `pools()`, `pod_usage()`, `events()` against the live cluster compared to the fixtures' shape; (c) mutating smoke only when `KUBEJOBS_ALLOW_MUTATION=1`: one-pod `sleep 5` Job with an image override -> create -> barrier -> `logs` -> `cleanup`; (d) cold-start e2e of `ingest-world` on an empty throwaway prefix (`gs://.../cornerstone/ingest-smoke/<ts>/`) after step 7; (e) a >1 h barrier for token refresh.
+- **Integration (`@pytest.mark.integration`, excluded by default; marker text updated):** (a) server-side `dry_run=True` create of every phase Job in `yaroslav` (validates schema, admission, PVC template, quota); (b) read-only: `pools()`, `pod_usage()`, `events()` against the live cluster compared to the fixtures' shape; (c) mutating smoke only when `KJT_ALLOW_MUTATION=1`: one-pod `sleep 5` Job with an image override -> create -> barrier -> `logs` -> `cleanup`; (d) cold-start e2e of `ingest-world` on an empty throwaway prefix (`gs://.../cornerstone/ingest-smoke/<ts>/`) after step 7; (e) a >1 h barrier for token refresh.
 - **No test mutates anything outside `app=cornerstone` + run-id scoped objects.**
 
 ______________________________________________________________________
@@ -699,22 +728,22 @@ ______________________________________________________________________
 | Question                                                                                | Decision                                                                                                                                                       |
 | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Library                                                                                 | **`lightkube`**                                                                                                                                                |
-| Package name and location                                                               | **`kubejobs`**, top level, with `collect` and `history` sub-packages; the UI is the separate `controlplane` package (doc 03)                                   |
+| Package name and location                                                               | **`kuberjobtower`**, top level, with `collect` and `history` sub-packages; the UI is the separate `controlplane` package (doc 03)                              |
 | Edits to `infra/run_phase.py`, `resource_monitor.py`, and two small ones under `jdluc/` | **Approved**, as one separately reviewable change (section 5.7)                                                                                                |
 | Resource sizing                                                                         | **Approved**: request equal to limit, per section 6                                                                                                            |
 | Node pools                                                                              | **Selectable per phase and job**; heavy defaults to the power pool, light to the standard-machine pool; the form reflects and edits them                       |
 | Configuration                                                                           | **Local `.env` now**, everything in the user's own bucket and `yaroslav` namespace; **Cloud Run variables later** with a different bucket and cluster (doc 05) |
 | Environment-first settings in the pipeline                                              | **Dropped 5 Oct 2026** after review of PR #12 (was: every `Config` field, issue #8 proposal 17)                                                                |
 | History prefix                                                                          | **`cornerstone/control/`**, so it cannot be confused with the pipeline's `runs/{name}/` (doc 06 section 5)                                                     |
-| Completions cap per Job                                                                 | **Soft 10,000**, a setting (`KUBEJOBS_MAX_COMPLETIONS_PER_JOB`)                                                                                                |
+| Completions cap per Job                                                                 | **Soft 10,000**, a setting (`KJT_MAX_COMPLETIONS_PER_JOB`)                                                                                                     |
 
 **Defaults applied unless the user objects:**
 
-1. **`infra/run_aoi.py` and `phase-job.yaml`:** keep a ~15-line shim for one release, then delete both once the parity test is green and one real run has used `kubejobs`.
+1. **`infra/run_aoi.py` and `phase-job.yaml`:** keep a ~15-line shim for one release, then delete both once the parity test is green and one real run has used `kuberjobtower`.
 2. **Typed construction replaces the YAML template**; non-Python readers read the manifest through `--dry-run -o yaml`.
 3. **TTL stays 1800 s**, with `--ttl` as an override; Cloud Logging holds the logs and events (doc 02).
 4. **An explicit-tile run still needs at least one `--country` for `compute` and `reduce`** (the attribute leg is per tile and country), checked at plan time. `--stages` (warm tiles only) is a later extension.
-5. **Foreign-pool guard on**, driven by `KUBEJOBS_ALLOWED_POOL_REGEX`; `--allow-foreign-pool` overrides.
+5. **Foreign-pool guard on**, driven by `KJT_ALLOWED_POOL_REGEX`; `--allow-foreign-pool` overrides.
 6. **GKE REST for pool details** is an optional second source that degrades silently when forbidden; no pool mutation, and the library prints the `gcloud` command for a human instead.
 7. **Image pinning:** record the image in a Job annotation now; resolve `:latest` to a digest at submit time so every phase of a run uses one build (doc 04 section 9.1).
 

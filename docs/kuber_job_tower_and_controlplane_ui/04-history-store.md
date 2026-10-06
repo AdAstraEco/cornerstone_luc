@@ -38,9 +38,9 @@ ______________________________________________________________________
 | Docker image has no `.git` at runtime (decorator uses `func.__module__` "so the image can drop it")                                                                                                                                                                                                                                                                                                                                          | comment in `storage.py`                                                        | Pod-side code sha must come from an env var / image label, not GitPython.                                                                                                                                                                                                                            |
 | `tools/measure-drift.py`: per-(methodology,country) parquet + `manifest.json` dataclass (sha, dirty paths, captured_at, scratch_root, row counts, parquet sha256); `--compare-only` re-reads artifacts on disk                                                                                                                                                                                                                               | `tools/measure-drift.py`                                                       | Direct precedent for "parquet + manifest, no database, written once, reread later". Also states the cache is content-blind and keys it as a hazard.                                                                                                                                                  |
 | `validation/data/sources.lock.json` (committed, small text: `{path, origin, sha256, bytes, revision}`), `.cache/` gitignored                                                                                                                                                                                                                                                                                                                 | `validation/`, `.gitignore` (`.cache/`, `infra/*.env`)                         | The repo's two conventions: *curated, reviewable* state is committed as small JSON; *machine state* lives in gitignored `.cache/`.                                                                                                                                                                   |
-| `infra/cluster.env` (gitignored; template tracked) holds identifiers; `Config.from_dot_env()` requires **all six** fields present (`kubejobs`' own settings are in a `.env`, doc 05)                                                                                                                                                                                                                                                         | `infra/cluster.env.example`, `infra/k8s/README.md`                             | Cluster identifiers deliberately stay out of tracked files -> a committed DB containing namespace/node/image/bucket names would break that rule. New settings go in `cluster.env` (read by control-plane tooling), **not** into `jdluc.config.Config` (adding a field breaks every existing `.env`). |
+| `infra/cluster.env` (gitignored; template tracked) holds identifiers; `Config.from_dot_env()` requires **all six** fields present (`kuberjobtower`' own settings are in a `.env`, doc 05)                                                                                                                                                                                                                                                    | `infra/cluster.env.example`, `infra/k8s/README.md`                             | Cluster identifiers deliberately stay out of tracked files -> a committed DB containing namespace/node/image/bucket names would break that rule. New settings go in `cluster.env` (read by control-plane tooling), **not** into `jdluc.config.Config` (adding a field breaks every existing `.env`). |
 | Dependencies already present: `pyarrow 24.0.0`, `pandas 3.0.3`, `gcsfs 2026.5.0`, `fsspec 2026.3.0`, `google-cloud-storage 3.12.0` (transitive of gcsfs); **absent:** duckdb, sqlalchemy, alembic                                                                                                                                                                                                                                            | `uv.lock`                                                                      | Stdlib `sqlite3` (SQLite 3.51.2 with Python 3.14.2, checked) costs nothing.                                                                                                                                                                                                                          |
-| import-linter: `root_packages = ["jdluc","validation"]`; "pipeline never imports the validator"; ETL layers; "Utilities are foundational"                                                                                                                                                                                                                                                                                                    | `pyproject.toml`                                                               | Template for the `kubejobs.history` contract (section 7.4).                                                                                                                                                                                                                                          |
+| import-linter: `root_packages = ["jdluc","validation"]`; "pipeline never imports the validator"; ETL layers; "Utilities are foundational"                                                                                                                                                                                                                                                                                                    | `pyproject.toml`                                                               | Template for the `kuberjobtower.history` contract (section 7.4).                                                                                                                                                                                                                                     |
 | `maverick` (sibling repo) uses Django + Cloud SQL Postgres/PostGIS, has `PipelineRun`/`TaskResult` models and `duckdb>=1.0.0` in deps                                                                                                                                                                                                                                                                                                        | `maverick/pyproject.toml`, `django_config/settings.py`, `docs/ARCHITECTURE.md` | Postgres precedent exists on the AdAstra side, but not in this fork.                                                                                                                                                                                                                                 |
 | GCS bucket `.../cornerstone/` holds `ingest/` and `scratch/`; storage-cost-brief proposes lifecycle rules on scratch                                                                                                                                                                                                                                                                                                                         | `docs/orbae/storage-cost-brief.md`                                             | Add `runs/` as a sibling prefix; make sure scratch lifecycle rules do not match it.                                                                                                                                                                                                                  |
 
@@ -59,7 +59,7 @@ The instinct is half right: SQLite is the right engine for the **read model** th
 
 ### (ii) DB file in the repo directory, **gitignored**, synced to GCS - **location yes, file-level sync no**
 
-- Location is fine and matches precedent: `.cache/kubejobs/history.db` (`.cache/` is already ignored on `main` and on `civ-cie`). Local SSD, same host -> WAL mode is legitimate.
+- Location is fine and matches precedent: `.cache/kuberjobtower/history.db` (`.cache/` is already ignored on `main` and on `civ-cie`). Local SSD, same host -> WAL mode is legitimate.
 - Whole-file sync loses updates by construction. A uploads v1; B (starting from the old base) uploads v2 -> A's rows are gone. GCS can make this *detectable* (`ifGenerationMatch`: 412 on mismatch [GCS preconditions](https://docs.cloud.google.com/storage/docs/request-preconditions)) but SQLite has no merge, so the loser must re-derive its rows - i.e. you needed a log of changes anyway. It also forces an answer to "who is the source of truth?" for every sync, with no good one.
 - Also: GCS allows about 1 write/s per object name ([quotas](https://docs.cloud.google.com/storage/quotas)), so "autosync on every write" to one name throttles; "autosync every N minutes" widens the loss window.
 - Acceptable only as a **one-way, read-only bootstrap snapshot** (section 7.3, optional).
@@ -108,8 +108,8 @@ ______________________________________________________________________
 
 ## 5. Recommendation in detail
 
-1. **Truth = write-once objects** under `KUBEJOBS_HISTORY_ROOT` (v1 value: `gs://us-central1-maverick-yarosl-0b64509f-bucket/cornerstone/control/`; `file://.../.cache/runs` offline). Nothing in GCS is ever overwritten except by creating a *new* name.
-2. **Read model = SQLite** in `.cache/kubejobs/history.db` (override `KUBEJOBS_HISTORY_DB`), built only by applying records. Schema version mismatch => rebuild from the journal (no Alembic).
+1. **Truth = write-once objects** under `KJT_HISTORY_ROOT` (v1 value: `gs://us-central1-maverick-yarosl-0b64509f-bucket/cornerstone/control/`; `file://.../.cache/runs` offline). Nothing in GCS is ever overwritten except by creating a *new* name.
+2. **Read model = SQLite** in `.cache/kuberjobtower/history.db` (override `KJT_HISTORY_DB`), built only by applying records. Schema version mismatch => rebuild from the journal (no Alembic).
 3. **Writers:** exactly one *collector* per observing machine (the process that drives/monitors a run: plan 01's driver or plan 02's monitor). It applies records to its own DB and flushes them as a journal chunk. UI and CLI processes only read (read-only connection) and call `sync()` for runs observed elsewhere.
 4. **Logs:** full logs are GCS chunk objects written by the collector; Cloud Logging is the fallback, not the system of record (section 10).
 5. **Artifacts catalog:** records emitted from `storage.get_cache_decorator` at write/hit time (the source of truth) plus a pure `cache_key()` helper factored out of the decorator for backfill (section 7.5).
@@ -210,7 +210,7 @@ gs://<bucket>/cornerstone/control/_snapshots/history-<utc>.db.zst   # optional
 
 ### 7.3 Read / sync path
 
-- **Same machine as collector:** UI/CLI open `file:.cache/kubejobs/history.db?mode=ro`; WAL lets them read while the collector writes. WAL is legitimate only because the DB is on a local disk of one host (never put `.cache/` on NFS, a synced folder, or gcsfuse).
+- **Same machine as collector:** UI/CLI open `file:.cache/kuberjobtower/history.db?mode=ro`; WAL lets them read while the collector writes. WAL is legitimate only because the DB is on a local disk of one host (never put `.cache/` on NFS, a synced folder, or gcsfuse).
 - **Other machines:** `Store.sync()` lists `journal/` for runs that are active or newer than the watermark, skips URIs already in `ingested_objects`, applies the rest with `foreign_keys=OFF` (chunks may arrive before their parent rows) followed by `PRAGMA foreign_key_check`. Lag = flush interval. Poll at most every 60 s while a run is open in the UI; list calls are Class A operations but trivial in volume.
 - **Cold start:** `sync --since 180d` lists a few thousand objects (section 12). Optional: `VACUUM INTO` snapshot published create-only so a new machine downloads one file first, then syncs the tail.
 
@@ -218,33 +218,33 @@ gs://<bucket>/cornerstone/control/_snapshots/history-<utc>.db.zst   # optional
 
 - **stdlib `sqlite3`** with `Row`, explicit transactions, hand-written SQL in two modules; frozen dataclasses for the record shapes. SQLAlchemy/SQLModel are not installed and an ORM over 14 tables with ~12 queries buys nothing; Alembic needs SQLAlchemy.
 - Connection pragmas (per connection): `foreign_keys=ON` (OFF only in `sync`), `journal_mode=WAL`, `synchronous=NORMAL`, `busy_timeout=5000`; read-only connections via URI `mode=ro`.
-- Module: the **`kubejobs.history`** subpackage of the single `kubejobs/` package (decided 2 Oct 2026), a sibling of the cluster layer; the UI (`controlplane`, doc 03) reads it through `queries.py`:
+- Module: the **`kuberjobtower.history`** subpackage of the single `kuberjobtower/` package (decided 2 Oct 2026), a sibling of the cluster layer; the UI (`controlplane`, doc 03) reads it through `queries.py`:
   ```
-  kubejobs/history/records.py   # record dataclasses + JSON (de)serialization, v=1
-  kubejobs/history/journal.py   # fsspec: create-only append, list, read; local and gs:// identical
-  kubejobs/history/schema.sql   # section 8 DDL
-  kubejobs/history/db.py        # connect, SCHEMA_VERSION check, apply(), sync(), rebuild(), prune()
-  kubejobs/history/queries.py   # named read queries for the UI and CLI
+  kuberjobtower/history/records.py   # record dataclasses + JSON (de)serialization, v=1
+  kuberjobtower/history/journal.py   # fsspec: create-only append, list, read; local and gs:// identical
+  kuberjobtower/history/schema.sql   # section 8 DDL
+  kuberjobtower/history/db.py        # connect, SCHEMA_VERSION check, apply(), sync(), rebuild(), prune()
+  kuberjobtower/history/queries.py   # named read queries for the UI and CLI
   ```
-  CLI: `uv run python -m kubejobs history runs|show|tile|near-oom|sync|rebuild|prune`.
-- `pyproject.toml` contracts (`root_packages = ["jdluc", "validation", "kubejobs"]`; the full set is in plan 01 section 5.3). The ones that matter for history:
+  CLI: `uv run python -m kuberjobtower history runs|show|tile|near-oom|sync|rebuild|prune`.
+- `pyproject.toml` contracts (`root_packages = ["jdluc", "validation", "kuberjobtower"]`; the full set is in plan 01 section 5.3). The ones that matter for history:
   ```toml
   [[tool.importlinter.contracts]]
-  name = "kubejobs.history depends on neither the cluster layer nor the UI"
+  name = "kuberjobtower.history depends on neither the cluster layer nor the UI"
   type = "forbidden"
-  source_modules = ["kubejobs.history"]
-  forbidden_modules = ["kubejobs.cluster", "kubejobs.manifest", "kubejobs.run", "controlplane", "lightkube"]
+  source_modules = ["kuberjobtower.history"]
+  forbidden_modules = ["kuberjobtower.cluster", "kuberjobtower.manifest", "kuberjobtower.run", "controlplane", "lightkube"]
 
   [[tool.importlinter.contracts]]
-  name = "kubejobs.history sees the pipeline only through the stdlib-only cache_key module"
+  name = "kuberjobtower.history sees the pipeline only through the stdlib-only cache_key module"
   type = "forbidden"
-  source_modules = ["kubejobs.history"]
+  source_modules = ["kuberjobtower.history"]
   forbidden_modules = [
       "validation", "jdluc.storage", "jdluc.attribute", "jdluc.emit", "jdluc.harmonize", "jdluc.ingest",
       "jdluc.jurisdictional_direct", "jdluc.statistical", "jdluc.trace", "jdluc.export", "jdluc.datasets",
   ]
   ```
-  `kubejobs.history` may import `jdluc.cache_key` (a new stdlib-only module holding the pure `cache_key()` function that `jdluc.storage.get_cache_decorator` also calls; **not** `jdluc.storage`, which imports pandas and xarray and would make the UI heavy) and `jdluc.tiling`. The pod-side hooks only `logger.info(json.dumps(...))` and import nothing from `kubejobs`, so the pipeline-never-imports rule holds with no exceptions.
+  `kuberjobtower.history` may import `jdluc.cache_key` (a new stdlib-only module holding the pure `cache_key()` function that `jdluc.storage.get_cache_decorator` also calls; **not** `jdluc.storage`, which imports pandas and xarray and would make the UI heavy) and `jdluc.tiling`. The pod-side hooks only `logger.info(json.dumps(...))` and import nothing from `kuberjobtower`, so the pipeline-never-imports rule holds with no exceptions.
 
 ### 7.5 The artifact problem: three families, two hooks
 
@@ -254,7 +254,7 @@ gs://<bucket>/cornerstone/control/_snapshots/history-<utc>.db.zst   # optional
 | `cache`  | opaque `sha1[:12]`                                    | **Hook 1** in `storage.get_cache_decorator.inner`: after the hit/miss decision log one JSON line `{"v":1,"kind":"artifact","family":"cache","stage":"<module>.<qualname>","version":N,"cache_key":"..","uri":"..","outcome":"hit or miss","duration_s":..,"tile_id":..,"args":{..}}`. `args` are the same bound non-ignored values the hash already stringifies. Logging only. |
 | `export` | `{export_root}/{tile_id}.tif`                         | derive; or log from `run_export`                                                                                                                                                                                                                                                                                                                                               |
 
-**Hook 1 prerequisites:** factor the hash into a pure `jdluc.cache_key.cache_key(module, qualname, version, bound_arguments) -> str` used by the decorator and by `kubejobs.history` for backfill (recompute for tiles that already have scratch artifacts). Add a golden test that the refactor leaves existing keys unchanged (e.g. the known `94cbe56c057a` / `ca71c82005a9` stores for their args). Backfilled keys are only trustworthy for the code version that wrote them (a changed `DatasetName` list or default arg changes the key), which is why the **write-time record is the truth** and the recompute is a convenience flagged `present` by an existence probe. Because the key is content-blind (`measure-drift.py` docstring), each artifact row carries `run_uid -> runs.git_sha`, and `artifact_uses` shows when a later run merely **hit** an older writer's output.
+**Hook 1 prerequisites:** factor the hash into a pure `jdluc.cache_key.cache_key(module, qualname, version, bound_arguments) -> str` used by the decorator and by `kuberjobtower.history` for backfill (recompute for tiles that already have scratch artifacts). Add a golden test that the refactor leaves existing keys unchanged (e.g. the known `94cbe56c057a` / `ca71c82005a9` stores for their args). Backfilled keys are only trustworthy for the code version that wrote them (a changed `DatasetName` list or default arg changes the key), which is why the **write-time record is the truth** and the recompute is a convenience flagged `present` by an existence probe. Because the key is content-blind (`measure-drift.py` docstring), each artifact row carries `run_uid -> runs.git_sha`, and `artifact_uses` shows when a later run merely **hit** an older writer's output.
 
 **Hook 2** (infra, not pipeline): `infra/resource_monitor.py` adds `"v":1,"ts_ms":<epoch ms>` to `resource_sample`/`resource_summary` lines. Without it the timestamp comes from `kubectl logs --timestamps` (nanosecond RFC3339, also stable, so the pipeline still works - just parse the prefix).
 
@@ -295,7 +295,7 @@ CREATE TABLE runs (
   image_digest TEXT,
   cluster      TEXT,
   namespace    TEXT,
-  submitted_by TEXT,
+  submitted_by TEXT,                           -- same value as the kuber-job-tower/owner label on the Jobs (doc 01 section 5.15)
   spec_json    TEXT NOT NULL DEFAULT '{}',       -- CLI args as given (iso list, flags); never secrets
   observed_ms  INTEGER NOT NULL
 ) STRICT;
@@ -557,7 +557,7 @@ ______________________________________________________________________
 
 ### 9.1 Replaying a run from its stored configuration
 
-`kubejobs history replay <run_uid> [--phase P] [--dry-run]`; nothing needs the original laptop.
+`kuberjobtower history replay <run_uid> [--phase P] [--dry-run]`; nothing needs the original laptop.
 
 1. Read `run.json` and each `job.json`; refuse if `image.digest` no longer exists in Artifact Registry (print the git sha so the image can be rebuilt).
 2. Re-apply the **stored rendered manifest**, not a fresh render from today's code, changing only the Job name, the `run-id` label and the image (to `repo@sha256:<digest>`). The stored manifest is exactly what ran; re-rendering would silently pick up later template edits.
@@ -656,13 +656,13 @@ ______________________________________________________________________
 
 | #                                                                       | Step                                                                                                                                                                                                                                    | Effort | Notes                                                      |
 | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------- |
-| 1                                                                       | Agree record shapes with plans 01/02 (section 6) and package name; add `KUBEJOBS_HISTORY_ROOT` (bucket prefix) to `.env.example` (see doc 05); default `file://.cache/runs`                                                             | S      | no `Config` change                                         |
+| 1                                                                       | Agree record shapes with plans 01/02 (section 6) and package name; add `KJT_HISTORY_ROOT` (bucket prefix) to `.env.example` (see doc 05); default `file://.cache/runs`                                                                  | S      | no `Config` change                                         |
 | 2                                                                       | `infra/resource_monitor.py`: add `v`, `ts_ms` to sample/summary lines                                                                                                                                                                   | S      | one line each; backwards compatible                        |
 | 3                                                                       | `jdluc/storage.py`: extract pure `cache_key()`, emit `artifact` line (hit/miss, duration) in the decorator; golden test that keys are unchanged; optional per-(dataset,tile) line in `run_ingest`                                       | S-M    | only pipeline touch; logging only                          |
-| 4                                                                       | `kubejobs/history/`: records, journal (fsspec create-only), `schema.sql`, `apply/sync/rebuild/prune`, queries; tests on `file://` and `memory://`; one `@pytest.mark.integration` test for gcsfs create-only                            | M      | ~400 lines, stdlib only                                    |
+| 4                                                                       | `kuberjobtower/history/`: records, journal (fsspec create-only), `schema.sql`, `apply/sync/rebuild/prune`, queries; tests on `file://` and `memory://`; one `@pytest.mark.integration` test for gcsfs create-only                       | M      | ~400 lines, stdlib only                                    |
 | 5                                                                       | import-linter contracts (section 7.4)                                                                                                                                                                                                   | S      |                                                            |
 | 6                                                                       | Collector glue with plans 01/02: logs -> records, k8s state -> records, chunk flush, log redaction, `ttlSecondsAfterFinished` >= 6 h                                                                                                    | M      | mostly plan 01/02 code                                     |
-| 7                                                                       | CLI `python -m kubejobs history` with subcommands runs, show, tile, near-oom, sync, rebuild, prune, verify                                                                                                                              | S      |                                                            |
+| 7                                                                       | CLI `python -m kuberjobtower history` with subcommands runs, show, tile, near-oom, sync, rebuild, prune, verify                                                                                                                         | S      |                                                            |
 | 8                                                                       | Bucket lifecycle config for `.log.gz` (document, user applies); confirm `runs/` outside scratch rules                                                                                                                                   | S      |                                                            |
 | 9                                                                       | Later: per-run parquet bundle (`samples/pods/events.parquet` + `manifest.json`, `measure-drift`-style) and published `VACUUM INTO` snapshot; artifact `bytes`/`verify`; backfill artifact rows for existing scratch by recomputing keys | M      | only when listing/rebuild gets slow or a hosted UI appears |
 | 10                                                                      | Later: pod-side sample chunk upload; in-cluster collector                                                                                                                                                                               | M      | only if laptop gaps are observed                           |
@@ -689,12 +689,12 @@ ______________________________________________________________________
 
 **Decided by the user, 2 Oct 2026:**
 
-| Question                            | Decision                                                                                                                                                                                                               |
-| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Where does shared run history live? | **In the user's own bucket for now**, prefix `cornerstone/control/`, set by `KUBEJOBS_HISTORY_ROOT` in the local `.env`. A different bucket (and cluster) is a config change when the app moves to Cloud Run (doc 05). |
-| May we touch `jdluc/`?              | **Yes.** A stdlib-only `jdluc/cache_key.py` with the pure `cache_key()`; optional logging line in the decorator. A golden test pins the existing keys (`94cbe56c057a`, `ca71c82005a9`).                                |
-| Where does the collector run in v1? | **The developer's laptop**, with the user's gcloud credentials. In-cluster or Cloud Run later (doc 05 covers what changes).                                                                                            |
-| Package                             | **`kubejobs`**; this store is `kubejobs.history`.                                                                                                                                                                      |
+| Question                            | Decision                                                                                                                                                                                                          |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Where does shared run history live? | **In the user's own bucket for now**, prefix `cornerstone/control/`, set by `KJT_HISTORY_ROOT` in the local `.env`. A different bucket (and cluster) is a config change when the app moves to Cloud Run (doc 05). |
+| May we touch `jdluc/`?              | **Yes.** A stdlib-only `jdluc/cache_key.py` with the pure `cache_key()`; optional logging line in the decorator. A golden test pins the existing keys (`94cbe56c057a`, `ca71c82005a9`).                           |
+| Where does the collector run in v1? | **The developer's laptop**, with the user's gcloud credentials. In-cluster or Cloud Run later (doc 05 covers what changes).                                                                                       |
+| Package                             | **`kuberjobtower`**; this store is `kuberjobtower.history`.                                                                                                                                                       |
 
 **Resolved by verification:** Cloud Logging is enabled and readable for the namespace, and it kept the 29 Sept run's logs after the Jobs' TTL (doc 02). Keep `ttlSecondsAfterFinished` at 1800 s; the collector copies each pod's exit status before it is deleted.
 
