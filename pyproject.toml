@@ -159,4 +159,5 @@ forbidden_modules = [
 allow_indirect_imports = true
 ignore_imports = [
     "kuberjobtower.manifest -> lightkube",
+    "kuberjobtower.cluster -> lightkube",
 ]
