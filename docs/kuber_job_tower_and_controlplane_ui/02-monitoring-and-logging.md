@@ -11,7 +11,7 @@ ______________________________________________________________________
 Goals
 
 1. For every Job/pod of a run, know after the fact (and while running) why it took as long as it did, which resource capped it, and why it died.
-2. Surface the failure modes we actually hit: disk-bound ingest (`io_psi`), page-cache "100% memory" that is not memory pressure, compute near the memory ceiling, evictions/OOM kills of 60 GiB pods, autoscaler stalls, silent tools.
+2. Surface the failure modes we actually hit: I/O-pressure spikes in ingest (`io_psi`), page-cache "100% memory" that is not memory pressure, compute near the memory ceiling, evictions/OOM kills of 60 GiB pods, autoscaler stalls, silent tools.
 3. Survive the Job TTL (`ttlSecondsAfterFinished=1800`): nothing we need may live only in the pod.
 4. Stay lightweight: no new always-on infrastructure that we have to run; feed the UI from the run DB (plan 04) with native charts.
 
@@ -95,7 +95,7 @@ Calibration data from the 29 Sep run (sampler, 15 s):
 | ingest-tiles hnd2 | 275     | 100.0        | 59.6        | 0.75         | 17.6         |
 | compute hnd2      | 262     | 89.1         | 4.7         | 0.0          | 1.9          |
 
-For ingest-tiles: 22/275 samples (8%) had `mem_pct>=95`, **0** of them had `mem_psi>5`; only 2/275 samples had `io_psi>30`. The disk-bound signal is spiky, so alerts must key on "fraction of samples over threshold", not a single peak read.
+For ingest-tiles: 22/275 samples (8%) had `mem_pct>=95`, **0** of them had `mem_psi>5`; only 2/275 samples had `io_psi>30`. The I/O signal is spiky, so alerts must key on "fraction of samples over threshold", not a single peak read. **Re-read on 8 Oct 2026:** at that fraction (1%) the ingest is not disk-bound at all, and the Sri Lanka ingest (2 of 201 samples) agrees; see the `disk_bound` row in section 7.
 
 ### 2.5 How logs are watched today
 
@@ -248,6 +248,8 @@ ______________________________________________________________________
 **Multi-tile pods (doc 06).** If a pod processes several tiles, as 1° work tiles would require, the `tile` field of every log line and sample must change as the pod moves through its list, and the pod emits `tile_start` and `tile_done` events with durations. The collector then attributes samples to tiles by time window and keeps per-tile medians, which the Run builder uses to choose tiles per pod. Nothing changes while a pod has one tile.
 
 ## 7. Derived alerts / verdicts
+
+**Calibration result (8 Oct 2026, implemented in `collect/verdicts.py`):** run against the stored samples, neither ingest run (Honduras 275 samples, Sri Lanka 201) meets the `disk_bound` rule, because only 1% of samples reached I/O pressure 20; the average write rate was 26 to 34 MiB/s, the pod used about one core of four, so `idle_cores` is what fires. The compute pod gives `memory_pressure` (heap 96% of the limit) and the export pod `cache_only_memory`. `memory.events` max/high climb whenever page cache reaches the limit (21 of them with a 30% heap), so they only count as pressure once the heap is at least 50%.
 
 Evaluated by the collector over a rolling window of samples (initial thresholds from the 29 Sep calibration; make them constants in one place, tune after the next run).
 
