@@ -135,3 +135,19 @@ def test_a_newer_schema_is_refused_and_an_older_one_is_rebuilt(tmp_path: pathlib
     db.execute("INSERT INTO runs (run_uid, run_id, observed_ms) VALUES ('x', 'x', 1)")
     db.close()
     assert store.open_store(path).execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 0  # dropped and rebuilt
+
+
+def test_the_first_chunk_of_a_run_on_a_bucket_without_folders(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Object stores raise FileNotFoundError when listing a folder nothing was written to yet."""
+    real = journal._fs
+
+    def bucket_like(uri: str):  # type: ignore[no-untyped-def]
+        fs, path = real(uri)
+        original = fs.ls
+        fs.ls = lambda p, detail=False, **kw: original(p, detail=detail, **kw) if fs.exists(p) and any(
+            n for n in original(p, detail=False)
+        ) else (_ for _ in ()).throw(FileNotFoundError(p))
+        return fs, path
+
+    monkeypatch.setattr(journal, "_fs", bucket_like)
+    assert journal.Journal(str(tmp_path), "o").append(UID, sample_records()[:2]) is not None

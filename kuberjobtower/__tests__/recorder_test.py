@@ -79,6 +79,7 @@ def test_a_phase_is_recorded_in_the_journal_the_archive_and_the_database(make_se
     assert db.execute("SELECT tile_id FROM job_tiles").fetchone()[0] == "10N_080E"
     assert notes[-1].startswith("recorded 1 pod(s) of compute")
 
+    assert store.sync(db, settings.archive_root) == 0  # this machine wrote the chunks: nothing new
     # the journal alone is enough to rebuild the same database elsewhere
     assert store.rebuild(str(tmp_path / "other.db"), settings.archive_root) == 3  # run start, the phase, run end
     other = store.open_store(str(tmp_path / "other.db"))

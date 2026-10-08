@@ -144,9 +144,14 @@ def sync(db: sqlite3.Connection, root: str, run_uids: collections.abc.Iterable[s
             if db.execute("SELECT 1 FROM ingested_objects WHERE uri = ?", [uri]).fetchone():
                 continue
             apply(db, journal.read_chunk(uri))
-            db.execute("INSERT OR IGNORE INTO ingested_objects VALUES (?, ?)", [uri, records.now_ms()])
+            mark_ingested(db, uri)
             applied += 1
     return applied
+
+
+def mark_ingested(db: sqlite3.Connection, uri: str) -> None:
+    """Note that a journal object is already in the store (this machine wrote it)."""
+    db.execute("INSERT OR IGNORE INTO ingested_objects VALUES (?, ?)", [uri, records.now_ms()])
 
 
 def rebuild(path: str, root: str) -> int:

@@ -68,7 +68,10 @@ class Journal:
 
     @staticmethod
     def _chunks(fs: typing.Any, path: str) -> list[str]:
-        return [n for n in fs.ls(path, detail=False) if n.endswith(".jsonl.gz")]
+        try:
+            return [n for n in fs.ls(path, detail=False) if n.endswith(".jsonl.gz")]
+        except FileNotFoundError:  # a bucket has no folder until the first object is in it
+            return []
 
 
 def list_chunks(root: str, run_uid: str) -> list[str]:

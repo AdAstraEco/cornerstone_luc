@@ -73,8 +73,10 @@ class Recorder:
         self._nodes: dict[str, NodeInfo | None] = {}
 
     def _flush(self, batch: list[records.Record]) -> None:
-        self.journal.append(self.run_uid, batch)
+        uri = self.journal.append(self.run_uid, batch)
         store.apply(self.db, batch)
+        if uri:
+            store.mark_ingested(self.db, uri)  # applied above: a later sync must not repeat it
 
     def _run_record(self, status: str, finished: bool = False) -> records.Record:
         spec = self.plan.spec
