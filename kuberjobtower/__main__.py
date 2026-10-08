@@ -185,6 +185,7 @@ def _top_once(cluster: Cluster, run_ids: list[str]) -> int:
         for pod in cluster.pods(run_id):
             if pod.phase != "Running":
                 continue
+            shown += 1
             u = usage.get(pod.name)
             if u is None:  # metrics-server is about a minute behind a new pod
                 print(
@@ -197,7 +198,6 @@ def _top_once(cluster: Cluster, run_ids: list[str]) -> int:
                 f"{pod.name[-36:]:36} {pod.phase:10} {(pod.node or '-')[-12:]:12} {u.cpu_m:>6} {_n(pod.cpu_request_m, 'd'):>6} "
                 f"{u.memory_bytes / GIB:>8.1f} {_n(req and req / GIB):>6} {pct:>4}"
             )
-            shown += 1
     if not shown:
         print("no running pods")
     return shown
