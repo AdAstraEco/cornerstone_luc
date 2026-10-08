@@ -952,6 +952,8 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "fsspec" },
+    { name = "gcsfs" },
     { name = "google-auth" },
     { name = "lightkube" },
     { name = "mypy" },
@@ -959,15 +961,19 @@ dev = [
     { name = "pre-commit" },
     { name = "pytest" },
     { name = "pyyaml" },
+    { name = "requests" },
     { name = "types-geopandas" },
     { name = "types-networkx" },
     { name = "types-pyyaml" },
     { name = "types-requests" },
 ]
 kuberjobtower = [
+    { name = "fsspec" },
+    { name = "gcsfs" },
     { name = "google-auth" },
     { name = "lightkube" },
     { name = "pyyaml" },
+    { name = "requests" },
     { name = "types-pyyaml" },
 ]
 
@@ -993,6 +999,8 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "fsspec" },
+    { name = "gcsfs" },
     { name = "google-auth" },
     { name = "lightkube" },
     { name = "mypy" },
@@ -1000,15 +1008,19 @@ dev = [
     { name = "pre-commit" },
     { name = "pytest" },
     { name = "pyyaml" },
+    { name = "requests" },
     { name = "types-geopandas" },
     { name = "types-networkx" },
     { name = "types-pyyaml" },
     { name = "types-requests" },
 ]
 kuberjobtower = [
+    { name = "fsspec" },
+    { name = "gcsfs" },
     { name = "google-auth" },
     { name = "lightkube" },
     { name = "pyyaml" },
+    { name = "requests" },
     { name = "types-pyyaml" },
 ]
 

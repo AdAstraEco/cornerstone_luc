@@ -36,9 +36,12 @@ dev = [
     { include-group = "kuberjobtower" },
 ]
 kuberjobtower = [
+    "fsspec",
+    "gcsfs",
     "google-auth",
     "lightkube",
     "pyyaml",
+    "requests",
     "types-pyyaml",
 ]
 

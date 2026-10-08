@@ -97,3 +97,18 @@ def test_export_marks_its_own_steps_and_a_pod_without_marks_is_one_row() -> None
     assert [s.label for s in report.steps(report.parse(quiet))] == [
         "whole pod (no marked steps)"
     ]
+
+
+def test_a_pod_that_logs_step_events_gets_exactly_those_steps() -> None:
+    log = [
+        line(0, "step", "x", kind="step", event="start", name="ingest A"),
+        sample(5, 1.0, 1.0, 5, 0),
+        line(20, "step", "x", kind="step", event="end", name="ingest A"),
+        line(30, "step", "x", kind="step", event="start", name="ingest B"),
+        sample(35, 2.0, 1.5, 20, GIB),
+        line(50, "Done", "__main__"),  # ignored: the pod told us its own steps
+    ]
+    records = report.parse(log)
+    assert [s.label for s in report.steps(records)] == ["ingest A", "ingest B"]
+    first = report.steps(records)[0]
+    assert (first.end - first.start).total_seconds() == 20

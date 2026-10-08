@@ -7,7 +7,8 @@ import sys
 from kuberjobtower import aoi, manifest, report, run
 from kuberjobtower import settings as settings_module
 from kuberjobtower.cluster import Cluster, ClusterError
-from kuberjobtower.models import Aoi, RunPlan, RunSpec
+from kuberjobtower.collect import logs as collect_logs
+from kuberjobtower.models import Aoi, JobState, PhasePlan, RunPlan, RunSpec
 from kuberjobtower.phases import Phase
 
 
@@ -99,7 +100,15 @@ def cmd_submit(args: argparse.Namespace) -> int:
         print(f"{tiles} tiles is at or above {settings.confirm_tiles}: add --i-know")
         return 2
     print()
-    return 0 if run.execute(plan, Cluster(settings), poll_s=args.poll) else 1
+    cluster = Cluster(settings)
+
+    def archive(pp: PhasePlan, _: JobState) -> None:
+        stored = collect_logs.archive_phase(
+            cluster, settings.archive_root, plan.spec.run_id, str(pp.phase)
+        )
+        print(f"  archived {len(stored)} pod log(s) under {settings.archive_root}")
+
+    return 0 if run.execute(plan, cluster, poll_s=args.poll, after_phase=archive) else 1
 
 
 def cmd_status(args: argparse.Namespace) -> int:
@@ -121,29 +130,32 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
-def _pod_for(cluster: Cluster, args: argparse.Namespace) -> str:
-    pods = [
-        p
-        for p in cluster.pods(args.run_id, args.phase)
-        if args.index is None or p.index == args.index
-    ]
-    if not pods:
-        raise ValueError(
-            f"no pod for run {args.run_id} phase {args.phase} (pods are deleted 30 min after the Job ends)"
-        )
-    return pods[0].name
+def _lines(args: argparse.Namespace, tail: int | None = None) -> list[str]:
+    """The pod's log lines from the first source that has them, naming it on stderr."""
+    settings = settings_module.Settings.load()
+    source, lines = collect_logs.lines_for(
+        cluster=Cluster(settings),
+        project=settings.gcp_project,
+        namespace=settings.namespace,
+        archive_root=settings.archive_root,
+        run_id=args.run_id,
+        phase=args.phase,
+        index=args.index,
+        source=args.source,
+        tail=tail,
+    )
+    print(f"(from {source}, {len(lines)} lines)", file=sys.stderr)
+    return lines
 
 
 def cmd_logs(args: argparse.Namespace) -> int:
-    cluster = Cluster(settings_module.Settings.load())
-    for line in cluster.logs(_pod_for(cluster, args), tail=args.tail):
+    for line in _lines(args, args.tail):
         print(line)
     return 0
 
 
 def cmd_report(args: argparse.Namespace) -> int:
-    cluster = Cluster(settings_module.Settings.load())
-    print(report.table(cluster.logs(_pod_for(cluster, args))))
+    print(report.table(_lines(args)))
     return 0
 
 
@@ -218,7 +230,13 @@ def main(argv: list[str] | None = None) -> int:
         p = sub.add_parser(name, help=help_)
         p.add_argument("run_id")
         p.add_argument("--phase", required=True, choices=[str(x) for x in Phase])
-        p.add_argument("--index", type=int, help="pod index (default: the first)")
+        p.add_argument("--index", type=int, default=0, help="pod index (default 0)")
+        p.add_argument(
+            "--source",
+            choices=collect_logs.SOURCES,
+            default="auto",
+            help="auto tries the live pod, then the archive, then Cloud Logging",
+        )
         if name == "logs":
             p.add_argument("--tail", type=int)
         p.set_defaults(func=func)
@@ -234,6 +252,7 @@ def main(argv: list[str] | None = None) -> int:
         settings_module.SettingsError,
         ClusterError,
         run.RunError,
+        collect_logs.LogsUnavailable,
     ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

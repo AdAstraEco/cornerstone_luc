@@ -122,3 +122,27 @@ def test_waiting_gives_up_at_the_deadline() -> None:
     with pytest.raises(run.RunError, match="still running"):
         run.wait_job(cluster, "j", timeout_s=250, poll_s=0, out=lambda _: None,
                      sleep=lambda _: None, clock=lambda: float(next(ticks)))  # fmt: skip
+
+
+def test_after_phase_runs_for_every_phase_and_a_failing_hook_does_not_fail_the_run(make_settings) -> None:  # type: ignore[no-untyped-def]
+    plan = make_plan(make_settings)
+    cluster = FakeCluster({p.job.name: [(0, 1, {"Complete"})] for p in plan.phases})
+    seen: list[str] = []
+
+    def hook(pp, final) -> None:  # type: ignore[no-untyped-def]
+        seen.append(str(pp.phase))
+        raise OSError("bucket unreachable")
+
+    lines: list[str] = []
+    ok = run.execute(plan, cluster, poll_s=0, out=lines.append, sleep=lambda _: None, after_phase=hook)
+    assert ok and seen == [str(p.phase) for p in plan.phases]
+    assert any("hook failed" in line for line in lines)
+
+
+def test_after_phase_also_runs_when_the_phase_failed(make_settings) -> None:  # type: ignore[no-untyped-def]
+    plan = make_plan(make_settings)
+    cluster = FakeCluster({plan.phases[0].job.name: [(0, 0, {"Failed"})]})
+    seen: list[str] = []
+    ok = run.execute(plan, cluster, poll_s=0, out=lambda _: None, sleep=lambda _: None,
+                     after_phase=lambda pp, final: seen.append(final.state))  # fmt: skip
+    assert not ok and seen == ["failed"]

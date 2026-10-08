@@ -260,12 +260,15 @@ def execute(
     out: collections.abc.Callable[[str], None] = print,
     sleep: collections.abc.Callable[[float], None] = time.sleep,
     clock: collections.abc.Callable[[], float] = time.monotonic,
+    after_phase: collections.abc.Callable[[PhasePlan, JobState], None] | None = None,
 ) -> bool:
     """Create each phase's Job in order and wait for it: the barrier. Resumable by run id.
 
     A Job that already exists with the same spec hash is adopted (a finished phase is skipped,
     a running one is waited for); with a different hash the run id was reused for a different
-    run, which stops here rather than guess. Returns False when a phase failed.
+    run, which stops here rather than guess. ``after_phase`` runs once a phase has ended,
+    pass or fail, while its pods still exist (to archive their logs); it never fails the run.
+    Returns False when a phase failed.
     """
     for pp in plan.phases:
         if pp.job is None:
@@ -294,6 +297,11 @@ def execute(
             sleep=sleep,
             clock=clock,
         )
+        if after_phase is not None:
+            try:
+                after_phase(pp, final)
+            except Exception as exc:
+                out(f"  (after-phase hook failed, the run goes on: {exc})")
         if final.state == "failed" or final.failed_indexes:
             out(f"{pp.phase}: FAILED (failed indexes: {final.failed_indexes or 'all'})")
             for pod in cluster.pods(plan.spec.run_id, str(pp.phase)):

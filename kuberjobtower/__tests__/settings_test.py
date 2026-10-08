@@ -8,6 +8,7 @@ from kuberjobtower.settings import Settings, SettingsError
 def test_defaults_and_derived_values(make_settings) -> None:  # type: ignore[no-untyped-def]
     s = make_settings()
     assert s.data_prefix == "cornerstone"
+    assert s.archive_root == "gs://bucket/cornerstone/control"
     assert s.max_parallelism == 16
     assert s.pool_allowed("ns-power-node-pool")
     assert not s.pool_allowed(

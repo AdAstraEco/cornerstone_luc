@@ -14,6 +14,8 @@ import re
 import typing
 
 # Loggers whose lines mark a step: the phase script, and export (which logs its own steps).
+# Pipeline-specific guesses, used only when the pod logs no step events of its own. In a
+# standalone kuber-job-tower these would come from the pipeline's descriptor.
 MARKERS = ("__main__", "jdluc.export")
 ZARR = re.compile(r"path_to_zarr=\S*?/([0-9a-f]+)\.zarr")
 
@@ -60,27 +62,59 @@ def parse(lines: typing.Iterable[str]) -> list[dict[str, typing.Any]]:
     return sorted(records, key=lambda r: r["_t"])
 
 
-def steps(records: list[dict[str, typing.Any]]) -> list[Step]:
-    """Marked steps (the phase script's own log lines) with the zarr writes inside them."""
-    if not records:
-        return []
+def _windows(
+    records: list[dict[str, typing.Any]],
+) -> list[tuple[str, datetime.datetime, datetime.datetime]]:
+    """(label, start, end) of each step: the pod's own step events if it logs any, else guessed."""
+    last = records[-1]["_t"]
+    events = [r for r in records if r.get("kind") == "step"]
+    if events:
+        # {"kind": "step", "event": "start" | "end", "name": ...}; a step with no end of its
+        # own ends where the next one starts
+        starts = [r for r in events if r.get("event") == "start"]
+        out = []
+        for i, mark in enumerate(starts):
+            end = next(
+                (
+                    r["_t"]
+                    for r in events
+                    if r.get("event") == "end"
+                    and r["name"] == mark["name"]
+                    and r["_t"] >= mark["_t"]
+                ),
+                starts[i + 1]["_t"] if i + 1 < len(starts) else last,
+            )
+            out.append((str(mark["name"]), mark["_t"], end))
+        return out
     marks = [
         r
         for r in records
         if r.get("logger") in MARKERS
         and not r["message"].startswith(("phase ", "Done", "Ingested "))
     ]
-    last = records[-1]["_t"]
-    if not marks:
-        return [Step("whole pod (no marked steps)", records[0]["_t"], last)]
+    return [
+        (
+            re.sub(r"\s+", " ", mark["message"]).strip(),
+            mark["_t"],
+            marks[i + 1]["_t"] if i + 1 < len(marks) else last,
+        )
+        for i, mark in enumerate(marks)
+    ]
+
+
+def steps(records: list[dict[str, typing.Any]]) -> list[Step]:
+    """Steps with the cached-stage zarr writes inside them."""
+    if not records:
+        return []
+    windows = _windows(records)
+    if not windows:
+        return [Step("whole pod (no marked steps)", records[0]["_t"], records[-1]["_t"])]
     out: list[Step] = []
-    for i, mark in enumerate(marks):
-        end = marks[i + 1]["_t"] if i + 1 < len(marks) else last
-        label = re.sub(r"\s+", " ", mark["message"]).strip()
-        out.append(Step(label, mark["_t"], end))
+    for label, start, end in windows:
+        out.append(Step(label, start, end))
         started: dict[str, datetime.datetime] = {}
         for r in records:
-            if not mark["_t"] <= r["_t"] <= end or r.get("logger") != "jdluc.storage":
+            if not start <= r["_t"] <= end or r.get("logger") != "jdluc.storage":
                 continue
             found = ZARR.search(r["message"])
             if not found:
