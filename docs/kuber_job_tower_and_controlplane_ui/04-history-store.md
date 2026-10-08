@@ -108,6 +108,8 @@ ______________________________________________________________________
 
 ## 5. Recommendation in detail
 
+**Built (8 Oct 2026, [PR #22](https://github.com/AdAstraEco/cornerstone_luc/pull/22)):** steps 4, 5, 6 and 7 of section 13 in a smaller form. The journal lives under `runs/<run_uid>/` of `KJT_ARCHIVE_ROOT` (not `<root>/<run_uid>/`), the local database at `KJT_HISTORY_DB`, one chunk is flushed per phase end because `submit` runs in the foreground, and the schema has `runs`, `jobs`, `job_tiles`, `pods` (with the heap peaks, which are what an OOM kill is about, next to the page-cache-inclusive ones), `samples`, `events`, `configs`, `log_objects`. Not built: `artifacts`, `artifact_uses`, `log_marks`, `alerts`, the pipeline-side hook (step 3), parquet bundles, snapshots. Verified live on the `yaroslav` namespace, including a rebuild from the journal alone.
+
 1. **Truth = write-once objects** under `KJT_HISTORY_ROOT` (v1 value: `gs://us-central1-maverick-yarosl-0b64509f-bucket/cornerstone/control/`; `file://.../.cache/runs` offline). Nothing in GCS is ever overwritten except by creating a *new* name.
 2. **Read model = SQLite** in `.cache/kuberjobtower/history.db` (override `KJT_HISTORY_DB`), built only by applying records. Schema version mismatch => rebuild from the journal (no Alembic).
 3. **Writers:** exactly one *collector* per observing machine (the process that drives/monitors a run: plan 01's driver or plan 02's monitor). It applies records to its own DB and flushes them as a journal chunk. UI and CLI processes only read (read-only connection) and call `sync()` for runs observed elsewhere.
