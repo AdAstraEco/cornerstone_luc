@@ -143,6 +143,18 @@ class PodState:
     created: datetime.datetime | None = None
     finished: datetime.datetime | None = None  # when the container ended
     restarts: int = 0
+    cpu_request_m: int | None = None
+    memory_request_bytes: int | None = None
+    scratch_bytes: int | None = None  # the per-pod volume, if any
+
+
+@dataclasses.dataclass(frozen=True)
+class NodeInfo:
+    name: str
+    instance_type: str | None
+    pool: str | None
+    allocatable_cpu_m: int | None
+    allocatable_memory_bytes: int | None
 
 
 @dataclasses.dataclass(frozen=True)

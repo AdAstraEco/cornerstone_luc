@@ -8,11 +8,12 @@ import typing
 from lightkube import ApiError, Client, KubeConfig
 from lightkube.core.exceptions import ConfigError
 from lightkube.resources.batch_v1 import Job
-from lightkube.resources.core_v1 import Event, Pod
+from lightkube.resources.core_v1 import Event, Node, Pod
 from lightkube.types import CascadeType
 
 from kuberjobtower import manifest
-from kuberjobtower.models import JobState, PodEvent, PodState
+from kuberjobtower import quantity
+from kuberjobtower.models import JobState, NodeInfo, PodEvent, PodState
 from kuberjobtower.settings import Settings
 
 RUN_LABEL = "run-id"
@@ -75,6 +76,22 @@ class Cluster:
             yield from self._client.log(pod, tail_lines=tail, newlines=False)
         except ApiError as exc:
             raise ClusterError(f"logs {pod}: {exc}") from exc
+
+    def node(self, name: str) -> NodeInfo | None:
+        """A node's machine type, pool and allocatable resources (None once it has scaled down)."""
+        try:
+            node = self._client.get(Node, name)
+        except ApiError:
+            return None
+        labels = (node.metadata.labels if node.metadata else None) or {}
+        alloc = (node.status.allocatable if node.status else None) or {}
+        return NodeInfo(
+            name=name,
+            instance_type=labels.get("node.kubernetes.io/instance-type"),
+            pool=labels.get("cloud.google.com/gke-nodepool"),
+            allocatable_cpu_m=quantity.millicores(alloc["cpu"]) if "cpu" in alloc else None,
+            allocatable_memory_bytes=quantity.bytes_(alloc["memory"]) if "memory" in alloc else None,
+        )
 
     def events(self, run_id: str) -> list[PodEvent]:
         """The namespace's events about this run's pods, oldest first (Kubernetes keeps ~1 h)."""
@@ -146,6 +163,14 @@ def _pod_state(pod: Pod) -> PodState:
         if cs.state and cs.state.terminated:
             terminated = cs.state.terminated
     index = (meta.labels or {}).get(INDEX_LABEL)
+    containers = (spec.containers if spec else None) or []
+    requests = (containers[0].resources.requests if containers and containers[0].resources else None) or {}
+    scratch = None
+    for volume in (spec.volumes if spec else None) or []:
+        if volume.ephemeral and volume.ephemeral.volumeClaimTemplate:
+            claim = volume.ephemeral.volumeClaimTemplate.spec.resources
+            if claim and claim.requests and "storage" in claim.requests:
+                scratch = quantity.bytes_(claim.requests["storage"])
     return PodState(
         name=meta.name,
         index=int(index) if index is not None else None,
@@ -158,4 +183,7 @@ def _pod_state(pod: Pod) -> PodState:
         created=meta.creationTimestamp,  # type: ignore[arg-type]
         finished=terminated.finishedAt if terminated else None,  # type: ignore[arg-type]
         restarts=restarts,
+        cpu_request_m=quantity.millicores(requests["cpu"]) if "cpu" in requests else None,
+        memory_request_bytes=quantity.bytes_(requests["memory"]) if "memory" in requests else None,
+        scratch_bytes=scratch,
     )

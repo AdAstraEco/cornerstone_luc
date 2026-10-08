@@ -7,7 +7,9 @@ import sys
 from kuberjobtower import aoi, manifest, report, run
 from kuberjobtower import settings as settings_module
 from kuberjobtower.cluster import Cluster, ClusterError
+from kuberjobtower.collect import cost as collect_cost
 from kuberjobtower.collect import events as collect_events
+from kuberjobtower.collect import monitoring
 from kuberjobtower.collect import logs as collect_logs
 from kuberjobtower.collect import pods as collect_pods
 from kuberjobtower.collect import verdicts
@@ -112,9 +114,9 @@ def cmd_submit(args: argparse.Namespace) -> int:
         run_id = plan.spec.run_id
         events = cluster.events(run_id)
         collect_events.archive(settings.archive_root, run_id, events)
-        collect_pods.archive(
-            settings.archive_root, run_id, str(pp.phase), cluster.pods(run_id, str(pp.phase)), events
-        )
+        pods = cluster.pods(run_id, str(pp.phase))
+        nodes = {p.node: cluster.node(p.node) for p in pods if p.node}
+        collect_pods.archive(settings.archive_root, run_id, str(pp.phase), pods, events, nodes)
         print(f"  archived {len(stored)} pod log(s), pod records and events under {settings.archive_root}")
 
     return 0 if run.execute(plan, cluster, poll_s=args.poll, after_phase=archive) else 1
@@ -168,8 +170,51 @@ def cmd_logs(args: argparse.Namespace) -> int:
 
 
 def cmd_report(args: argparse.Namespace) -> int:
-    print(report.table(_lines(args)))
+    lines = _lines(args)
+    print(report.table(lines))
+    # the kubelet's view is the number eviction is decided on; a failed lookup only drops this line
+    records = report.parse(lines)
+    pod = next((r["pod"] for r in records if "pod" in r), None)
+    if pod:
+        settings = settings_module.Settings.load()
+        try:
+            view = monitoring.kubelet_view(
+                settings.gcp_project, settings.namespace, pod, records[0]["_t"], records[-1]["_t"]
+            )
+            print(view.line())
+        except Exception as exc:
+            print(f"(kubelet view unavailable: {exc})", file=sys.stderr)
     return 0
+
+
+def cmd_cost(args: argparse.Namespace) -> int:
+    settings = settings_module.Settings.load()
+    by_phase = collect_pods.read_archive(settings.archive_root, args.run_id)
+    if not by_phase:
+        print(f"no archived pod records for run {args.run_id} (only runs submitted with this version have them)")
+        return 1
+    print(f"{'phase':14} {'pods':>4} {'pending':>8} {'ran':>8} {'machine':14} {'share':>5} {'USD':>7}")
+    grand, unknown = 0.0, 0
+    for phase, pods in by_phase.items():
+        usd = sum((float(p["cost_usd"]) for p in pods if p.get("cost_usd") is not None), 0.0)  # type: ignore[arg-type]
+        unknown += sum(p.get("cost_usd") is None for p in pods)
+        grand += usd
+        first = pods[0]
+        print(
+            f"{phase:14} {len(pods):>4} {_minutes(first.get('pending_s')):>8} {_minutes(first.get('run_s')):>8} "
+            f"{str(first.get('machine_type') or '-'):14} {first.get('node_share') or '-':>5} {usd:>7.2f}"
+        )
+    print(f"{'total':14} {'':>4} {'':>8} {'':>8} {'':14} {'':>5} {grand:>7.2f}")
+    print(
+        f"approximate: on-demand list price as of {collect_cost.RATES_AS_OF}, node share by request, "
+        "no idle tail before a node is removed, no discounts"
+        + (f"; {unknown} pod(s) without an estimate" if unknown else "")
+    )
+    return 0
+
+
+def _minutes(seconds: object) -> str:
+    return f"{float(seconds) / 60:.1f}m" if isinstance(seconds, int | float) else "-"  # type: ignore[arg-type]
 
 
 def cmd_events(args: argparse.Namespace) -> int:
@@ -273,6 +318,9 @@ def main(argv: list[str] | None = None) -> int:
         if name == "logs":
             p.add_argument("--tail", type=int)
         p.set_defaults(func=func)
+    co = sub.add_parser("cost", help="approximate cost of a run, from its archived pod records")
+    co.add_argument("run_id")
+    co.set_defaults(func=cmd_cost)
     ev = sub.add_parser("events", help="Kubernetes events about a run's pods (kept after the pods)")
     ev.add_argument("run_id")
     ev.add_argument("--phase", choices=[str(x) for x in Phase])
