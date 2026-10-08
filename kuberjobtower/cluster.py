@@ -5,20 +5,32 @@ import datetime
 import re
 import typing
 
+import yaml
 from lightkube import ApiError, Client, KubeConfig
 from lightkube.core.exceptions import ConfigError
+from lightkube.generic_resource import create_namespaced_resource
 from lightkube.resources.batch_v1 import Job
-from lightkube.resources.core_v1 import Event, Node, Pod
+from lightkube.resources.core_v1 import ConfigMap, Event, Node, Pod
 from lightkube.types import CascadeType
 
-from kuberjobtower import manifest
-from kuberjobtower import quantity
-from kuberjobtower.models import JobState, NodeInfo, PodEvent, PodState
+from kuberjobtower import manifest, quantity
+from kuberjobtower.models import (
+    JobState,
+    NodeInfo,
+    PodEvent,
+    PodState,
+    PodUsage,
+    PoolInfo,
+)
 from kuberjobtower.settings import Settings
 
 RUN_LABEL = "run-id"
 MANAGED = "app.kubernetes.io/managed-by=kuber-job-tower"
 INDEX_LABEL = "batch.kubernetes.io/job-completion-index"
+POOL_LABEL = "cloud.google.com/gke-nodepool"
+PodMetrics = create_namespaced_resource(
+    "metrics.k8s.io", "v1beta1", "PodMetrics", "pods"
+)
 
 
 class ClusterError(RuntimeError):
@@ -89,8 +101,12 @@ class Cluster:
             name=name,
             instance_type=labels.get("node.kubernetes.io/instance-type"),
             pool=labels.get("cloud.google.com/gke-nodepool"),
-            allocatable_cpu_m=quantity.millicores(alloc["cpu"]) if "cpu" in alloc else None,
-            allocatable_memory_bytes=quantity.bytes_(alloc["memory"]) if "memory" in alloc else None,
+            allocatable_cpu_m=quantity.millicores(alloc["cpu"])
+            if "cpu" in alloc
+            else None,
+            allocatable_memory_bytes=quantity.bytes_(alloc["memory"])
+            if "memory" in alloc
+            else None,
         )
 
     def events(self, run_id: str) -> list[PodEvent]:
@@ -105,9 +121,65 @@ class Cluster:
                 message=e.message or "",
             )
             for e in self._client.list(Event)
-            if e.involvedObject.kind == "Pod" and mine.search(e.involvedObject.name or "")
+            if e.involvedObject.kind == "Pod"
+            and mine.search(e.involvedObject.name or "")
         ]
         return sorted(found, key=lambda e: e.time)
+
+    def pod_usage(self, run_id: str | None = None) -> dict[str, PodUsage]:
+        """Current CPU and working set per pod name, from metrics-server (about a minute behind)."""
+        try:
+            found = list(self._client.list(PodMetrics, labels=_labels(run_id)))
+        except ApiError as exc:
+            raise ClusterError(f"metrics: {exc}") from exc
+        out: dict[str, PodUsage] = {}
+        for m in found:
+            assert m.metadata and m.metadata.name
+            containers = m["containers"]
+            out[m.metadata.name] = PodUsage(
+                pod=m.metadata.name,
+                cpu_m=sum(quantity.millicores(c["usage"]["cpu"]) for c in containers),
+                memory_bytes=sum(
+                    quantity.bytes_(c["usage"]["memory"]) for c in containers
+                ),
+            )
+        return out
+
+    def pools(self, names: collections.abc.Iterable[str]) -> list[PoolInfo]:
+        """The named pools: ready nodes (none while a pool is at zero), and the autoscaler's
+        size range from its status ConfigMap, which also covers pools with no node."""
+        groups = _autoscaler_groups(self._client)
+        by_pool: dict[str, list[Node]] = {name: [] for name in names}
+        for node in self._client.list(Node):
+            pool = ((node.metadata.labels if node.metadata else None) or {}).get(
+                POOL_LABEL
+            )
+            if pool in by_pool:
+                by_pool[pool].append(node)
+        out = []
+        for name, mine in by_pool.items():
+            first = mine[0] if mine else None
+            labels = (first.metadata.labels if first and first.metadata else None) or {}
+            alloc = (first.status.allocatable if first and first.status else None) or {}
+            group = next((g for g in groups if _group_of(name, g.get("name", ""))), {})
+            health = group.get("health", {})
+            out.append(
+                PoolInfo(
+                    name=name,
+                    machine_type=labels.get("node.kubernetes.io/instance-type"),
+                    nodes=len(mine),
+                    allocatable_cpu_m=quantity.millicores(alloc["cpu"])
+                    if "cpu" in alloc
+                    else None,
+                    allocatable_memory_bytes=quantity.bytes_(alloc["memory"])
+                    if "memory" in alloc
+                    else None,
+                    target=health.get("cloudProviderTarget"),
+                    min_size=group.get("minSize", health.get("minSize")),
+                    max_size=group.get("maxSize", health.get("maxSize")),
+                )
+            )
+        return out
 
     def delete_run(self, run_id: str) -> list[str]:
         """Delete this run's Jobs (and, by cascade, their pods). Only objects we created."""
@@ -115,6 +187,23 @@ class Cluster:
         for name in names:
             self._client.delete(Job, name, cascade=CascadeType.BACKGROUND)
         return names
+
+
+def _autoscaler_groups(client: Client) -> list[dict[str, typing.Any]]:
+    """The autoscaler's node groups; empty when its ConfigMap is not readable (it is optional context)."""
+    try:
+        cm = client.get(ConfigMap, "cluster-autoscaler-status", namespace="kube-system")
+        status = yaml.safe_load((cm.data or {}).get("status", "")) or {}
+    except ApiError, yaml.YAMLError:
+        return []
+    return list(status.get("nodeGroups", []))
+
+
+def _group_of(pool: str, group_url: str) -> bool:
+    """GKE names a pool's instance group ``gke-<cluster>-<pool cut to 16 chars>-<8 hex>-grp``."""
+    return (
+        re.search(rf"-{re.escape(pool[:16])}-[0-9a-f]{{8}}-grp$", group_url) is not None
+    )
 
 
 def _labels(run_id: str | None) -> dict[str, typing.Any]:
@@ -165,7 +254,11 @@ def _pod_state(pod: Pod) -> PodState:
             terminated = cs.state.terminated
     index = (meta.labels or {}).get(INDEX_LABEL)
     containers = (spec.containers if spec else None) or []
-    requests = (containers[0].resources.requests if containers and containers[0].resources else None) or {}
+    requests = (
+        containers[0].resources.requests
+        if containers and containers[0].resources
+        else None
+    ) or {}
     scratch = None
     for volume in (spec.volumes if spec else None) or []:
         if volume.ephemeral and volume.ephemeral.volumeClaimTemplate:
@@ -184,7 +277,11 @@ def _pod_state(pod: Pod) -> PodState:
         created=meta.creationTimestamp,  # type: ignore[arg-type]
         finished=terminated.finishedAt if terminated else None,  # type: ignore[arg-type]
         restarts=restarts,
-        cpu_request_m=quantity.millicores(requests["cpu"]) if "cpu" in requests else None,
-        memory_request_bytes=quantity.bytes_(requests["memory"]) if "memory" in requests else None,
+        cpu_request_m=quantity.millicores(requests["cpu"])
+        if "cpu" in requests
+        else None,
+        memory_request_bytes=quantity.bytes_(requests["memory"])
+        if "memory" in requests
+        else None,
         scratch_bytes=scratch,
     )

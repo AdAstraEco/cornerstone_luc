@@ -2,6 +2,7 @@
 against any ``ClusterAPI`` (``execute``)."""
 
 import collections.abc
+import dataclasses
 import math
 import re
 import time
@@ -10,6 +11,7 @@ import typing
 from kuberjobtower import manifest, preflight
 from kuberjobtower.collect import verdicts
 from kuberjobtower.models import (
+    Aoi,
     JobSpec,
     JobState,
     PhasePlan,
@@ -98,7 +100,9 @@ def aoi_slug(spec: RunSpec) -> str:
     return "-".join(parts)
 
 
-def phase_args(spec: RunSpec, phase: Phase) -> tuple[str, ...]:
+def phase_args(
+    spec: RunSpec, phase: Phase, tiles: tuple[str, ...] = ()
+) -> tuple[str, ...]:
     """The ``infra/run_phase.py`` argv. ``--methodology-name`` goes to every phase, identically:
     it picks the datasets ingest fetches and is a cache-key argument of the attribute legs, so
     compute and reduce disagreeing would silently recompute the AOI in the reduce pod."""
@@ -107,8 +111,8 @@ def phase_args(spec: RunSpec, phase: Phase) -> tuple[str, ...]:
         args += ["--concurrency", str(spec.ingest_concurrency)]
     if phase == Phase.COMPUTE and spec.skip_ingest:
         args.append("--skip-ingest")
-    if spec.aoi.tiles and phase.is_per_tile:
-        args += ["--tile-ids", ",".join(spec.aoi.tiles)]
+    if tiles and phase.is_per_tile:
+        args += ["--tile-ids", ",".join(tiles)]
     if (
         phase != Phase.INGEST_WORLD
     ):  # ingest-world writes the boundaries; it needs no AOI
@@ -116,7 +120,14 @@ def phase_args(spec: RunSpec, phase: Phase) -> tuple[str, ...]:
     return tuple(args)
 
 
-def job_for(settings: Settings, spec: RunSpec, phase: Phase) -> JobSpec:
+def job_for(
+    settings: Settings,
+    spec: RunSpec,
+    phase: Phase,
+    tiles: tuple[str, ...] | None = None,
+) -> JobSpec:
+    """``tiles`` are those resolved from the countries during a run; the Job names and labels
+    keep coming from ``spec``, so every phase of one run is named alike."""
     base = DEFAULT_SPECS[phase]
     over = spec.overrides.get(phase, {})
     pools = {PoolRole.HEAVY: settings.pool_heavy, PoolRole.LIGHT: settings.pool_light}
@@ -133,7 +144,7 @@ def job_for(settings: Settings, spec: RunSpec, phase: Phase) -> JobSpec:
             f"{phase}: secret {secret!r} is not one of the configured Secrets"
         )
     memory = over.get("memory", base.memory)
-    tiles = spec.aoi.tiles or ()
+    tiles = (spec.aoi.tiles if tiles is None else tiles) or ()
     completions = len(tiles) if phase.is_per_tile else 1
     parallelism = min(spec.parallelism, completions) if phase.is_per_tile else 1
     if phase.is_per_tile and not tiles:
@@ -156,7 +167,7 @@ def job_for(settings: Settings, spec: RunSpec, phase: Phase) -> JobSpec:
         parallelism=parallelism,
         tiles=tiles if phase.is_per_tile else (),
         command=COMMAND,
-        args=phase_args(spec, phase),
+        args=phase_args(spec, phase, tiles),
         resources=ResourceSpec(
             cpu_request=over.get("cpu", base.cpu_request),
             cpu_limit=over.get("cpu-limit", base.cpu_limit),
@@ -213,6 +224,55 @@ class RunError(RuntimeError):
     pass
 
 
+def lazy_tiles(
+    settings: Settings,
+    spec: RunSpec,
+    tiles_for: collections.abc.Callable[[tuple[str, ...]], tuple[str, ...]],
+    *,
+    allow_foreign_pool: bool = False,
+    i_know: bool = False,
+    out: collections.abc.Callable[[str], None] = print,
+) -> collections.abc.Callable[[PhasePlan], PhasePlan]:
+    """Plan a per-tile phase that ``plan`` could not, once the countries' tiles can be read.
+
+    The tiles are looked up on the first call and kept, so every phase of the run gets the same
+    list. The checks ``plan`` runs on an explicit tile list run here on the resolved one.
+    """
+    resolved: tuple[str, ...] | None = None
+
+    def resolve(pp: PhasePlan) -> PhasePlan:
+        nonlocal resolved
+        if resolved is None:
+            resolved = tuple(
+                sorted(set(tiles_for(spec.aoi.iso_3166s)))
+            )  # pod i runs tiles[i]
+            if not resolved:
+                raise RunError(
+                    f"countries {', '.join(spec.aoi.iso_3166s)} touch no tile of the grid"
+                )
+            out(
+                f"countries {', '.join(spec.aoi.iso_3166s)} -> {len(resolved)} tile(s): {', '.join(resolved)}"
+            )
+        job = job_for(settings, spec, pp.phase, resolved)
+        checks = preflight.check(
+            settings,
+            dataclasses.replace(spec, aoi=Aoi(resolved, spec.aoi.iso_3166s)),
+            [job],
+            allow_foreign_pool=allow_foreign_pool,
+        )
+        errors = [c.message for c in checks if c.severity == "error"]
+        if errors:
+            raise RunError("; ".join(errors))
+        if len(resolved) >= settings.confirm_tiles and not i_know:
+            raise RunError(
+                f"{len(resolved)} tiles is at or above KJT_CONFIRM_TILES={settings.confirm_tiles}: "
+                "ingest-world has run, resubmit with --i-know to go on"
+            )
+        return PhasePlan(pp.phase, job)
+
+    return resolve
+
+
 def wait_job(
     cluster: ClusterAPI,
     name: str,
@@ -256,7 +316,7 @@ class ClusterAPI(typing.Protocol):
     def events(self, run_id: str) -> list[PodEvent]: ...
 
 
-def _safe_events(cluster: "ClusterAPI", run_id: str) -> list[PodEvent]:
+def _safe_events(cluster: ClusterAPI, run_id: str) -> list[PodEvent]:
     try:
         return cluster.events(run_id)
     except Exception:  # events are context for the failure, never a reason to hide it
@@ -272,6 +332,7 @@ def execute(
     sleep: collections.abc.Callable[[float], None] = time.sleep,
     clock: collections.abc.Callable[[], float] = time.monotonic,
     after_phase: collections.abc.Callable[[PhasePlan, JobState], None] | None = None,
+    resolve: collections.abc.Callable[[PhasePlan], PhasePlan] | None = None,
 ) -> bool:
     """Create each phase's Job in order and wait for it: the barrier. Resumable by run id.
 
@@ -279,9 +340,12 @@ def execute(
     a running one is waited for); with a different hash the run id was reused for a different
     run, which stops here rather than guess. ``after_phase`` runs once a phase has ended,
     pass or fail, while its pods still exist (to archive their logs); it never fails the run.
+    ``resolve`` plans a phase whose tiles were not known at submit time (see ``lazy_tiles``).
     Returns False when a phase failed.
     """
     for pp in plan.phases:
+        if pp.job is None and resolve is not None:
+            pp = resolve(pp)
         if pp.job is None:
             raise RunError(f"{pp.phase}: {pp.note}; give --tile for a real run")
         job = manifest.build_job(pp.job)
@@ -322,9 +386,13 @@ def execute(
                 )
                 for v in verdicts.pod_verdicts(pod, events):
                     out(f"    {v.severity.upper()} {v.code}: {v.message}")
-                warnings = [e for e in events if e.pod == pod.name and e.type == "Warning"]
+                warnings = [
+                    e for e in events if e.pod == pod.name and e.type == "Warning"
+                ]
                 # scheduling hiccups are routine; show them only when nothing else was reported
-                for event in ([e for e in warnings if e.reason != "FailedScheduling"] or warnings)[-3:]:
+                for event in (
+                    [e for e in warnings if e.reason != "FailedScheduling"] or warnings
+                )[-3:]:
                     out(f"    event {event.reason}: {event.message[:200]}")
             for v in verdicts.job_verdicts(final):
                 out(f"  {v.severity.upper()} {v.code}: {v.message}")

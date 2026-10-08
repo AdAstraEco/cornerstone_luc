@@ -40,7 +40,9 @@ class RunSpec:
     image: str | None = None
     ttl_s: int = 1800
     fail_fast: bool = False
-    run_uid: str = ""  # unique across runs; "" for a plan that never touches the cluster
+    run_uid: str = (
+        ""  # unique across runs; "" for a plan that never touches the cluster
+    )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -169,3 +171,26 @@ class PodEvent:
     type: str  # Normal | Warning
     pod: str
     message: str
+
+
+@dataclasses.dataclass(frozen=True)
+class PoolInfo:
+    """One node pool as the cluster shows it: live nodes, and the autoscaler's range when readable."""
+
+    name: str
+    machine_type: str | None
+    nodes: int  # registered and ready
+    allocatable_cpu_m: int | None  # of one node
+    allocatable_memory_bytes: int | None
+    target: int | None = None  # the autoscaler's target size
+    min_size: int | None = None
+    max_size: int | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class PodUsage:
+    """The metrics API's reading of one pod: the working set the kubelet decides eviction on."""
+
+    pod: str
+    cpu_m: int
+    memory_bytes: int
