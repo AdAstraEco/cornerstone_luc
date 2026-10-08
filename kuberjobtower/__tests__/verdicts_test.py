@@ -135,13 +135,13 @@ def test_a_pod_pending_for_ten_minutes_with_no_scale_up_is_stalled() -> None:
     assert verdicts.pod_verdicts(recent, [failed], now=now) == []
 
 
-def test_deadline_risk_and_retry_burned() -> None:
+def test_deadline_risk_and_index_failed() -> None:
     now = datetime.datetime(2026, 10, 6, 12, 0, tzinfo=UTC)
     running = pod("p", phase="Running", started=now - datetime.timedelta(minutes=50))
     assert codes(verdicts.pod_verdicts(running, [], now=now, deadline_s=3600)) == ["deadline_risk"]
     assert verdicts.pod_verdicts(running, [], now=now, deadline_s=7200) == []
     job = JobState("j", "compute", "r", 3, 0, 2, 1, "1", None, frozenset({"Failed"}))
-    assert codes(verdicts.job_verdicts(job)) == ["retry_burned"]
+    assert codes(verdicts.job_verdicts(job)) == ["index_failed"]
 
 
 def test_events_roundtrip_and_archive_merge(tmp_path: pathlib.Path) -> None:

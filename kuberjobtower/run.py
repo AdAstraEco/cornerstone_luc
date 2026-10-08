@@ -321,7 +321,9 @@ def execute(
                 )
                 for v in verdicts.pod_verdicts(pod, events):
                     out(f"    {v.severity.upper()} {v.code}: {v.message}")
-                for event in [e for e in events if e.pod == pod.name and e.type == "Warning"][-3:]:
+                warnings = [e for e in events if e.pod == pod.name and e.type == "Warning"]
+                # scheduling hiccups are routine; show them only when nothing else was reported
+                for event in ([e for e in warnings if e.reason != "FailedScheduling"] or warnings)[-3:]:
                     out(f"    event {event.reason}: {event.message[:200]}")
             for v in verdicts.job_verdicts(final):
                 out(f"  {v.severity.upper()} {v.code}: {v.message}")

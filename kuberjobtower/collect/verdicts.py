@@ -220,9 +220,10 @@ def job_verdicts(job: JobState) -> list[Verdict]:
     if job.failed_indexes:
         return [
             Verdict(
-                "retry_burned",
+                "index_failed",
                 "crit",
-                f"index(es) {job.failed_indexes} failed and used up their retries",
+                f"index(es) {job.failed_indexes} failed for good: out of retries, or failed at "
+                "once by the failure policy (an OOM kill is not retried)",
             )
         ]
     return []
