@@ -43,6 +43,8 @@ class Settings:
     data_prefix: str
     # where a phase's pod logs are archived once it ends; any fsspec URI
     archive_root: str
+    # the local, rebuildable read model of the run history
+    history_db: str
     # guardrails
     max_parallelism: int
     max_tiles: int
@@ -118,6 +120,7 @@ class Settings:
             bucket=bucket,
             data_prefix=data_prefix,
             archive_root=get("ARCHIVE_ROOT", f"gs://{bucket}/{data_prefix}/control") or "",
+            history_db=get("HISTORY_DB", ".cache/kuberjobtower/history.db") or "",
             max_parallelism=number("MAX_PARALLELISM", 16),
             max_tiles=number("MAX_TILES", 60),
             max_completions_per_job=number("MAX_COMPLETIONS_PER_JOB", 10000),

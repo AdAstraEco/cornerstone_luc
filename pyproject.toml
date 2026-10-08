@@ -164,3 +164,17 @@ ignore_imports = [
     "kuberjobtower.manifest -> lightkube",
     "kuberjobtower.cluster -> lightkube",
 ]
+
+[[tool.importlinter.contracts]]
+name = "The run history depends on neither the cluster layer nor the collectors"
+type = "forbidden"
+source_modules = [
+    "kuberjobtower.history",
+]
+forbidden_modules = [
+    "kuberjobtower.cluster",
+    "kuberjobtower.manifest",
+    "kuberjobtower.run",
+    "kuberjobtower.collect",
+    "lightkube",
+]

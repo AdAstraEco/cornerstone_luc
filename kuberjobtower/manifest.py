@@ -19,6 +19,7 @@ ANNOTATION_PREFIX = "cornerstone.adastra.eco/"
 SPEC_HASH = ANNOTATION_PREFIX + "spec-hash"
 TILES = ANNOTATION_PREFIX + "tiles"
 IMAGE = ANNOTATION_PREFIX + "image"
+RUN_UID = ANNOTATION_PREFIX + "run-uid"
 CONTAINER = "phase"
 NODEPOOL_LABEL = "cloud.google.com/gke-nodepool"
 
@@ -150,6 +151,8 @@ def build_job(spec: JobSpec) -> Job:
         ),
     )
     assert job.metadata and job.metadata.annotations is not None
+    if spec.run_uid:
+        job.metadata.annotations[RUN_UID] = spec.run_uid
     if spec.tiles:
         job.metadata.annotations[TILES] = ",".join(spec.tiles)
     job.metadata.annotations[SPEC_HASH] = spec_hash(job)

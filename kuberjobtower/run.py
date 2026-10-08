@@ -176,6 +176,7 @@ def job_for(settings: Settings, spec: RunSpec, phase: Phase) -> JobSpec:
         retries_per_index=int(over.get("retries", base.retries_per_index)),
         fail_index_on_oom=base.fail_index_on_oom,
         labels=labels,
+        run_uid=spec.run_uid,
     )
 
 

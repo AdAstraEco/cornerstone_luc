@@ -138,6 +138,7 @@ def _job_state(job: Job) -> JobState:
         failed=(status.failed if status else 0) or 0,
         failed_indexes=(status.failedIndexes if status else "") or "",
         spec_hash=(meta.annotations or {}).get(manifest.SPEC_HASH),
+        run_uid=(meta.annotations or {}).get(manifest.RUN_UID, ""),
         conditions=frozenset(
             c.type
             for c in (status.conditions if status else None) or []

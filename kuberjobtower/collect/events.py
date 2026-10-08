@@ -111,13 +111,14 @@ def events_for(
     namespace: str,
     archive_root: str,
     run_id: str,
+    archive_key: str | None = None,
     source: str = "auto",
     cloud_session: typing.Any = None,
 ) -> tuple[str, list[PodEvent]]:
     """The first source that has events for the run, as (source name, events)."""
     if source in ("auto", "pod") and (found := cluster.events(run_id)):
         return "cluster", found
-    if source in ("auto", "archive") and (found := read_archive(archive_root, run_id)):
+    if source in ("auto", "archive") and (found := read_archive(archive_root, archive_key or run_id)):
         return "archive", found
     if source in ("auto", "cloud") and (
         found := cloud_events(project, namespace, run_id, session=cloud_session)

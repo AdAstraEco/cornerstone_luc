@@ -40,6 +40,7 @@ class RunSpec:
     image: str | None = None
     ttl_s: int = 1800
     fail_fast: bool = False
+    run_uid: str = ""  # unique across runs; "" for a plan that never touches the cluster
 
 
 @dataclasses.dataclass(frozen=True)
@@ -75,6 +76,7 @@ class JobSpec:
     retries_per_index: int
     fail_index_on_oom: bool
     labels: collections.abc.Mapping[str, str]
+    run_uid: str = ""
 
 
 Severity = typing.Literal["error", "warning"]
@@ -119,6 +121,7 @@ class JobState:
     failed_indexes: str
     spec_hash: str | None
     conditions: frozenset[str]
+    run_uid: str = ""
 
     @property
     def state(self) -> str:

@@ -2,6 +2,7 @@
 
 import argparse
 import datetime
+import sqlite3
 import sys
 
 from kuberjobtower import aoi, manifest, report, run
@@ -12,6 +13,10 @@ from kuberjobtower.collect import events as collect_events
 from kuberjobtower.collect import monitoring
 from kuberjobtower.collect import logs as collect_logs
 from kuberjobtower.collect import pods as collect_pods
+from kuberjobtower.collect.recorder import Recorder
+from kuberjobtower.history import db as history_db
+from kuberjobtower.history import queries as history_queries
+from kuberjobtower.history import records as history_records
 from kuberjobtower.collect import verdicts
 from kuberjobtower.models import Aoi, JobState, PhasePlan, PodEvent, RunPlan, RunSpec
 from kuberjobtower.phases import Phase
@@ -55,7 +60,9 @@ def cmd_doctor(_: argparse.Namespace) -> int:
     return 0
 
 
-def build_plan(args: argparse.Namespace, settings: settings_module.Settings) -> RunPlan:
+def build_plan(
+    args: argparse.Namespace, settings: settings_module.Settings, run_uid: str = ""
+) -> RunPlan:
     methodologies = aoi.methodology_names()
     if args.methodology_name not in methodologies:
         raise ValueError(
@@ -78,6 +85,7 @@ def build_plan(args: argparse.Namespace, settings: settings_module.Settings) -> 
         image=args.image,
         ttl_s=run.parse_duration(args.ttl),
         fail_fast=args.fail_fast,
+        run_uid=run_uid,
     )
     return run.plan(settings, spec, allow_foreign_pool=args.allow_foreign_pool)
 
@@ -106,25 +114,47 @@ def cmd_submit(args: argparse.Namespace) -> int:
         return 2
     print()
     cluster = Cluster(settings)
+    # a resumed run keeps the uid its Jobs already carry; a new run gets a fresh one
+    run_uid = next((j.run_uid for j in cluster.jobs(args.run_id) if j.run_uid), "") or history_records.new_run_uid()
+    plan = build_plan(args, settings, run_uid)
+    print(f"run {run_uid}  (history: {settings.archive_root}/runs/{run_uid})")
+    recorder = Recorder(settings, cluster, plan, run_uid)
+    recorder.start()
 
-    def archive(pp: PhasePlan, _: JobState) -> None:
-        stored = collect_logs.archive_phase(
-            cluster, settings.archive_root, plan.spec.run_id, str(pp.phase)
-        )
-        run_id = plan.spec.run_id
-        events = cluster.events(run_id)
-        collect_events.archive(settings.archive_root, run_id, events)
-        pods = cluster.pods(run_id, str(pp.phase))
-        nodes = {p.node: cluster.node(p.node) for p in pods if p.node}
-        collect_pods.archive(settings.archive_root, run_id, str(pp.phase), pods, events, nodes)
-        print(f"  archived {len(stored)} pod log(s), pod records and events under {settings.archive_root}")
+    def record(pp: PhasePlan, final: JobState) -> None:
+        for note in recorder.after_phase(pp, final):
+            print(f"  {note}")
 
-    return 0 if run.execute(plan, cluster, poll_s=args.poll, after_phase=archive) else 1
+    ok = False
+    try:
+        ok = run.execute(plan, cluster, poll_s=args.poll, after_phase=record)
+    except BaseException:
+        recorder.finish(False)
+        raise
+    recorder.finish(ok)
+    return 0 if ok else 1
+
+
+def _resolve(settings: settings_module.Settings, text: str) -> tuple[str, str]:
+    """(run id, history key) for a run id or run uid; runs from before the history store use the id."""
+    db = history_db.open_store(settings.history_db)
+    try:
+        row = history_queries.resolve_run(db, text)
+        if row is None:  # maybe recorded on another machine
+            history_db.sync(db, settings.archive_root)
+            row = history_queries.resolve_run(db, text)
+    except Exception:
+        row = None
+    finally:
+        db.close()
+    return (row["run_id"], row["run_uid"]) if row else (text, text)
 
 
 def cmd_status(args: argparse.Namespace) -> int:
-    cluster = Cluster(settings_module.Settings.load())
-    jobs = cluster.jobs(args.run_id)
+    settings = settings_module.Settings.load()
+    cluster = Cluster(settings)
+    run_id = _resolve(settings, args.run_id)[0] if args.run_id else None
+    jobs = cluster.jobs(run_id)
     if not jobs:
         print("no kuberjobtower Jobs" + (f" for run {args.run_id}" if args.run_id else ""))
         return 0
@@ -148,12 +178,14 @@ def cmd_status(args: argparse.Namespace) -> int:
 def _lines(args: argparse.Namespace, tail: int | None = None) -> list[str]:
     """The pod's log lines from the first source that has them, naming it on stderr."""
     settings = settings_module.Settings.load()
+    run_id, key = _resolve(settings, args.run_id)
     source, lines = collect_logs.lines_for(
         cluster=Cluster(settings),
         project=settings.gcp_project,
         namespace=settings.namespace,
         archive_root=settings.archive_root,
-        run_id=args.run_id,
+        run_id=run_id,
+        archive_key=key,
         phase=args.phase,
         index=args.index,
         source=args.source,
@@ -189,7 +221,7 @@ def cmd_report(args: argparse.Namespace) -> int:
 
 def cmd_cost(args: argparse.Namespace) -> int:
     settings = settings_module.Settings.load()
-    by_phase = collect_pods.read_archive(settings.archive_root, args.run_id)
+    by_phase = collect_pods.read_archive(settings.archive_root, _resolve(settings, args.run_id)[1])
     if not by_phase:
         print(f"no archived pod records for run {args.run_id} (only runs submitted with this version have them)")
         return 1
@@ -219,12 +251,14 @@ def _minutes(seconds: object) -> str:
 
 def cmd_events(args: argparse.Namespace) -> int:
     settings = settings_module.Settings.load()
+    run_id, key = _resolve(settings, args.run_id)
     source, found = collect_events.events_for(
         cluster=Cluster(settings),
         project=settings.gcp_project,
         namespace=settings.namespace,
         archive_root=settings.archive_root,
-        run_id=args.run_id,
+        run_id=run_id,
+        archive_key=key,
         source=args.source,
     )
     print(f"(from {source}, {len(found)} events)", file=sys.stderr)
@@ -238,12 +272,83 @@ def cmd_events(args: argparse.Namespace) -> int:
 
 
 def cmd_cleanup(args: argparse.Namespace) -> int:
-    cluster = Cluster(settings_module.Settings.load())
-    names = [j.name for j in cluster.jobs(args.run_id)]
+    settings = settings_module.Settings.load()
+    cluster = Cluster(settings)
+    run_id = _resolve(settings, args.run_id)[0]
+    names = [j.name for j in cluster.jobs(run_id)]
     if not args.yes:
         print(f"would delete {len(names)} Job(s): {', '.join(names) or '-'}; add --yes")
         return 0 if names else 1
-    print(f"deleted {', '.join(cluster.delete_run(args.run_id)) or 'nothing'}")
+    print(f"deleted {', '.join(cluster.delete_run(run_id)) or 'nothing'}")
+    return 0
+
+
+def _when(ms: int | None) -> str:
+    if ms is None:
+        return "-"
+    return datetime.datetime.fromtimestamp(ms / 1000, tz=datetime.UTC).strftime("%m-%d %H:%M")
+
+
+def _n(value: object, spec: str = ".1f") -> str:
+    return "-" if value is None else format(value, spec)
+
+
+def _history_db(settings: settings_module.Settings, *, sync: bool = True) -> sqlite3.Connection:
+    db = history_db.open_store(settings.history_db)
+    if sync:
+        try:
+            applied = history_db.sync(db, settings.archive_root)
+            if applied:
+                print(f"(synced {applied} journal chunk(s))", file=sys.stderr)
+        except Exception as exc:  # the local copy is still worth showing
+            print(f"(could not sync from {settings.archive_root}: {exc})", file=sys.stderr)
+    return db
+
+
+def cmd_history(args: argparse.Namespace) -> int:
+    settings = settings_module.Settings.load()
+    if args.what == "rebuild":
+        n = history_db.rebuild(settings.history_db, settings.archive_root)
+        print(f"rebuilt {settings.history_db} from {n} journal chunk(s)")
+        return 0
+    db = _history_db(settings)
+    q = history_queries
+    match args.what:
+        case "sync":
+            print(f"{db.execute('SELECT COUNT(*) FROM ingested_objects').fetchone()[0]} journal chunk(s) applied in total")
+        case "runs":
+            print(f"{'RUN_UID':18} {'RUN_ID':10} {'STATUS':10} {'STARTED':12} {'JOBS':>4} {'USD':>6}  AOI / BY")
+            for r in q.runs(db, args.limit):
+                print(f"{r['run_uid']:18} {r['run_id']:10} {r['status']:10} {_when(r['started_ms']):12} {r['n_jobs']:>4} {_n(r['cost_usd'], '.2f'):>6}  {r['aoi'] or '-'} / {r['submitted_by'] or '-'}")
+        case "show":
+            run_row = q.resolve_run(db, args.run)
+            if run_row is None:
+                print(f"no run {args.run!r} in the history (try `history sync`)", file=sys.stderr)
+                return 1
+            uid = run_row["run_uid"]
+            print(f"run {uid} ({run_row['run_id']}): {run_row['status']}, {_when(run_row['started_ms'])} to {_when(run_row['finished_ms'])}")
+            print(f"  by {run_row['submitted_by']} on {run_row['cluster']}/{run_row['namespace']}, image {run_row['image']}")
+            print(f"{'PHASE':14} {'POD':>3} {'TILE':9} {'STATE':10} {'TIME':>7} {'HEAP GiB':>8} {'HEAP %':>6} {'USD':>6}  VERDICTS")
+            for p_ in q.pods(db, uid):
+                dur = f"{p_['duration_s'] / 60:.1f}m" if p_["duration_s"] is not None else "-"
+                print(f"{p_['job_phase']:14} {_n(p_['idx'], 'd'):>3} {p_['tile_id'] or '-':9} {(p_['reason'] or p_['phase']):10} {dur:>7} {_n(p_['peak_anon_gib']):>8} {_n(p_['peak_anon_pct'], '.0f'):>6} {_n(p_['cost_usd'], '.2f'):>6}  {p_['verdicts'] or ''}")
+            warnings = [e for e in q.events(db, uid) if e["type"] == "Warning" and e["reason"] != "FailedScheduling"]
+            for e in warnings[-5:]:
+                print(f"  event {e['reason']}: {(e['message'] or '')[:150]}")
+        case "tile":
+            print(f"{'RUN_UID':18} {'PHASE':14} {'RESULT':10} {'TIME':>7} {'HEAP GiB':>8} {'HEAP %':>6} {'USD':>6}  MACHINE")
+            for r in q.tile_history(db, args.tile):
+                dur = f"{r['duration_s'] / 60:.1f}m" if r["duration_s"] is not None else "-"
+                print(f"{r['run_uid']:18} {r['phase']:14} {(r['reason'] or r['pod_phase']):10} {dur:>7} {_n(r['peak_anon_gib']):>8} {_n(r['peak_anon_pct'], '.0f'):>6} {_n(r['cost_usd'], '.2f'):>6}  {r['machine_type'] or '-'}")
+        case "near-oom":
+            for r in q.near_limit(db, args.pct):
+                print(f"{r['run_uid']:18} {r['phase']:14} {r['tile_id'] or '-':9} heap {_n(r['peak_anon_gib'])} GiB = {_n(r['peak_anon_pct'], '.0f')}% of the limit {r['reason'] or ''}")
+        case "prune":
+            print(f"dropped {history_db.prune_samples(db, args.days)} sample(s) older than {args.days} days")
+        case "verify":
+            problems = history_db.verify(db)
+            print("\n".join(problems) or "ok")
+            return 1 if problems else 0
     return 0
 
 
@@ -318,6 +423,22 @@ def main(argv: list[str] | None = None) -> int:
         if name == "logs":
             p.add_argument("--tail", type=int)
         p.set_defaults(func=func)
+    h = sub.add_parser("history", help="the run history: past runs, per-tile results, near-OOM pods")
+    hs = h.add_subparsers(dest="what", required=True)
+    hs.add_parser("sync", help="apply journal chunks this machine has not seen")
+    hs.add_parser("rebuild", help="delete the local database and rebuild it from the journal")
+    hs.add_parser("verify", help="rows whose parent is missing (chunks not yet synced)")
+    hr = hs.add_parser("runs")
+    hr.add_argument("--limit", type=int, default=20)
+    hh = hs.add_parser("show")
+    hh.add_argument("run", help="a run uid, a prefix of one, or a run id")
+    ht = hs.add_parser("tile")
+    ht.add_argument("tile")
+    hn = hs.add_parser("near-oom", help="pods whose heap came near the memory limit")
+    hn.add_argument("--pct", type=float, default=85.0)
+    hp = hs.add_parser("prune", help="drop old samples (pod summaries stay)")
+    hp.add_argument("--days", type=int, default=180)
+    h.set_defaults(func=cmd_history)
     co = sub.add_parser("cost", help="approximate cost of a run, from its archived pod records")
     co.add_argument("run_id")
     co.set_defaults(func=cmd_cost)

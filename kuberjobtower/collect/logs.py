@@ -182,6 +182,7 @@ def lines_for(
     run_id: str,
     phase: str,
     index: int,
+    archive_key: str | None = None,
     source: str = "auto",
     tail: int | None = None,
     cloud_session: typing.Any = None,
@@ -198,7 +199,7 @@ def lines_for(
         else:
             tried.append("pod (gone)")
     if source in ("auto", "archive"):
-        lines = list(read_archive(archive_root, run_id, phase, index))
+        lines = list(read_archive(archive_root, archive_key or run_id, phase, index))
         if lines:
             return "archive", lines[-tail:] if tail else lines
         tried.append("archive (none)")
