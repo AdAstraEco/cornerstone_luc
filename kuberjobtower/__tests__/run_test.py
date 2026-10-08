@@ -121,3 +121,10 @@ def test_tiles_are_sorted_whatever_the_caller_passes() -> None:
     aoi = Aoi(tiles=("20N_090W", "10N_080W", "20N_090W"), iso_3166s=("SLV", "HND"))
     assert aoi.tiles == ("10N_080W", "20N_090W")
     assert aoi.iso_3166s == ("HND", "SLV")
+
+
+def test_a_request_below_the_limit_warns_of_node_eviction_risk(make_settings) -> None:  # type: ignore[no-untyped-def]
+    overrides = run.parse_overrides(["compute.memory-request=40Gi"])
+    plan = run.plan(make_settings(), spec(overrides=overrides))
+    assert [c.name for c in plan.checks] == ["node_eviction_risk"]
+    assert plan.errors == ()  # a warning: it needs confirming, it does not block

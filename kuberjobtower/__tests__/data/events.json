@@ -1,0 +1,408 @@
+[
+{
+"time": "2026-09-29T19:30:24Z",
+"reason": "FailedScheduling",
+"type": "Warning",
+"pod": "cornerstone-compare-cmp1-0-89jwj",
+"message": "0/4 nodes are available: waiting for ephemeral volume controller to create the persistentvolumeclaim \"cornerstone-compare-cmp1-0-89jwj-localtmp\". not found"
+},
+{
+"time": "2026-09-29T19:30:26Z",
+"reason": "Scheduled",
+"type": "Normal",
+"pod": "cornerstone-compare-cmp1-0-89jwj",
+"message": "Successfully assigned yaroslav/cornerstone-compare-cmp1-0-89jwj to gke-nonprod-shared-c-yaroslav-power-n-81341ed6-dqmp"
+},
+{
+"time": "2026-09-29T19:30:31Z",
+"reason": "SuccessfulAttachVolume",
+"type": "Normal",
+"pod": "cornerstone-compare-cmp1-0-89jwj",
+"message": "AttachVolume.Attach succeeded for volume \"pvc-2cbaf1e8-682f-4024-8fec-f193a05c7b8a\" "
+},
+{
+"time": "2026-09-29T19:30:33Z",
+"reason": "Pulling",
+"type": "Normal",
+"pod": "cornerstone-compare-cmp1-0-89jwj",
+"message": "Pulling image \"us-central1-docker.pkg.dev/maverick-reloaded/nonprod-maverick/cornerstone:latest\""
+},
+{
+"time": "2026-09-29T19:30:33Z",
+"reason": "Pulled",
+"type": "Normal",
+"pod": "cornerstone-compare-cmp1-0-89jwj",
+"message": "Successfully pulled image \"us-central1-docker.pkg.dev/maverick-reloaded/nonprod-maverick/cornerstone:latest\" in 379ms (379ms including waiting). Image size: 295601214 bytes."
+},
+{
+"time": "2026-09-29T19:30:33Z",
+"reason": "Created",
+"type": "Normal",
+"pod": "cornerstone-compare-cmp1-0-89jwj",
+"message": "Created container: phase"
+},
+{
+"time": "2026-09-29T19:30:33Z",
+"reason": "Started",
+"type": "Normal",
+"pod": "cornerstone-compare-cmp1-0-89jwj",
+"message": "Started container phase"
+},
+{
+"time": "2026-09-29T19:32:24Z",
+"reason": "Evicted",
+"type": "Warning",
+"pod": "cornerstone-compare-cmp1-0-89jwj",
+"message": "The node was low on resource: memory. Threshold quantity: 100Mi, available: 3372Ki. Container phase was using 59534476Ki, request is 48Gi, has larger consumption of memory. "
+},
+{
+"time": "2026-09-29T19:32:24Z",
+"reason": "Killing",
+"type": "Normal",
+"pod": "cornerstone-compare-cmp1-0-89jwj",
+"message": "Stopping container phase"
+},
+{
+"time": "2026-09-29T19:32:37Z",
+"reason": "FailedScheduling",
+"type": "Warning",
+"pod": "cornerstone-compare-cmp1-0-6xjpg",
+"message": "0/4 nodes are available: waiting for ephemeral volume controller to create the persistentvolumeclaim \"cornerstone-compare-cmp1-0-6xjpg-localtmp\". not found"
+},
+{
+"time": "2026-09-29T19:32:37Z",
+"reason": "FailedScheduling",
+"type": "Warning",
+"pod": "cornerstone-compare-cmp1-0-6xjpg",
+"message": "0/4 nodes are available: 1 node(s) had untolerated taint(s), 3 node(s) didn't match Pod's node affinity/selector. no new claims to deallocate, preemption: 0/4 nodes are available: 4 Preemption is not helpful for scheduling."
+},
+{
+"time": "2026-09-29T19:32:38Z",
+"reason": "TriggeredScaleUp",
+"type": "Normal",
+"pod": "cornerstone-compare-cmp1-0-6xjpg",
+"message": "Pod triggered scale-up: [{https://www.googleapis.com/compute/v1/projects/maverick-reloaded/zones/us-central1-b/instanceGroups/gke-nonprod-shared-c-yaroslav-power-n-81341ed6-grp 1->2 (max: 200)}]"
+},
+{
+"time": "2026-09-29T19:32:38Z",
+"reason": "FailedScheduling",
+"type": "Warning",
+"pod": "cornerstone-compare-cmp1-0-6xjpg",
+"message": "0/4 nodes are available: 1 node(s) had untolerated taint(s), 3 node(s) didn't match Pod's node affinity/selector. no new claims to deallocate, preemption: 0/4 nodes are available: 4 Preemption is not helpful for scheduling."
+},
+{
+"time": "2026-09-29T19:33:32Z",
+"reason": "FailedScheduling",
+"type": "Warning",
+"pod": "cornerstone-compare-cmp1-0-6xjpg",
+"message": "0/5 nodes are available: 2 node(s) had untolerated taint(s), 3 node(s) didn't match Pod's node affinity/selector. no new claims to deallocate, preemption: 0/5 nodes are available: 5 Preemption is not helpful for scheduling."
+},
+{
+"time": "2026-09-29T19:33:33Z",
+"reason": "FailedScheduling",
+"type": "Warning",
+"pod": "cornerstone-compare-cmp1-0-6xjpg",
+"message": "0/5 nodes are available: 2 node(s) had untolerated taint(s), 3 node(s) didn't match Pod's node affinity/selector. no new claims to deallocate, preemption: 0/5 nodes are available: 5 Preemption is not helpful for scheduling."
+},
+{
+"time": "2026-09-29T19:33:53Z",
+"reason": "Scheduled",
+"type": "Normal",
+"pod": "cornerstone-compare-cmp1-0-6xjpg",
+"message": "Successfully assigned yaroslav/cornerstone-compare-cmp1-0-6xjpg to gke-nonprod-shared-c-yaroslav-power-n-81341ed6-v4xr"
+},
+{
+"time": "2026-09-29T19:33:59Z",
+"reason": "SuccessfulAttachVolume",
+"type": "Normal",
+"pod": "cornerstone-compare-cmp1-0-6xjpg",
+"message": "AttachVolume.Attach succeeded for volume \"pvc-a12f4d53-50d4-4850-b481-254c1158fb94\" "
+},
+{
+"time": "2026-09-29T19:34:03Z",
+"reason": "Pulling",
+"type": "Normal",
+"pod": "cornerstone-compare-cmp1-0-6xjpg",
+"message": "Pulling image \"us-central1-docker.pkg.dev/maverick-reloaded/nonprod-maverick/cornerstone:latest\""
+},
+{
+"time": "2026-09-29T19:34:05Z",
+"reason": "Pulled",
+"type": "Normal",
+"pod": "cornerstone-compare-cmp1-0-6xjpg",
+"message": "Successfully pulled image \"us-central1-docker.pkg.dev/maverick-reloaded/nonprod-maverick/cornerstone:latest\" in 1.531s (1.531s including waiting). Image size: 295601214 bytes."
+},
+{
+"time": "2026-09-29T19:34:05Z",
+"reason": "Created",
+"type": "Normal",
+"pod": "cornerstone-compare-cmp1-0-6xjpg",
+"message": "Created container: phase"
+},
+{
+"time": "2026-09-29T19:34:05Z",
+"reason": "Started",
+"type": "Normal",
+"pod": "cornerstone-compare-cmp1-0-6xjpg",
+"message": "Started container phase"
+},
+{
+"time": "2026-09-29T19:34:22Z",
+"reason": "Killing",
+"type": "Normal",
+"pod": "cornerstone-compare-cmp1-0-6xjpg",
+"message": "Stopping container phase"
+},
+{
+"time": "2026-09-29T19:40:49Z",
+"reason": "FailedScheduling",
+"type": "Warning",
+"pod": "cornerstone-compare-cmp3-0-lbmfq",
+"message": "0/6 nodes are available: waiting for ephemeral volume controller to create the persistentvolumeclaim \"cornerstone-compare-cmp3-0-lbmfq-localtmp\". not found"
+},
+{
+"time": "2026-09-29T19:40:51Z",
+"reason": "Scheduled",
+"type": "Normal",
+"pod": "cornerstone-compare-cmp3-0-lbmfq",
+"message": "Successfully assigned yaroslav/cornerstone-compare-cmp3-0-lbmfq to gke-nonprod-shared-c-yaroslav-power-n-81341ed6-v4xr"
+},
+{
+"time": "2026-09-29T19:40:57Z",
+"reason": "SuccessfulAttachVolume",
+"type": "Normal",
+"pod": "cornerstone-compare-cmp3-0-lbmfq",
+"message": "AttachVolume.Attach succeeded for volume \"pvc-902a0a20-9132-4986-aec1-8166f1c10941\" "
+},
+{
+"time": "2026-09-29T19:40:58Z",
+"reason": "Pulling",
+"type": "Normal",
+"pod": "cornerstone-compare-cmp3-0-lbmfq",
+"message": "Pulling image \"us-central1-docker.pkg.dev/maverick-reloaded/nonprod-maverick/cornerstone:latest\""
+},
+{
+"time": "2026-09-29T19:40:58Z",
+"reason": "Pulled",
+"type": "Normal",
+"pod": "cornerstone-compare-cmp3-0-lbmfq",
+"message": "Successfully pulled image \"us-central1-docker.pkg.dev/maverick-reloaded/nonprod-maverick/cornerstone:latest\" in 413ms (413ms including waiting). Image size: 295601214 bytes."
+},
+{
+"time": "2026-09-29T19:40:59Z",
+"reason": "Created",
+"type": "Normal",
+"pod": "cornerstone-compare-cmp3-0-lbmfq",
+"message": "Created container: phase"
+},
+{
+"time": "2026-09-29T19:40:59Z",
+"reason": "Started",
+"type": "Normal",
+"pod": "cornerstone-compare-cmp3-0-lbmfq",
+"message": "Started container phase"
+},
+{
+"time": "2026-09-29T19:49:06Z",
+"reason": "Evicted",
+"type": "Warning",
+"pod": "cornerstone-compare-cmp3-0-lbmfq",
+"message": "The node was low on resource: memory. Threshold quantity: 100Mi, available: 1760Ki. Container phase was using 59533164Ki, request is 48Gi, has larger consumption of memory. "
+},
+{
+"time": "2026-09-29T19:49:06Z",
+"reason": "Killing",
+"type": "Normal",
+"pod": "cornerstone-compare-cmp3-0-lbmfq",
+"message": "Stopping container phase"
+},
+{
+"time": "2026-09-29T19:49:19Z",
+"reason": "FailedScheduling",
+"type": "Warning",
+"pod": "cornerstone-compare-cmp3-0-qxzwz",
+"message": "0/5 nodes are available: waiting for ephemeral volume controller to create the persistentvolumeclaim \"cornerstone-compare-cmp3-0-qxzwz-localtmp\". not found"
+},
+{
+"time": "2026-09-29T19:49:21Z",
+"reason": "Scheduled",
+"type": "Normal",
+"pod": "cornerstone-compare-cmp3-0-qxzwz",
+"message": "Successfully assigned yaroslav/cornerstone-compare-cmp3-0-qxzwz to gke-nonprod-shared-c-yaroslav-power-n-81341ed6-dqmp"
+},
+{
+"time": "2026-09-29T19:49:25Z",
+"reason": "SuccessfulAttachVolume",
+"type": "Normal",
+"pod": "cornerstone-compare-cmp3-0-qxzwz",
+"message": "AttachVolume.Attach succeeded for volume \"pvc-68117aae-6348-4324-8fa5-f805a67e8973\" "
+},
+{
+"time": "2026-09-29T19:49:26Z",
+"reason": "Pulling",
+"type": "Normal",
+"pod": "cornerstone-compare-cmp3-0-qxzwz",
+"message": "Pulling image \"us-central1-docker.pkg.dev/maverick-reloaded/nonprod-maverick/cornerstone:latest\""
+},
+{
+"time": "2026-09-29T19:49:27Z",
+"reason": "Pulled",
+"type": "Normal",
+"pod": "cornerstone-compare-cmp3-0-qxzwz",
+"message": "Successfully pulled image \"us-central1-docker.pkg.dev/maverick-reloaded/nonprod-maverick/cornerstone:latest\" in 303ms (303ms including waiting). Image size: 295601214 bytes."
+},
+{
+"time": "2026-09-29T19:49:27Z",
+"reason": "Created",
+"type": "Normal",
+"pod": "cornerstone-compare-cmp3-0-qxzwz",
+"message": "Created container: phase"
+},
+{
+"time": "2026-09-29T19:49:27Z",
+"reason": "Started",
+"type": "Normal",
+"pod": "cornerstone-compare-cmp3-0-qxzwz",
+"message": "Started container phase"
+},
+{
+"time": "2026-09-29T19:51:40Z",
+"reason": "Killing",
+"type": "Normal",
+"pod": "cornerstone-compare-cmp3-0-qxzwz",
+"message": "Stopping container phase"
+},
+{
+"time": "2026-10-06T18:12:39Z",
+"reason": "FailedScheduling",
+"type": "Warning",
+"pod": "cornerstone-t-10n-080e-lka-ingest-world-lka1-0-7mkqw",
+"message": "0/5 nodes are available: waiting for ephemeral volume controller to create the persistentvolumeclaim \"cornerstone-t-10n-080e-lka-ingest-world-lka1-0-7mkqw-localtmp\". not found"
+},
+{
+"time": "2026-10-06T18:12:39Z",
+"reason": "FailedScheduling",
+"type": "Warning",
+"pod": "cornerstone-t-10n-080e-lka-ingest-world-lka1-0-7mkqw",
+"message": "0/5 nodes are available: 1 node(s) were unschedulable, 4 node(s) didn't match Pod's node affinity/selector. no new claims to deallocate, preemption: 0/5 nodes are available: 5 Preemption is not helpful for scheduling."
+},
+{
+"time": "2026-10-06T18:12:42Z",
+"reason": "TriggeredScaleUp",
+"type": "Normal",
+"pod": "cornerstone-t-10n-080e-lka-ingest-world-lka1-0-7mkqw",
+"message": "Pod triggered scale-up: [{https://www.googleapis.com/compute/v1/projects/maverick-reloaded/zones/us-central1-b/instanceGroups/gke-nonprod-shared-c-yaroslav-worker--731e69b9-grp 0->1 (max: 200)}]"
+},
+{
+"time": "2026-10-06T18:13:33Z",
+"reason": "FailedScheduling",
+"type": "Warning",
+"pod": "cornerstone-t-10n-080e-lka-ingest-world-lka1-0-7mkqw",
+"message": "0/6 nodes are available: 1 node(s) had untolerated taint(s), 1 node(s) were unschedulable, 4 node(s) didn't match Pod's node affinity/selector. no new claims to deallocate, preemption: 0/6 nodes are available: 6 Preemption is not helpful for scheduling."
+},
+{
+"time": "2026-10-06T18:13:33Z",
+"reason": "FailedScheduling",
+"type": "Warning",
+"pod": "cornerstone-t-10n-080e-lka-ingest-world-lka1-0-7mkqw",
+"message": "0/6 nodes are available: 1 node(s) had untolerated taint(s), 1 node(s) were unschedulable, 4 node(s) didn't match Pod's node affinity/selector. no new claims to deallocate, preemption: 0/6 nodes are available: 6 Preemption is not helpful for scheduling."
+},
+{
+"time": "2026-10-06T18:13:55Z",
+"reason": "Scheduled",
+"type": "Normal",
+"pod": "cornerstone-t-10n-080e-lka-ingest-world-lka1-0-7mkqw",
+"message": "Successfully assigned yaroslav/cornerstone-t-10n-080e-lka-ingest-world-lka1-0-7mkqw to gke-nonprod-shared-c-yaroslav-worker--731e69b9-bh2j"
+},
+{
+"time": "2026-10-06T18:14:01Z",
+"reason": "SuccessfulAttachVolume",
+"type": "Normal",
+"pod": "cornerstone-t-10n-080e-lka-ingest-world-lka1-0-7mkqw",
+"message": "AttachVolume.Attach succeeded for volume \"pvc-5adcbb20-525c-458c-95ca-5d62649e01b7\" "
+},
+{
+"time": "2026-10-06T18:14:05Z",
+"reason": "Pulling",
+"type": "Normal",
+"pod": "cornerstone-t-10n-080e-lka-ingest-world-lka1-0-7mkqw",
+"message": "Pulling image \"us-central1-docker.pkg.dev/maverick-reloaded/nonprod-maverick/cornerstone:kjt-test\""
+},
+{
+"time": "2026-10-06T18:14:22Z",
+"reason": "Pulled",
+"type": "Normal",
+"pod": "cornerstone-t-10n-080e-lka-ingest-world-lka1-0-7mkqw",
+"message": "Successfully pulled image \"us-central1-docker.pkg.dev/maverick-reloaded/nonprod-maverick/cornerstone:kjt-test\" in 16.869s (16.869s including waiting). Image size: 295659604 bytes."
+},
+{
+"time": "2026-10-06T18:14:22Z",
+"reason": "Created",
+"type": "Normal",
+"pod": "cornerstone-t-10n-080e-lka-ingest-world-lka1-0-7mkqw",
+"message": "Created container: phase"
+},
+{
+"time": "2026-10-06T18:14:22Z",
+"reason": "Started",
+"type": "Normal",
+"pod": "cornerstone-t-10n-080e-lka-ingest-world-lka1-0-7mkqw",
+"message": "Started container phase"
+},
+{
+"time": "2026-10-06T19:24:51Z",
+"reason": "FailedScheduling",
+"type": "Warning",
+"pod": "cornerstone-t-10n-080e-lka-compute-lka1-0-zl6qw",
+"message": "0/80 nodes are available: waiting for ephemeral volume controller to create the persistentvolumeclaim \"cornerstone-t-10n-080e-lka-compute-lka1-0-zl6qw-localtmp\". not found"
+},
+{
+"time": "2026-10-06T19:24:53Z",
+"reason": "Scheduled",
+"type": "Normal",
+"pod": "cornerstone-t-10n-080e-lka-compute-lka1-0-zl6qw",
+"message": "Successfully assigned yaroslav/cornerstone-t-10n-080e-lka-compute-lka1-0-zl6qw to gke-nonprod-shared-c-yaroslav-power-n-81341ed6-lqmh"
+},
+{
+"time": "2026-10-06T19:24:59Z",
+"reason": "SuccessfulAttachVolume",
+"type": "Normal",
+"pod": "cornerstone-t-10n-080e-lka-compute-lka1-0-zl6qw",
+"message": "AttachVolume.Attach succeeded for volume \"pvc-094b8b8a-97be-447e-b0a5-6d9672e2995e\" "
+},
+{
+"time": "2026-10-06T19:25:00Z",
+"reason": "Pulling",
+"type": "Normal",
+"pod": "cornerstone-t-10n-080e-lka-compute-lka1-0-zl6qw",
+"message": "Pulling image \"us-central1-docker.pkg.dev/maverick-reloaded/nonprod-maverick/cornerstone:kjt-test\""
+},
+{
+"time": "2026-10-06T19:25:02Z",
+"reason": "Pulled",
+"type": "Normal",
+"pod": "cornerstone-t-10n-080e-lka-compute-lka1-0-zl6qw",
+"message": "Successfully pulled image \"us-central1-docker.pkg.dev/maverick-reloaded/nonprod-maverick/cornerstone:kjt-test\" in 1.628s (1.628s including waiting). Image size: 295659604 bytes."
+},
+{
+"time": "2026-10-06T19:25:02Z",
+"reason": "Created",
+"type": "Normal",
+"pod": "cornerstone-t-10n-080e-lka-compute-lka1-0-zl6qw",
+"message": "Created container: phase"
+},
+{
+"time": "2026-10-06T19:25:02Z",
+"reason": "Started",
+"type": "Normal",
+"pod": "cornerstone-t-10n-080e-lka-compute-lka1-0-zl6qw",
+"message": "Started container phase"
+},
+{
+"time": "2026-10-06T20:19:42Z",
+"reason": "TaintManagerEviction",
+"type": "Normal",
+"pod": "cornerstone-t-10n-080e-lka-compute-lka1-0-zl6qw",
+"message": "Cancelling deletion of Pod yaroslav/cornerstone-t-10n-080e-lka-compute-lka1-0-zl6qw"
+}
+]

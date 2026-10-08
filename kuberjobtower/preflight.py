@@ -63,6 +63,16 @@ def check(
         out.append(Check("aoi", "error", "give --tile or --country"))
 
     for job in jobs:
+        if job.resources.memory_request != job.resources.memory_limit:
+            out.append(
+                Check(
+                    "node_eviction_risk",
+                    "warning",
+                    f"{job.phase}: memory request {job.resources.memory_request} is below its limit "
+                    f"{job.resources.memory_limit}: under node pressure the kubelet evicts a pod that "
+                    "uses more than it requested, before the limit applies",
+                )
+            )
         if job.completions > settings.max_completions_per_job:
             out.append(
                 Check(

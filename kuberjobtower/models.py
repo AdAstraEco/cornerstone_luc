@@ -139,4 +139,18 @@ class PodState:
     node: str | None
     reason: str | None
     exit_code: int | None
-    started: datetime.datetime | None
+    started: datetime.datetime | None  # when the pod was accepted by a node
+    created: datetime.datetime | None = None
+    finished: datetime.datetime | None = None  # when the container ended
+    restarts: int = 0
+
+
+@dataclasses.dataclass(frozen=True)
+class PodEvent:
+    """A Kubernetes event about a pod (``Evicted``, ``FailedScheduling``, ``Scheduled``, ...)."""
+
+    time: datetime.datetime
+    reason: str
+    type: str  # Normal | Warning
+    pod: str
+    message: str

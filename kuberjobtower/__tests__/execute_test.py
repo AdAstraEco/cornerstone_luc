@@ -3,7 +3,7 @@ import dataclasses
 import pytest
 
 from kuberjobtower import manifest, run
-from kuberjobtower.models import Aoi, JobState, PodState, RunSpec
+from kuberjobtower.models import Aoi, JobState, PodEvent, PodState, RunSpec
 from kuberjobtower.phases import Phase
 
 
@@ -16,6 +16,7 @@ class FakeCluster:
         self.jobs: dict[str, JobState] = {}
         self.script = script or {}
         self.created: list[str] = []
+        self.event_list: list[PodEvent] = []
 
     def create(self, job, *, dry_run: bool = False) -> None:  # type: ignore[no-untyped-def]
         meta = job.metadata
@@ -41,6 +42,9 @@ class FakeCluster:
 
     def pods(self, run_id: str, phase: str | None = None) -> list[PodState]:
         return [PodState("p-0", 0, "Failed", "node", "OOMKilled", 137, None)]
+
+    def events(self, run_id: str) -> list[PodEvent]:
+        return self.event_list
 
 
 def make_plan(make_settings, phases=(Phase.INGEST_WORLD, Phase.EXPORT)):  # type: ignore[no-untyped-def]
@@ -102,6 +106,7 @@ def test_a_failed_phase_stops_the_run_and_names_the_pod(make_settings) -> None: 
     assert not ok
     assert len(cluster.created) == 1  # the next phase was never created
     assert any("exit 137 OOMKilled" in line for line in lines)
+    assert any("CRIT oom_killed" in line for line in lines)
 
 
 def test_a_country_only_run_cannot_be_submitted_yet(make_settings) -> None:  # type: ignore[no-untyped-def]
@@ -146,3 +151,20 @@ def test_after_phase_also_runs_when_the_phase_failed(make_settings) -> None:  # 
     ok = run.execute(plan, cluster, poll_s=0, out=lambda _: None, sleep=lambda _: None,
                      after_phase=lambda pp, final: seen.append(final.state))  # fmt: skip
     assert not ok and seen == ["failed"]
+
+
+def test_a_failure_shows_the_warning_events_of_the_failed_pod(make_settings) -> None:  # type: ignore[no-untyped-def]
+    import datetime
+
+    plan = make_plan(make_settings)
+    cluster = FakeCluster({plan.phases[0].job.name: [(0, 0, {"Failed"})]})
+    when = datetime.datetime(2026, 10, 6, tzinfo=datetime.UTC)
+    cluster.event_list = [
+        PodEvent(when, "Evicted", "Warning", "p-0", "The node was low on resource: memory."),
+        PodEvent(when, "Scheduled", "Normal", "p-0", "assigned"),
+        PodEvent(when, "Evicted", "Warning", "other-pod", "not mine"),
+    ]
+    ok, lines = go(plan, cluster)
+    assert not ok
+    assert any("event Evicted: The node was low on resource" in line for line in lines)
+    assert not any("not mine" in line or "assigned" in line for line in lines)

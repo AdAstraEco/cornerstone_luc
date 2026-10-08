@@ -13,6 +13,8 @@ import json
 import re
 import typing
 
+from kuberjobtower.collect import verdicts
+
 # Loggers whose lines mark a step: the phase script, and export (which logs its own steps).
 # Pipeline-specific guesses, used only when the pod logs no step events of its own. In a
 # standalone kuber-job-tower these would come from the pipeline's descriptor.
@@ -193,4 +195,7 @@ def table(lines: typing.Iterable[str]) -> str:
                 else ""
             )
         )
+    samples = [r for r in records if r.get("kind") == "resource_sample"]
+    for v in verdicts.sample_verdicts(samples):
+        rows.append(f"{v.severity.upper():5} {v.code}: {v.message}")
     return "\n".join(rows)

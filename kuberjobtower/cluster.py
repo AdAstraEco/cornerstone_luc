@@ -1,16 +1,18 @@
 """The only module that talks to the cluster. Everything else sees ``JobState`` / ``PodState``."""
 
 import collections.abc
+import datetime
+import re
 import typing
 
 from lightkube import ApiError, Client, KubeConfig
 from lightkube.core.exceptions import ConfigError
 from lightkube.resources.batch_v1 import Job
-from lightkube.resources.core_v1 import Pod
+from lightkube.resources.core_v1 import Event, Pod
 from lightkube.types import CascadeType
 
 from kuberjobtower import manifest
-from kuberjobtower.models import JobState, PodState
+from kuberjobtower.models import JobState, PodEvent, PodState
 from kuberjobtower.settings import Settings
 
 RUN_LABEL = "run-id"
@@ -74,6 +76,22 @@ class Cluster:
         except ApiError as exc:
             raise ClusterError(f"logs {pod}: {exc}") from exc
 
+    def events(self, run_id: str) -> list[PodEvent]:
+        """The namespace's events about this run's pods, oldest first (Kubernetes keeps ~1 h)."""
+        mine = re.compile(rf"-{re.escape(run_id)}-\d+-[a-z0-9]+$")
+        found = [
+            PodEvent(
+                time=_event_time(e),
+                reason=e.reason or "?",
+                type=e.type or "Normal",
+                pod=e.involvedObject.name or "?",
+                message=e.message or "",
+            )
+            for e in self._client.list(Event)
+            if e.involvedObject.kind == "Pod" and mine.search(e.involvedObject.name or "")
+        ]
+        return sorted(found, key=lambda e: e.time)
+
     def delete_run(self, run_id: str) -> list[str]:
         """Delete this run's Jobs (and, by cascade, their pods). Only objects we created."""
         names = [j.name for j in self.jobs(run_id)]
@@ -111,11 +129,20 @@ def _job_state(job: Job) -> JobState:
     )
 
 
+def _event_time(event: Event) -> datetime.datetime:
+    stamp = event.lastTimestamp or event.eventTime or event.firstTimestamp
+    return typing.cast(datetime.datetime, stamp) or datetime.datetime.fromtimestamp(
+        0, tz=datetime.UTC
+    )
+
+
 def _pod_state(pod: Pod) -> PodState:
     meta, spec, status = pod.metadata, pod.spec, pod.status
     assert meta and meta.name
     terminated = None
+    restarts = 0
     for cs in (status.containerStatuses if status else None) or []:
+        restarts += cs.restartCount or 0
         if cs.state and cs.state.terminated:
             terminated = cs.state.terminated
     index = (meta.labels or {}).get(INDEX_LABEL)
@@ -128,4 +155,7 @@ def _pod_state(pod: Pod) -> PodState:
         or (status.reason if status else None),
         exit_code=terminated.exitCode if terminated else None,
         started=status.startTime if status else None,  # type: ignore[arg-type]
+        created=meta.creationTimestamp,  # type: ignore[arg-type]
+        finished=terminated.finishedAt if terminated else None,  # type: ignore[arg-type]
+        restarts=restarts,
     )

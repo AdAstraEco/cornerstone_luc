@@ -7,8 +7,11 @@ import sys
 from kuberjobtower import aoi, manifest, report, run
 from kuberjobtower import settings as settings_module
 from kuberjobtower.cluster import Cluster, ClusterError
+from kuberjobtower.collect import events as collect_events
 from kuberjobtower.collect import logs as collect_logs
-from kuberjobtower.models import Aoi, JobState, PhasePlan, RunPlan, RunSpec
+from kuberjobtower.collect import pods as collect_pods
+from kuberjobtower.collect import verdicts
+from kuberjobtower.models import Aoi, JobState, PhasePlan, PodEvent, RunPlan, RunSpec
 from kuberjobtower.phases import Phase
 
 
@@ -106,7 +109,13 @@ def cmd_submit(args: argparse.Namespace) -> int:
         stored = collect_logs.archive_phase(
             cluster, settings.archive_root, plan.spec.run_id, str(pp.phase)
         )
-        print(f"  archived {len(stored)} pod log(s) under {settings.archive_root}")
+        run_id = plan.spec.run_id
+        events = cluster.events(run_id)
+        collect_events.archive(settings.archive_root, run_id, events)
+        collect_pods.archive(
+            settings.archive_root, run_id, str(pp.phase), cluster.pods(run_id, str(pp.phase)), events
+        )
+        print(f"  archived {len(stored)} pod log(s), pod records and events under {settings.archive_root}")
 
     return 0 if run.execute(plan, cluster, poll_s=args.poll, after_phase=archive) else 1
 
@@ -117,16 +126,20 @@ def cmd_status(args: argparse.Namespace) -> int:
     if not jobs:
         print("no kuberjobtower Jobs" + (f" for run {args.run_id}" if args.run_id else ""))
         return 0
+    events_by_run: dict[str, list[PodEvent]] = {}
     print(f"{'JOB':52} {'STATE':9} {'DONE':>7} {'ACT':>3} {'FAIL':>4}")
     for j in jobs:
         print(
             f"{j.name:52} {j.state:9} {f'{j.succeeded}/{j.completions}':>7} {j.active:>3} {j.failed:>4}"
         )
         if args.pods:
+            events = events_by_run.setdefault(j.run_id, cluster.events(j.run_id))
             for pod in cluster.pods(j.run_id, j.phase):
                 print(
                     f"  idx {pod.index}  {pod.name}  {pod.phase}  node {pod.node}  exit {pod.exit_code} {pod.reason or ''}"
                 )
+                for v in verdicts.pod_verdicts(pod, events):
+                    print(f"      {v.severity.upper()} {v.code}: {v.message}")
     return 0
 
 
@@ -156,6 +169,26 @@ def cmd_logs(args: argparse.Namespace) -> int:
 
 def cmd_report(args: argparse.Namespace) -> int:
     print(report.table(_lines(args)))
+    return 0
+
+
+def cmd_events(args: argparse.Namespace) -> int:
+    settings = settings_module.Settings.load()
+    source, found = collect_events.events_for(
+        cluster=Cluster(settings),
+        project=settings.gcp_project,
+        namespace=settings.namespace,
+        archive_root=settings.archive_root,
+        run_id=args.run_id,
+        source=args.source,
+    )
+    print(f"(from {source}, {len(found)} events)", file=sys.stderr)
+    for e in found:
+        if args.phase and f"-{args.phase}-" not in e.pod:
+            continue
+        if args.warnings and e.type != "Warning":
+            continue
+        print(f"{e.time:%H:%M:%S} {e.type[:4]:4} {e.reason:18} {e.pod[-34:]:34} {e.message[:150]}")
     return 0
 
 
@@ -240,6 +273,12 @@ def main(argv: list[str] | None = None) -> int:
         if name == "logs":
             p.add_argument("--tail", type=int)
         p.set_defaults(func=func)
+    ev = sub.add_parser("events", help="Kubernetes events about a run's pods (kept after the pods)")
+    ev.add_argument("run_id")
+    ev.add_argument("--phase", choices=[str(x) for x in Phase])
+    ev.add_argument("--warnings", action="store_true", help="only Warning events")
+    ev.add_argument("--source", choices=("auto", "pod", "archive", "cloud"), default="auto")
+    ev.set_defaults(func=cmd_events)
     c = sub.add_parser("cleanup", help="delete one run's Jobs and pods")
     c.add_argument("run_id")
     c.add_argument("--yes", action="store_true")

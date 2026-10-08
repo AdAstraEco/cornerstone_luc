@@ -8,10 +8,12 @@ import time
 import typing
 
 from kuberjobtower import manifest, preflight
+from kuberjobtower.collect import verdicts
 from kuberjobtower.models import (
     JobSpec,
     JobState,
     PhasePlan,
+    PodEvent,
     PodState,
     ResourceSpec,
     RunPlan,
@@ -250,6 +252,14 @@ class ClusterAPI(typing.Protocol):
     def create(self, job: typing.Any, *, dry_run: bool = False) -> None: ...
     def get_job(self, name: str) -> JobState | None: ...
     def pods(self, run_id: str, phase: str | None = None) -> list[PodState]: ...
+    def events(self, run_id: str) -> list[PodEvent]: ...
+
+
+def _safe_events(cluster: "ClusterAPI", run_id: str) -> list[PodEvent]:
+    try:
+        return cluster.events(run_id)
+    except Exception:  # events are context for the failure, never a reason to hide it
+        return []
 
 
 def execute(
@@ -304,10 +314,17 @@ def execute(
                 out(f"  (after-phase hook failed, the run goes on: {exc})")
         if final.state == "failed" or final.failed_indexes:
             out(f"{pp.phase}: FAILED (failed indexes: {final.failed_indexes or 'all'})")
+            events = _safe_events(cluster, plan.spec.run_id)
             for pod in cluster.pods(plan.spec.run_id, str(pp.phase)):
                 out(
                     f"  pod {pod.name} index {pod.index} {pod.phase} exit {pod.exit_code} {pod.reason or ''}"
                 )
+                for v in verdicts.pod_verdicts(pod, events):
+                    out(f"    {v.severity.upper()} {v.code}: {v.message}")
+                for event in [e for e in events if e.pod == pod.name and e.type == "Warning"][-3:]:
+                    out(f"    event {event.reason}: {event.message[:200]}")
+            for v in verdicts.job_verdicts(final):
+                out(f"  {v.severity.upper()} {v.code}: {v.message}")
             return False
         out(f"{pp.phase}: done")
     return True

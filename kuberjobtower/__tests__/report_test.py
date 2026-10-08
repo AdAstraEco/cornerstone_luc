@@ -74,7 +74,9 @@ def test_a_sample_after_a_dask_progress_bar_is_still_read() -> None:
 
 def test_table_has_a_row_per_step_and_survives_a_log_without_json() -> None:
     text = report.table(LOG)
-    assert text.count("\n") == 3 and "write abc123" in text
+    assert "write abc123" in text
+    assert text.count("\n") == 4  # header, three steps and one verdict
+    assert "WARN  disk_bound" in text  # io pressure 40 in 2 of its 7 samples
     assert "no JSON log lines" in report.table(["plain text only"])
 
 
@@ -112,3 +114,11 @@ def test_a_pod_that_logs_step_events_gets_exactly_those_steps() -> None:
     assert [s.label for s in report.steps(records)] == ["ingest A", "ingest B"]
     first = report.steps(records)[0]
     assert (first.end - first.start).total_seconds() == 20
+
+
+def test_the_report_ends_with_its_verdicts() -> None:
+    heavy = [sample(t, 50.0, 55.0, t, 0) for t in (0, 15, 30)]
+    heavy = [line(t, "resource_sample", "resource_monitor", kind="resource_sample", mem_current_gib=55.0,
+                  mem_anon_gib=52.0, mem_anon_pct=93.0, mem_pct=93.0, cpu_usage_s=t, write_bytes=0)
+             for t in (0, 15, 30)]  # fmt: skip
+    assert "WARN  memory_pressure: heap peaked at 93%" in report.table(heavy)

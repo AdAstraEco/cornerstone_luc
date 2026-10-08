@@ -16,7 +16,7 @@ SCOPE = "https://www.googleapis.com/auth/logging.read"
 ENTRIES_URL = "https://logging.googleapis.com/v2/entries:list"
 SAFE = re.compile(r"[A-Za-z0-9._-]+")
 SOURCES = ("auto", "pod", "archive", "cloud")
-RETRIES = 4
+RETRIES = 7  # waits 1+2+4+8+16+32 s: outlasts the per-minute read quota
 
 
 class LogsUnavailable(RuntimeError):
@@ -121,15 +121,10 @@ def entry_line(entry: dict[str, typing.Any]) -> str | None:
     return entry.get("textPayload")
 
 
-def cloud_lines(
-    project: str,
-    namespace: str,
-    run_id: str,
-    phase: str,
-    index: int | None,
-    *,
-    session: typing.Any = None,
-) -> collections.abc.Iterator[str]:
+def cloud_entries(
+    project: str, filter_: str, *, session: typing.Any = None
+) -> collections.abc.Iterator[dict[str, typing.Any]]:
+    """Every Cloud Logging entry matching ``filter_``, oldest first, across pages."""
     if session is None:
         import google.auth
         from google.auth.transport.requests import AuthorizedSession
@@ -138,7 +133,7 @@ def cloud_lines(
         session = AuthorizedSession(credentials)
     body: dict[str, typing.Any] = {
         "resourceNames": [f"projects/{project}"],
-        "filter": cloud_filter(namespace, run_id, phase, index),
+        "filter": filter_,
         "orderBy": "timestamp asc",
         "pageSize": 1000,
     }
@@ -154,12 +149,25 @@ def cloud_lines(
                 f"Cloud Logging answered {response.status_code}: {response.text[:200]}"
             )
         payload = response.json()
-        for entry in payload.get("entries", []):
-            if (line := entry_line(entry)) is not None:
-                yield line
+        yield from payload.get("entries", [])
         if not (token := payload.get("nextPageToken")):
             return
         body["pageToken"] = token
+
+
+def cloud_lines(
+    project: str,
+    namespace: str,
+    run_id: str,
+    phase: str,
+    index: int | None,
+    *,
+    session: typing.Any = None,
+) -> collections.abc.Iterator[str]:
+    filter_ = cloud_filter(namespace, run_id, phase, index)
+    for entry in cloud_entries(project, filter_, session=session):
+        if (line := entry_line(entry)) is not None:
+            yield line
 
 
 # ---- the chain ------------------------------------------------------------------------------
