@@ -33,7 +33,18 @@ dev = [
     "types-geopandas",
     "types-networkx",
     "types-requests",
+    { include-group = "kjt" },
 ]
+# kuber-job-tower: run the pipeline's phases as Kubernetes Jobs, with a UI (infra/kuber-job-tower.md).
+# A development tool: the Docker image installs only the runtime dependencies (uv sync --no-dev).
+kjt = ["kuber-job-tower[ui]"]
+
+[project.entry-points."kuberjobtower.pipelines"]
+cornerstone = "infra.kjt:PIPELINE"
+
+[tool.uv.sources]
+# The branch that has everything (UI, logs, SQLite store); pin a tag once the tower has releases.
+kuber-job-tower = { git = "ssh://git@github.com/AdAstraEco/kuber-job-tower.git", branch = "echo-image" }
 
 [build-system]
 requires = ["hatchling"]
