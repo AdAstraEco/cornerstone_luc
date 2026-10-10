@@ -17,3 +17,6 @@ __pycache__/
 infra/*.env
 
 .cache/
+
+# kuber-job-tower: local database and sizes file
+.kjt/
