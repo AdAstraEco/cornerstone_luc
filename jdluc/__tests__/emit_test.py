@@ -1410,7 +1410,7 @@ def test_derive_from_cie_reproduces_every_band_it_replaces() -> None:
     derived = derive_from_cie(dset=output).compute()
 
     assert set(derived) == {
-        name for name in map(str, output) if not name.startswith("cie-")
+        name for name in map(str, output) if not name.startswith(("cie-", "cand-"))
     }
     for name in derived:
         numpy.testing.assert_allclose(

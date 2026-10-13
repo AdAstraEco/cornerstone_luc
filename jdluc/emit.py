@@ -553,6 +553,124 @@ def get_crop_independent_emissions(
     }
 
 
+# ============================================================================================
+# Conversion candidates (spike): every conversion event, before any reference year
+#
+# `get_conversion_record` picks one event per pixel inside the window ending at ASSESSMENT_YEAR,
+# so the `cie-` bands are already a 2020 answer. The `cand-` bands stop one step earlier, after
+# the rooster poc_v6 "bedrock": they record every candidate event in every year, and the stocks
+# each candidate source would release, with no window, no priority and no reference year. Picking
+# the one event per pixel, for a reference year and a rule, is `conversion_event.get_cie`.
+#
+# A GPW transition band is a bitmask: bit k is set when the transition happened in
+# CANDIDATE_BASE_YEAR + k. The bands go through `geo.unify_dtype_and_no_data` like every other,
+# so they are float32, which holds integers exactly only below 2**24. With this origin that is
+# 2001-2024: all the transitions GPW has today, but none from 2025. Integer storage is the fix.
+# ============================================================================================
+
+CANDIDATE_BASE_YEAR = 2001
+CANDIDATE_LAST_YEAR = CANDIDATE_BASE_YEAR + 23
+
+
+class GrasslandTransition(enum.StrEnum):
+    """A change of GPW class between one year and the next, open shrubland counted as natural."""
+
+    NATURAL_TO_CULTIVATED = "2to1"
+    NATURAL_TO_OTHER = "2to0"
+    CULTIVATED_TO_OTHER = "1to0"
+    # NB: abandonment; today's pasture departure counts it, rooster does not
+    CULTIVATED_TO_NATURAL = "1to2"
+
+
+GPW_NATURAL = (gpw_grassland.Grassland.NATURAL, gpw_grassland.Grassland.OPEN_SHRUBLAND)
+GPW_CULTIVATED = (gpw_grassland.Grassland.CULTIVATED,)
+GPW_OTHER = (gpw_grassland.Grassland.OTHER,)
+GRASSLAND_TRANSITION_TO_CLASSES: dict[
+    GrasslandTransition, tuple[tuple[int, ...], tuple[int, ...]]
+] = {
+    GrasslandTransition.NATURAL_TO_CULTIVATED: (GPW_NATURAL, GPW_CULTIVATED),
+    GrasslandTransition.NATURAL_TO_OTHER: (GPW_NATURAL, GPW_OTHER),
+    GrasslandTransition.CULTIVATED_TO_OTHER: (GPW_CULTIVATED, GPW_OTHER),
+    GrasslandTransition.CULTIVATED_TO_NATURAL: (GPW_CULTIVATED, GPW_NATURAL),
+}
+
+
+def get_grassland_transitions(
+    dset: xarray.Dataset,
+) -> dict[GrasslandTransition, xarray.DataArray]:
+    """One bitmask per transition over every GPW year in `dset`: bit k = in CANDIDATE_BASE_YEAR + k.
+
+    NB: a no-data year matches no class, so a transition into or out of one is not recorded.
+    Today's `get_last_departure_year` instead counts a class followed by no data as a departure;
+    rooster forward-fills no data first. Neither is decided here.
+    """
+    year_to_band_name = {
+        year: band_name
+        for year, band_name in zip(
+            gpw_grassland.YEARS,
+            gpw_grassland.DATASET.fully_qualified_band_names,
+            strict=True,
+        )
+        if band_name in dset
+    }
+    assert max(year_to_band_name) <= CANDIDATE_LAST_YEAR
+    years = xarray.DataArray(list(year_to_band_name), dims="year", name="year")
+    grassland = xarray.concat(
+        [dset[band_name] for band_name in year_to_band_name.values()], dim=years
+    )
+    # NB: the first year has no year before it, so the shift's NaN matches no class
+    previous = grassland.shift(year=1)
+    year_bit = xarray.DataArray(
+        [
+            2.0 ** (year - CANDIDATE_BASE_YEAR) if year >= CANDIDATE_BASE_YEAR else 0.0
+            for year in year_to_band_name
+        ],
+        coords={"year": years},
+        dims="year",
+    )
+    return {
+        transition: (
+            (previous.isin(before) & grassland.isin(after)).astype(numpy.float64)
+            * year_bit
+        )
+        .sum(dim="year")
+        .rename(None)
+        for transition, (before, after) in GRASSLAND_TRANSITION_TO_CLASSES.items()
+    }
+
+
+def get_conversion_candidates(
+    dset: xarray.Dataset,
+    forest_carbon: xarray.DataArray,
+    grassland_carbon: xarray.DataArray,
+    is_peatland: xarray.DataArray,
+    soil_organic_carbon: xarray.DataArray,
+) -> dict[str, xarray.DataArray]:
+    """The `cand-` bands: every candidate event, and the stocks, ungated by any event."""
+    year_of_loss = (
+        gnw_tcl.LOSS_YEAR_OFFSET + dset[gnw_tcl.DATASET.fully_qualified_band_name]
+    )
+    return {
+        # NB: TCL records at most one loss per pixel, so a year rather than a bitmask
+        "cand-tcl-loss-year": year_of_loss.where(
+            year_of_loss > gnw_tcl.LOSS_YEAR_OFFSET, other=0
+        ).rename(None),
+        **{
+            f"cand-gpw-{transition:s}": bitmask
+            for transition, bitmask in get_grassland_transitions(dset).items()
+        },
+        "cand-forest-biomass": (CO2E_PER_CARBON * forest_carbon).rename("tco2e-per-ha"),
+        "cand-grassland-biomass": (CO2E_PER_CARBON * grassland_carbon).rename(
+            "tco2e-per-ha"
+        ),
+        # NB: on peat too: whether peat replaces the mineral term is the selection's call
+        "cand-mineral-soil-carbon": (
+            CO2E_PER_CARBON * soil_organic_carbon.fillna(0)
+        ).rename("tco2e-per-ha"),
+        "cand-is-peat": is_peatland.rename(None),
+    }
+
+
 def get_span_to_charge(
     conversion_year: xarray.DataArray, darray: xarray.DataArray
 ) -> dict[SpanType, xarray.DataArray]:
@@ -844,7 +962,8 @@ def get_name_to_legacy_darray(
     )
 
 
-@storage.cache_to_zarr(version=2)
+# NB: 3 adds the `cand-` bands
+@storage.cache_to_zarr(version=3)
 def workflow(tile_id: str) -> xarray.Dataset:
     logger.info(f"Running the land conversion and emissions worflow for {tile_id=:s}")
     return get_output_dset(
@@ -957,6 +1076,15 @@ def get_output_dset(dset: xarray.Dataset) -> xarray.Dataset:
         soil_organic_carbon=dset[soilgrids_ocs.DATASET.fully_qualified_band_name],
     )
 
+    logger.info("Recording every conversion candidate, before any reference year")
+    candidates = get_conversion_candidates(
+        dset=dset,
+        forest_carbon=forest_carbon,
+        grassland_carbon=grassland_carbon,
+        is_peatland=is_peatland,
+        soil_organic_carbon=dset[soilgrids_ocs.DATASET.fully_qualified_band_name],
+    )
+
     return get_dset_for_output(
         name_to_darray=get_name_to_legacy_darray(
             conversion=conversion_record.conversion,
@@ -972,6 +1100,7 @@ def get_output_dset(dset: xarray.Dataset) -> xarray.Dataset:
             span_to_vegetation_emissions=span_to_vegetation_emissions,
         )
         | cie
+        | candidates
     )
 
 
@@ -995,8 +1124,25 @@ CIE_EMISSIONS = export.Deliverable(
     ),
 )
 
+# The year-free candidates `conversion_event` selects from
+CONVERSION_CANDIDATES = export.Deliverable(
+    name="conversion-candidates",
+    bands=tuple(
+        export.Band(variable)
+        for variable in (
+            "cand-tcl-loss-year",
+            *(f"cand-gpw-{transition:s}" for transition in GrasslandTransition),
+            "cand-forest-biomass:tco2e-per-ha",
+            "cand-grassland-biomass:tco2e-per-ha",
+            "cand-mineral-soil-carbon:tco2e-per-ha",
+            "cand-is-peat",
+        )
+    ),
+)
+
 NAME_TO_DELIVERABLE: dict[str, export.Deliverable] = {
-    deliverable.name: deliverable for deliverable in (CIE_EMISSIONS,)
+    deliverable.name: deliverable
+    for deliverable in (CIE_EMISSIONS, CONVERSION_CANDIDATES)
 }
 
 

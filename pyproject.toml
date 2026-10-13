@@ -79,6 +79,7 @@ layers = [
     "jdluc.attribute",
     "jdluc.jurisdictional_direct | jdluc.statistical",
     "jdluc.derive",
+    "jdluc.conversion_event",
     "jdluc.emit",
     "jdluc.harmonize",
     "jdluc.ingest",
