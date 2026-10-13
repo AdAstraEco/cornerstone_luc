@@ -1,4 +1,5 @@
 import numpy
+import pytest
 import xarray
 
 from jdluc import conversion_event, derive, emit
@@ -110,3 +111,56 @@ def test_derive_runs_for_another_reference_year() -> None:
     total = layer["ccl-total-emissions-amortized:tco2e-per-ha"]
     assert set(total.dims) == {"y", "x", derive.CROP_CLASS, derive.DISCOUNTING}
     assert numpy.isfinite(total.sel(y=total.y[:3])).all()
+
+
+def get_harmonized_dset_with_random_histories(seed: int) -> xarray.Dataset:
+    """The every-case grid, its GPW years and TCL replaced with random ones, no data included."""
+    dset = get_harmonized_dset_for_every_case()
+    rng = numpy.random.default_rng(seed)
+    shape = dset[gnw_tcl.DATASET.fully_qualified_band_name].shape
+    # NB: few classes and long runs, so departures (and returns) are frequent but not every year
+    state = rng.choice([*map(float, Grassland), numpy.nan], size=shape)
+    for band_name in gpw_grassland.DATASET.fully_qualified_band_names:
+        if band_name not in dset:
+            continue
+        changes = rng.random(shape) < 0.15
+        state = numpy.where(
+            changes, rng.choice([*map(float, Grassland), numpy.nan], size=shape), state
+        )
+        dset[band_name] = dset[band_name].copy(data=state)
+    loss = rng.choice([0, 0, 0, *range(1, 25)], size=shape).astype(float)
+    dset[gnw_tcl.DATASET.fully_qualified_band_name] = dset[
+        gnw_tcl.DATASET.fully_qualified_band_name
+    ].copy(data=loss)
+    return dset
+
+
+@pytest.mark.parametrize("seed", range(3))
+def test_recency_at_the_assessment_year_reproduces_emits_cie(seed: int) -> None:
+    output = emit.get_output_dset(
+        dset=get_harmonized_dset_with_random_histories(seed)
+    ).compute()
+    selected = conversion_event.get_cie(
+        output, reference_year=emit.ASSESSMENT_YEAR, rule="recency"
+    ).compute()
+
+    # Every source occurs, so the comparison covers each branch of the rule
+    assert set(numpy.unique(output["cie-conversion-source"].data)) == set(
+        map(float, ConversionSource)
+    )
+    for name in selected:
+        numpy.testing.assert_allclose(
+            selected[name].data.astype(numpy.float64),
+            output[name].data.astype(numpy.float64),
+            atol=1e-4,
+            err_msg=name,
+            rtol=1e-6,
+        )
+
+
+def test_derive_at_the_reference_year_reproduces_derive_without_one() -> None:
+    output = emit.get_output_dset(dset=get_harmonized_dset_with_random_histories(0))
+    xarray.testing.assert_allclose(
+        derive.derive(output, reference_year=emit.ASSESSMENT_YEAR).compute(),
+        derive.derive(output).compute(),
+    )

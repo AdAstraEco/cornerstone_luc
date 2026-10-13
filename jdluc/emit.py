@@ -580,11 +580,17 @@ class GrasslandTransition(enum.StrEnum):
     CULTIVATED_TO_OTHER = "1to0"
     # NB: abandonment; today's pasture departure counts it, rooster does not
     CULTIVATED_TO_NATURAL = "1to2"
+    # NB: a class followed by a no-data year; today's departures count these, rooster
+    # forward-fills no data instead, so never sees them
+    NATURAL_TO_NO_DATA = "2toN"
+    CULTIVATED_TO_NO_DATA = "1toN"
 
 
 GPW_NATURAL = (gpw_grassland.Grassland.NATURAL, gpw_grassland.Grassland.OPEN_SHRUBLAND)
 GPW_CULTIVATED = (gpw_grassland.Grassland.CULTIVATED,)
 GPW_OTHER = (gpw_grassland.Grassland.OTHER,)
+# NB: matches NaN, which is what harmonize makes of GPW's no data
+GPW_NO_DATA: tuple[int, ...] = ()
 GRASSLAND_TRANSITION_TO_CLASSES: dict[
     GrasslandTransition, tuple[tuple[int, ...], tuple[int, ...]]
 ] = {
@@ -592,7 +598,15 @@ GRASSLAND_TRANSITION_TO_CLASSES: dict[
     GrasslandTransition.NATURAL_TO_OTHER: (GPW_NATURAL, GPW_OTHER),
     GrasslandTransition.CULTIVATED_TO_OTHER: (GPW_CULTIVATED, GPW_OTHER),
     GrasslandTransition.CULTIVATED_TO_NATURAL: (GPW_CULTIVATED, GPW_NATURAL),
+    GrasslandTransition.NATURAL_TO_NO_DATA: (GPW_NATURAL, GPW_NO_DATA),
+    GrasslandTransition.CULTIVATED_TO_NO_DATA: (GPW_CULTIVATED, GPW_NO_DATA),
 }
+
+
+def is_gpw_class(
+    grassland: xarray.DataArray, classes: tuple[int, ...]
+) -> xarray.DataArray:
+    return grassland.isnull() if classes is GPW_NO_DATA else grassland.isin(classes)
 
 
 def get_grassland_transitions(
@@ -600,9 +614,9 @@ def get_grassland_transitions(
 ) -> dict[GrasslandTransition, xarray.DataArray]:
     """One bitmask per transition over every GPW year in `dset`: bit k = in CANDIDATE_BASE_YEAR + k.
 
-    NB: a no-data year matches no class, so a transition into or out of one is not recorded.
-    Today's `get_last_departure_year` instead counts a class followed by no data as a departure;
-    rooster forward-fills no data first. Neither is decided here.
+    NB: a change into no data is its own transition (`*_TO_NO_DATA`); a change out of it is not
+    recorded. So a rule can count a no-data year as leaving the class, as `emit` does today, or
+    not; forward-filling, as rooster does, would need the no-data years themselves.
     """
     year_to_band_name = {
         year: band_name
@@ -630,7 +644,9 @@ def get_grassland_transitions(
     )
     return {
         transition: (
-            (previous.isin(before) & grassland.isin(after)).astype(numpy.float64)
+            (is_gpw_class(previous, before) & is_gpw_class(grassland, after)).astype(
+                numpy.float64
+            )
             * year_bit
         )
         .sum(dim="year")

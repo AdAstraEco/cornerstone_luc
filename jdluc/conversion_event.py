@@ -7,10 +7,14 @@ later and as a parameter: given the `cand-` bands (every candidate event in ever
 `derive.read_cie` reads. So one `emit` output serves any reference year and any rule, and `derive`
 is unchanged downstream of the selection.
 
-The one rule here is rooster poc_v6's default (`first_in_priority_wins`): materiality. Forest
-outranks natural grassland, which outranks pasture, whatever their years; the winning source is
-dated by its latest event in the window. `emit` instead lets the later of the two grassland
-departures win. A rule is a plain function, so another is another function in RULES.
+Two rules, each a plain function in NAME_TO_RULE; DEFAULT_RULE is the one in force:
+
+- `recency`: the current Cornerstone pipeline (`emit.get_conversion_record`). Forest loss in
+  the window wins; otherwise the later of the last departures from natural grassland and from
+  pasture. For emit's own ASSESSMENT_YEAR it reproduces the `cie-` event bands.
+- `materiality`: rooster poc_v6's default (`first_in_priority_wins`). Forest outranks natural
+  grassland, which outranks pasture, whatever their years; the winner is dated by its latest
+  event in the window.
 """
 
 import collections.abc
@@ -95,11 +99,41 @@ def latest_year_in_window(
     )
 
 
-# Which transitions date each grassland source under the materiality rule: rooster's grouping,
-# which leaves out pasture abandonment (CULTIVATED_TO_NATURAL)
-GRASSLAND_SOURCE_TO_TRANSITIONS: dict[
-    ConversionSource, tuple[GrasslandTransition, ...]
-] = {
+GRASSLAND_SOURCES = (ConversionSource.NATURAL_GRASSLAND, ConversionSource.PASTURE)
+
+
+def get_source_to_year(
+    candidates: Candidates,
+    first_year: int,
+    last_year: int,
+    grassland_source_to_transitions: dict[
+        ConversionSource, tuple[GrasslandTransition, ...]
+    ],
+) -> dict[ConversionSource, xarray.DataArray]:
+    """Per source, the latest year in first_year..last_year it lost land, or 0 where none.
+
+    Which GPW transitions count as losing a grassland source is the rule's to say.
+    """
+    tcl = candidates.tcl_loss_year
+    return {
+        ConversionSource.FOREST: tcl.where(
+            (tcl >= first_year) & (tcl <= last_year), other=0
+        ),
+        **{
+            source: latest_year_in_window(
+                bitmasks=[candidates.transitions[t] for t in transitions],
+                first_year=first_year,
+                last_year=last_year,
+            )
+            for source, transitions in grassland_source_to_transitions.items()
+        },
+    }
+
+
+# --- Rule: materiality (rooster poc_v6's `first_in_priority_wins`) ---------------------------
+
+# Rooster's grouping, which leaves out pasture abandonment and changes into no data
+MATERIALITY_TRANSITIONS: dict[ConversionSource, tuple[GrasslandTransition, ...]] = {
     ConversionSource.NATURAL_GRASSLAND: (
         GrasslandTransition.NATURAL_TO_CULTIVATED,
         GrasslandTransition.NATURAL_TO_OTHER,
@@ -121,23 +155,14 @@ def materiality(
 
     The window is (reference_year - lookback_years, reference_year], as in `emit`.
     """
-    first_year = reference_year - lookback_years + 1
-    tcl = candidates.tcl_loss_year
-    source_to_year = {
-        ConversionSource.FOREST: tcl.where(
-            (tcl >= first_year) & (tcl <= reference_year), other=0
-        ),
-        **{
-            source: latest_year_in_window(
-                bitmasks=[candidates.transitions[t] for t in transitions],
-                first_year=first_year,
-                last_year=reference_year,
-            )
-            for source, transitions in GRASSLAND_SOURCE_TO_TRANSITIONS.items()
-        },
-    }
-    source = xarray.zeros_like(tcl, dtype=numpy.uint8)
-    year = xarray.zeros_like(tcl, dtype=numpy.float32)
+    source_to_year = get_source_to_year(
+        candidates=candidates,
+        first_year=reference_year - lookback_years + 1,
+        last_year=reference_year,
+        grassland_source_to_transitions=MATERIALITY_TRANSITIONS,
+    )
+    source = xarray.zeros_like(candidates.tcl_loss_year, dtype=numpy.uint8)
+    year = xarray.zeros_like(candidates.tcl_loss_year, dtype=numpy.float32)
     # NB: lowest priority first, so each higher one overwrites where it has an event
     for candidate in reversed(MATERIALITY):
         has_event = source_to_year[candidate] > 0
@@ -146,9 +171,60 @@ def materiality(
     return Event(source=source, year=year)
 
 
+# --- Rule: recency (the current Cornerstone pipeline, `emit.get_conversion_record`) ----------
+
+# Leaving the class, to anything at all: `emit.get_last_departure_year` tests "the class last
+# year and not this year", so abandonment and a no-data year both count
+DEPARTURE_TRANSITIONS: dict[ConversionSource, tuple[GrasslandTransition, ...]] = {
+    ConversionSource.NATURAL_GRASSLAND: (
+        GrasslandTransition.NATURAL_TO_CULTIVATED,
+        GrasslandTransition.NATURAL_TO_OTHER,
+        GrasslandTransition.NATURAL_TO_NO_DATA,
+    ),
+    ConversionSource.PASTURE: (
+        GrasslandTransition.CULTIVATED_TO_OTHER,
+        GrasslandTransition.CULTIVATED_TO_NATURAL,
+        GrasslandTransition.CULTIVATED_TO_NO_DATA,
+    ),
+}
+
+
+def recency(candidates: Candidates, reference_year: int, lookback_years: int) -> Event:
+    """Forest loss in the window wins; otherwise the later of the last departures from natural
+    grassland and from pasture, at that year. `emit.get_conversion_record`'s choice, made for
+    any reference year: for its own ASSESSMENT_YEAR, it reproduces the `cie-` event bands.
+    """
+    source_to_year = get_source_to_year(
+        candidates=candidates,
+        first_year=reference_year - lookback_years + 1,
+        last_year=reference_year,
+        grassland_source_to_transitions=DEPARTURE_TRANSITIONS,
+    )
+    forest_year = source_to_year[ConversionSource.FOREST]
+    natural_year = source_to_year[ConversionSource.NATURAL_GRASSLAND]
+    pasture_year = source_to_year[ConversionSource.PASTURE]
+
+    from_forest = forest_year > 0
+    # NB: one class a year, so the two departures never share a year: a tie is two zeros
+    from_natural = ~from_forest & (natural_year > pasture_year)
+    from_pasture = ~from_forest & (pasture_year > natural_year)
+    source = (
+        from_forest * numpy.uint8(ConversionSource.FOREST)
+        + from_natural * numpy.uint8(ConversionSource.NATURAL_GRASSLAND)
+        + from_pasture * numpy.uint8(ConversionSource.PASTURE)
+    ).astype(numpy.uint8)
+    year = xarray.where(
+        from_forest, forest_year, numpy.maximum(natural_year, pasture_year)
+    )
+    return Event(source=source, year=year)
+
+
+# --- The rule in force -----------------------------------------------------------------------
+
 Rule = collections.abc.Callable[[Candidates, int, int], Event]
-NAME_TO_RULE: dict[str, Rule] = {"materiality": materiality}
-DEFAULT_RULE = "materiality"
+NAME_TO_RULE: dict[str, Rule] = {"materiality": materiality, "recency": recency}
+# NB: to try another rule, change this line
+DEFAULT_RULE = "recency"
 
 
 def get_cie(
@@ -169,7 +245,7 @@ def get_cie(
     event = NAME_TO_RULE[rule](candidates, reference_year, lookback_years)
 
     has_source = event.source != ConversionSource.NONE
-    from_grassland = event.source.isin(list(GRASSLAND_SOURCE_TO_TRANSITIONS))
+    from_grassland = event.source.isin(list(GRASSLAND_SOURCES))
     return xarray.Dataset(
         {
             "cie-conversion-source": event.source,
