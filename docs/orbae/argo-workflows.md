@@ -1,7 +1,7 @@
 # Running the pipeline on Argo Workflows
 
 **Status:** our preferred way to run the pipeline in the cloud, as of 2026-10-15. It replaces the
-hand-rolled driver (`infra/run_aoi.py` + `infra/k8s/phase-job.yaml`) described in
+hand-rolled driver (`infra/run_aoi.py` + `infra/k8s/phase-job.yaml`, since removed) described in
 [`scale-out.md`](scale-out.md). Proven end to end on Honduras (1 tile) and Côte d'Ivoire
 (2 tiles), on our nonprod GKE cluster. This note is written from the user's side: what you
 need, how to run a country, and what to expect. It is not a guide to operating Argo itself.
@@ -69,6 +69,49 @@ hand-typed tile count, and nothing checked it against the country.
 **`derive` runs off to the side.** It needs only emit's cached output, so it starts once
 `compute` finishes and runs alongside `reduce` and `export`. Nothing downstream reads its
 output.
+
+## One-off setup
+
+Done once per cluster, or again whenever the cloud config changes.
+
+**Identity.** The pods reach GCS through Workload Identity: the workflow's k8s service account
+is bound to a GCP service account with read/write access to the bucket. No keys go in the
+image or the Secrets. The platform team set this up; a new cluster or bucket needs the same
+binding before anything will run.
+
+**The two Secrets.** `Config.from_dot_env()` reads a `.env` *file*, not the process
+environment, so each pod mounts a Secret at `/app/.env`. The cloud config is kept apart from
+the repo-root `.env`, which stays pointed at local paths for local runs:
+
+```bash
+cp infra/cloud.env.example infra/cloud.env   # gitignored; fill in real values
+```
+
+All six fields must be **present**, or `Config.from_dot_env()` raises: `INGEST_ROOT`,
+`SCRATCH_ROOT`, `EXPORT_ROOT`, `NUMBER_OF_DASK_WORKERS` (the per-pod Dask worker count; keep
+it at or below the pod's CPU limit), `USDA_NASS_API_KEY` and
+`HARVARD_DATAVERSE_GUESTBOOK_JSON`.
+
+Only the ingest steps use the API keys. To keep the keys off the other pods, make
+`infra/cloud-nokeys.env`, a copy of `cloud.env` with the two key fields present but blank.
+Then create one Secret from each file, in the namespace the workflow runs in:
+
+```bash
+kubectl --context "$KUBE_CONTEXT" -n argo create secret generic <secret-with-keys> \
+  --from-file=.env=infra/cloud.env
+kubectl --context "$KUBE_CONTEXT" -n argo create secret generic <secret-no-keys> \
+  --from-file=.env=infra/cloud-nokeys.env
+```
+
+The workflow names both Secrets. To change the config, delete and recreate them.
+
+**The image.** Build it from a clean commit and push it, as in the header of
+`infra/Dockerfile`. Then set the workflow's image to the new tag.
+
+**What a run leaves behind.** Pods and their autoscaled nodes go away by themselves. The
+Secrets, the images in the registry and the bucket's data stay until deleted. The data is the
+point of the run; before a continent-scale run, decide how long to keep `SCRATCH_ROOT` (see
+*Storage, not compute, is the first scale risk* in [`scale-out.md`](scale-out.md)).
 
 ## Running a country
 
@@ -159,6 +202,36 @@ and `CPL_TMPDIR` pointed at it, as the old driver did. The volume is created wit
 deleted with it. Background is in [`../gke-disk-io-findings.md`](../gke-disk-io-findings.md).
 Don't shrink these volumes: pd-ssd throughput scales with size.
 
+The volume is a generic ephemeral volume on GKE's built-in pd-ssd StorageClass
+(`premium-rwo`), so no StorageClass object of our own is needed. It works on any machine
+family, e2 included. Separately, the old driver set a small `ephemeral-storage` request and
+limit (2Gi / 8Gi) on each container. That covers only the container's own overlay (logs and
+anything not under `/localtmp`), so a stray writer evicts its own pod and not the node.
+
+### Pod sizing, as the old driver measured it
+
+The old driver's per-phase sizes, with the reasons it recorded. The workflow's sizes are close
+to these but not identical (see *Open questions*):
+
+| Phase | CPU req / limit | Memory req / limit | `/localtmp` | Deadline | Why |
+|---|---|---|---|---|---|
+| `ingest-world` | 2 / 4 | 4Gi / 24Gi | 100Gi | 4h | Network-bound; each object is one whole-world download, MAPSPAM the largest |
+| `ingest-tiles` | 2 / 4 | 4Gi / 24Gi | 100Gi | 2h | Network-bound, one tile's worth. `/localtmp` holds ~8 GB-class COG temps × `--concurrency` |
+| `compute` | 6 / 8 | 48Gi / 60Gi | 20Gi | 6h | Peak ~39 GiB observed: about one tile per e2-highmem-8 node, with room for system pods. The deadline allows for a data-dense farmland tile. Results stream to GCS, so `/localtmp` only needs room for Dask spill and the GDAL cache |
+| `reduce` | 2 / 4 | 8Gi / 32Gi | 10Gi | 2h | A groupby-sum over kilobyte-scale parquets, plus reading the admin-1 boundaries |
+| `export` | 2 / 4 | 8Gi / 24Gi | 200Gi | 3h | See below |
+| `mosaic` | 1 / 2 | 2Gi / 8Gi | 10Gi | 1h | Reads each tile COG's header and writes a small VRT; no pixels |
+
+`export` is limited by disk, not memory, since Dask writes in chunks. `cog_translate` first
+writes an **uncompressed** tiled intermediate, and only then compresses the final COG. That
+intermediate is ~33 GB for a 5-band float32 10° tile, so ~70 GB for the 11 `cie-` bands. 200Gi
+leaves headroom and clears GDAL's free-space check, which we keep on so that a too-small disk
+fails at the start rather than at 97%.
+
+The highmem pool the compute pods use carries a `NoSchedule` taint, shared with other
+workloads, so pods bound for it need a matching toleration. Without one, the autoscaler won't
+even add a node.
+
 ## Gotchas
 
 - **Pod logs disappear once a run is cleaned up.** Argo isn't set to archive them. Save any
@@ -179,7 +252,7 @@ Don't shrink these volumes: pd-ssd throughput scales with size.
 - **Secrets.** `reduce`, `export` and `mosaic` could run without the keys, as they did under
   the old driver.
 - **Sizes and pools.** The workflow's memory requests and node pools differ slightly from the
-  old driver's `PHASE_TO_SPEC` in `infra/run_aoi.py`. Neither set has been measured at scale.
+  old driver's (*Pod sizing* above). Neither set has been measured at scale.
 - **Where the workflow file lives.** It is outside the repo because it names infrastructure. A
   version with placeholders in place of those names could be committed if we want it under
   version control.
