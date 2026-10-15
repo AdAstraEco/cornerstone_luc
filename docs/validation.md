@@ -25,7 +25,7 @@ Two constraints shape everything below. **Changing the methodology is out of sco
 ```
 tools/                          offline generators; the output is the artifact
   build-national-mappings.py    GADM<->World Bank and Orbae<->World Bank maps, self-checking
-  build-tiled-countries.py      the 220 countries E1 admits, self-checking
+  build-tiled-countries.py      the 221 countries E1 admits, self-checking
 validation/
   schema.py     vocabulary: enums, Finding, code_version, source identity
   targets.py    reads data/targets.json; Measure, Target, Control
@@ -53,7 +53,7 @@ The split is **by what the code is, not by what it computes**.
 
 **One artifact does not reproduce from the lock: the capture.** `efs.parquet` is a re-keyed extract of the pipeline's own parquet outputs, so it is neither committed here nor re-fetchable; producing it means re-running `validation.capture`, which takes hours of pipeline. Everything upstream of a capture reproduces in seconds — eligibility, yields, the anchor tables, and `ORBAE_OVER_WRI`, whose two sides are both external. Only the FAOSTAT half of that needs more than the lock: `prepare.read_faostat_production` reads the ingested parquet rather than a second copy of the upstream archive, so a checkout that has never run the ingest fetches it once and caches it beside the pulled anchors, with `pull.record_digest` pinning what it got. Every measure with a term of ours does not. A report carrying those numbers is reproducible only alongside the run that produced them, and `code_version` and `source_version` on every row name which run that is.
 
-FAOSTAT **is** an ingested dataset, because it is a plausible pipeline input: national tabular production statistics keyed on jdluc's own `admin_id` and `commodity_name`, the global analogue of `usda_nass_quickstats`. WRI, EPA and Orbae stay outside `jdluc/`. Every pipeline module imports `jdluc.datasets`, so putting the yardstick there would let `statistical.py` consume the number it is measured against, with no contract preventing it.
+FAOSTAT **is** an ingested dataset, because it is a plausible pipeline input: national tabular production statistics keyed on jdluc's own `admin_id` and `commodity_name`, the global analogue of `usda_nass_quickstats`. WRI, EPA and Orbae stay outside `jdluc/`. Every pipeline module imports `jdluc.datasets`, so putting the yardstick there would let `statistical.py` consume the number it is measured against, with no contract preventing it. For livestock it does: `statistical.py` reads FAOSTAT's livestock table to price `BEEF_CATTLE`'s production, which therefore reproduces FAOSTAT's by construction, less the herd GPW places off mapped pasture. Livestock production has no independent anchor here; the crop table stays outside the attribution path.
 
 ## 3. Choosing what to validate
 
@@ -63,7 +63,7 @@ Eligibility is mechanical, four filters, and re-derived on every run:
 
 |     | Filter                                                                                 | Why                                                                      |
 | --- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| E1  | the crop is modeled, and the country is one of the 220 in `coverage.md`                | a pair we cannot compute is not a target                                 |
+| E1  | the crop is modeled, and the country is one of the 221 in `coverage.md`                | a pair we cannot compute is not a target                                 |
 | E2  | at least one anchor, for at least one measure                                          | nothing to compare against, nothing to learn                             |
 | E3  | WRI publishes provincial rows, and the key map covers >=50% of the country's land area | the provincial grain is the default                                      |
 | E4  | national production >= 100 kt                                                          | a factor that cannot move a companywide number is not worth capture time |
@@ -197,7 +197,7 @@ This is needed because a capture scoped to some countries keeps rows for the one
 
 ## 8. Limits on what this can conclude
 
-- **Grassland and peat can be sized but not confirmed.** No external anchor exists. WRI is forest-only, Orbae's grassland carbon is biome-invariant and its peat inverted, and SoilGrids, Harris and Huang *are* our carbon densities. The only non-circular route is transcription work: Spawn et al. (2019) and IPCC for biome grassland carbon, and the IPCC 2013 Wetlands Supplement for drained organic soils.
+- **Grassland and peat can be sized but not confirmed.** No external anchor exists. WRI is forest-only, Orbae's grassland carbon in the v2.0 outputs these anchors come from is biome-invariant and its peat inverted, and SoilGrids, Harris, Huang and IPCC's Table 6.4 non-woody biomass (the pasture density) *are* our carbon densities. Orbae's v2.3 methodology takes its pasture from that same IPCC table, so an Orbae release built on it is not an independent check on pasture carbon. The only non-circular route is transcription work: Spawn et al. (2019) for biome grassland carbon, IPCC for natural rangeland, and the IPCC 2013 Wetlands Supplement for drained organic soils.
 - **WRI cannot arbitrate allocation.** It shares this leg's MapSPAM expansion-share family, so an agreement may reflect shared method rather than shared answer. It stays independent on the forest *pool* and on carbon density, which is what the controls rest on. Genuinely independent evidence about allocation comes from two places only: Orbae and the US sLUC-versus-jdLUC head-to-head.
 - **Where anchors disagree with each other more than they disagree with us, that is an anchor-quality row rather than a pipeline gap.** Brazil is why magnitude is measured against the *nearest* anchor: WRI runs about 5× high there while Orbae sits near our value, so measuring to the mean would book someone else's disagreement as our gap. Orbae and WRI barely agree on shape for the two crops that matter most — cross-country rank +0.018 for oil palm and +0.135 for soy — so for those neither corroborates the other.
 - **The target set is partly WRI-shaped.** Materiality is read off WRI's deforestation figure, so a regime WRI is blind to — grassland conversion above all — is under-represented by construction.
@@ -212,7 +212,7 @@ Recorded because each one silently produces a plausible wrong answer rather than
 - **WRI's five columns are a reporting-year series, not five vintages of one quantity.** The year names where the LSRS 20-year window sits, so each column drops a loss year, adds a real new one, and rescales the denominator to that year's production — §4 has the measurements that rule out a re-discounted fixed series. Factors span 1.42× at the median and 2.90× at the upper decile across the five, and 89% of pairs exceed a ±10% tolerance on that spread alone. That is the ceiling on what an *unpinned* comparison against WRI can resolve, and it is why the reporting year is pinned rather than left implicit. Reading the spread as WRI's own inconsistency overstates it: most of it is real temporal signal.
 - **Orbae publishes two commodities on a processed basis** — palm as crude palm oil, sugarcane as cane sugar — so its factors must be divided by the conversion factor the export carries, or they read 3.9× and 8.9× high.
 - **Orbae uses different code lengths per grain** — alpha-2 at country level, alpha-3-prefixed at provincial. Reading both as alpha-2 mis-filed 162 rows across 7 countries and dropped 63; there is now a two-way name/ISO injectivity check.
-- **Emissions attributed to no crop are discarded.** Shares sum to at most one and the shortfall is charged to nobody — 12.6% of conversion and 13.9% of occupation globally, rising to 23.6% of Indonesia's occupation. Summing the factor table therefore does not give a jurisdiction's total, and a national-totals table without that row misleads.
+- **Emissions attributed to no crop sit in their own row.** Shares add up to at most one, and what is left over goes to `UNATTRIBUTED` — 12.6% of conversion and 13.9% of occupation globally, rising to 23.6% of Indonesia's occupation, measured before the GACED30 and Global Pasture Watch destinations. `keep_crop_rows` removes that row along with the other rows that are not crops, so the rows it keeps add up to less than a jurisdiction's total, and a comparison of national totals has to add `UNATTRIBUTED` back in.
 
 ## 10. Unverified assumptions
 

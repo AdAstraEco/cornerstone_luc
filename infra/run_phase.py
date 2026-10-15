@@ -208,7 +208,7 @@ def run_ingest(
 
 
 def run_compute(
-    crop_names: tuple[str, ...],
+    commodity_names: tuple[str, ...],
     iso_3166s: collections.abc.Sequence[str],
     methodology: attribute.Methodology,
     skip_ingest: bool,
@@ -244,14 +244,14 @@ def run_compute(
     for iso_3166 in get_iso_3166s_for_tile_id(iso_3166s=iso_3166s, tile_id=tile_id):
         logger.info(f"attribute {methodology.name:s} {tile_id=:s} {iso_3166=:s}")
         workflow_for_tile(
-            crop_names=crop_names,
+            commodity_names=commodity_names,
             iso_3166=iso_3166,
             tile_id=tile_id,
         )
 
 
 def run_reduce(
-    crop_names: tuple[str, ...],
+    commodity_names: tuple[str, ...],
     iso_3166s: collections.abc.Iterable[str],
     methodology: attribute.Methodology,
 ) -> None:
@@ -264,7 +264,7 @@ def run_reduce(
     df = trace.workflow(
         # NB: not a cache-key argument; the tiles are warm, so this only fans out the reads
         concurrency=1,
-        crop_names=crop_names,
+        commodity_names=commodity_names,
         iso_3166s=tuple(sorted(iso_3166s)),
         methodology=methodology,
     )
@@ -378,7 +378,9 @@ def main() -> int:
             case Phase.COMPUTE:
                 assert tile_id
                 run_compute(
-                    crop_names=attribute.get_crop_names(methodology=methodology),
+                    commodity_names=attribute.get_commodity_names(
+                        methodology=methodology
+                    ),
                     iso_3166s=iso_3166s,
                     methodology=methodology,
                     skip_ingest=args.skip_ingest,
@@ -386,7 +388,9 @@ def main() -> int:
                 )
             case Phase.REDUCE:
                 run_reduce(
-                    crop_names=attribute.get_crop_names(methodology=methodology),
+                    commodity_names=attribute.get_commodity_names(
+                        methodology=methodology
+                    ),
                     iso_3166s=iso_3166s,
                     methodology=methodology,
                 )

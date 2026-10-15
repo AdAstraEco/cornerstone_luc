@@ -5,10 +5,10 @@ conversion carries, charges them to the five-year span holding that year, adds o
 peatland-occupation emissions split by destination, and applies the GHGP 20-year linear discount.
 
 Returns a cached xarray.Dataset: the conversion, the year its source class ended and the datasets
-that claimed its destination; vegetation, soil and total emissions per span; the two occupation
-bands; the discounted per-hectare total; the source carbon no destination claimed; and a
-hectares-per-pixel band for downstream area-scaling. Beside them, as a spike, the `cie-` bands carry
-Crop-Independent Emissions (CIE); see `get_crop_independent_emissions`.
+that claimed its destination; vegetation and soil emissions per span; the two occupation bands;
+the discounted per-hectare total; the source carbon no destination claimed; and a
+hectares-per-pixel band for downstream area-scaling. Beside them, as a spike, the `cie-` bands
+carry Crop-Independent Emissions (CIE); see `get_crop_independent_emissions`.
 
 Source carbon that no destination claimed is charged to nobody and reported on its own as
 `dropped-emissions`.
@@ -111,8 +111,9 @@ def get_dead_organic_matter_carbon(
     return typing.cast(xarray.DataArray, ret).rename("tcarbon-per-ha")
 
 
-# Houghton/BLUE total vegetation carbon density for grassland / shrubland pixels
-CLIMATE_ZONE_TO_GRASSLAND_TCARBON_PER_HA: dict[ipcc_climate_zones.Zone, float] = {
+# Houghton/BLUE total vegetation carbon density for rangeland (GPW natural grassland and open
+# shrubland) sources
+CLIMATE_ZONE_TO_RANGELAND_TCARBON_PER_HA: dict[ipcc_climate_zones.Zone, float] = {
     ipcc_climate_zones.Zone.TROPICAL_WET: 18.0,
     ipcc_climate_zones.Zone.TROPICAL_MOIST: 18.0,
     ipcc_climate_zones.Zone.TROPICAL_DRY: 7.0,
@@ -124,21 +125,63 @@ CLIMATE_ZONE_TO_GRASSLAND_TCARBON_PER_HA: dict[ipcc_climate_zones.Zone, float] =
     ipcc_climate_zones.Zone.BOREAL_MOIST: 6.0,
     ipcc_climate_zones.Zone.BOREAL_DRY: 3.0,
 }
-assert set(ipcc_climate_zones.Zone) == set(CLIMATE_ZONE_TO_GRASSLAND_TCARBON_PER_HA)
+assert set(ipcc_climate_zones.Zone) == set(CLIMATE_ZONE_TO_RANGELAND_TCARBON_PER_HA)
+
+# IPCC 2006 Vol 4 Ch 6 default carbon fraction of herbaceous dry matter
+CARBON_PER_BIOMASS_HERBACEOUS: float = 0.47
+# IPCC 2006 Vol 4 Table 6.4 total (above- and below-ground) non-woody biomass on grassland, for
+# pasture (GPW cultivated grassland) sources
+CLIMATE_ZONE_TO_PASTURE_TBIOMASS_PER_HA: dict[ipcc_climate_zones.Zone, float] = {
+    ipcc_climate_zones.Zone.TROPICAL_WET: 16.1,
+    ipcc_climate_zones.Zone.TROPICAL_MOIST: 16.1,
+    ipcc_climate_zones.Zone.TROPICAL_DRY: 8.7,
+    ipcc_climate_zones.Zone.WARM_TEMPERATE_MOIST: 13.5,
+    ipcc_climate_zones.Zone.WARM_TEMPERATE_DRY: 6.1,
+    ipcc_climate_zones.Zone.COOL_TEMPERATE_MOIST: 12.0,
+    ipcc_climate_zones.Zone.COOL_TEMPERATE_DRY: 6.5,
+    ipcc_climate_zones.Zone.BOREAL_MOIST: 8.5,
+    ipcc_climate_zones.Zone.BOREAL_DRY: 8.5,
+}
+CLIMATE_ZONE_TO_PASTURE_TCARBON_PER_HA: dict[ipcc_climate_zones.Zone, float] = {
+    climate_zone: tbiomass_per_ha * CARBON_PER_BIOMASS_HERBACEOUS
+    for climate_zone, tbiomass_per_ha in CLIMATE_ZONE_TO_PASTURE_TBIOMASS_PER_HA.items()
+} | {
+    # NB: Table 6.4 has no tropical montane row, so the rangeland density stands in
+    ipcc_climate_zones.Zone.TROPICAL_MONTANE: CLIMATE_ZONE_TO_RANGELAND_TCARBON_PER_HA[
+        ipcc_climate_zones.Zone.TROPICAL_MONTANE
+    ],
+}
+assert set(ipcc_climate_zones.Zone) == set(CLIMATE_ZONE_TO_PASTURE_TCARBON_PER_HA)
 
 
-def get_grassland_carbon(climate_zones: xarray.DataArray) -> xarray.DataArray:
-    lookup = numpy.zeros(256, dtype=numpy.float32)
+def get_grassland_carbon(
+    climate_zones: xarray.DataArray, from_pasture: xarray.DataArray
+) -> xarray.DataArray:
+    """Vegetation carbon of a grassland source, by climate zone and by the class it left."""
+    rangeland_lookup = numpy.zeros(256, dtype=numpy.float32)
     for (
         climate_zone,
         tcarbon_per_ha,
-    ) in CLIMATE_ZONE_TO_GRASSLAND_TCARBON_PER_HA.items():
-        lookup[climate_zone.value] = tcarbon_per_ha
-    return xarray.apply_ufunc(
-        lookup.__getitem__,
-        climate_zones.fillna(0).astype(numpy.uint8),
-        dask="parallelized",
-        output_dtypes=[numpy.float32],
+    ) in CLIMATE_ZONE_TO_RANGELAND_TCARBON_PER_HA.items():
+        rangeland_lookup[climate_zone.value] = tcarbon_per_ha
+    pasture_lookup = numpy.zeros(256, dtype=numpy.float32)
+    for climate_zone, tcarbon_per_ha in CLIMATE_ZONE_TO_PASTURE_TCARBON_PER_HA.items():
+        pasture_lookup[climate_zone.value] = tcarbon_per_ha
+    zone_index = climate_zones.fillna(0).astype(numpy.uint8)
+    return xarray.where(
+        from_pasture,
+        xarray.apply_ufunc(
+            pasture_lookup.__getitem__,
+            zone_index,
+            dask="parallelized",
+            output_dtypes=[numpy.float32],
+        ),
+        xarray.apply_ufunc(
+            rangeland_lookup.__getitem__,
+            zone_index,
+            dask="parallelized",
+            output_dtypes=[numpy.float32],
+        ),
     ).rename("tcarbon-per-ha")
 
 
@@ -233,9 +276,14 @@ FROM_GRASSLAND = (
     Conversion.RANGELAND_TO_CROPLAND,
     Conversion.RANGELAND_TO_PASTURE,
 )
-assert set(FROM_FOREST) ^ set(FROM_GRASSLAND) == frozenset(Conversion) - {
-    Conversion.NONE
-}
+assert set(FROM_FOREST) ^ set(FROM_GRASSLAND) == set(Conversion) - {Conversion.NONE}
+TO_CROPLAND = (
+    Conversion.FOREST_TO_CROPLAND,
+    Conversion.PASTURE_TO_CROPLAND,
+    Conversion.RANGELAND_TO_CROPLAND,
+)
+TO_PASTURE = (Conversion.FOREST_TO_PASTURE, Conversion.RANGELAND_TO_PASTURE)
+assert set(TO_CROPLAND) ^ set(TO_PASTURE) == set(Conversion) - {Conversion.NONE}
 
 
 @enum.unique
@@ -286,12 +334,17 @@ DESTINATION_DATASET_TO_PREDICATE: dict[
 }
 assert set(DestinationDataset) == set(DESTINATION_DATASET_TO_PREDICATE)
 
-TO_CROPLAND = DestinationDataset.DESCALS_OIL_PALM | DestinationDataset.LIAO_GACED30
-TO_PASTURE = DestinationDataset.GPW_GRASSLAND
+CROPLAND_DATASETS = (
+    DestinationDataset.DESCALS_OIL_PALM | DestinationDataset.LIAO_GACED30
+)
+PASTURE_DATASETS = DestinationDataset.GPW_GRASSLAND
 # Each member belongs to one group, and the cropland members come first -- so a cropland bit
 # outranks a pasture one, which is what lets a pixel be tested against the two groups in turn
 # rather than resolved to a single member first
-assert tuple(DestinationDataset) == (*TO_CROPLAND, *TO_PASTURE)
+assert tuple(DestinationDataset) == (*CROPLAND_DATASETS, *PASTURE_DATASETS)
+# How band names spell each destination's land class
+CROPLAND = "cropland"
+PASTURELAND = "pastureland"
 
 
 def get_last_departure_year(is_source: xarray.DataArray) -> xarray.DataArray:
@@ -314,7 +367,8 @@ class ConversionRecord:
     conversion: xarray.DataArray
     destination_dataset: xarray.DataArray
     from_forest: xarray.DataArray
-    from_grassland: xarray.DataArray
+    from_pasture: xarray.DataArray
+    from_rangeland: xarray.DataArray
     # NB: the source alone, before any destination gates it -- what CIE reports
     source: xarray.DataArray
     to_cropland: xarray.DataArray
@@ -371,8 +425,8 @@ def get_conversion_record(dset: xarray.Dataset) -> ConversionRecord:
     destination_dataset = destination_dataset.astype(numpy.uint8)
     # NB: a cropland bit outranks a pasture one, so testing the groups in turn is the whole of
     # the priority order
-    to_cropland = (destination_dataset & TO_CROPLAND).astype(bool)
-    to_pasture = ~to_cropland & (destination_dataset & TO_PASTURE).astype(bool)
+    to_cropland = (destination_dataset & CROPLAND_DATASETS).astype(bool)
+    to_pasture = ~to_cropland & (destination_dataset & PASTURE_DATASETS).astype(bool)
 
     conversion_to_mask = {
         Conversion.FOREST_TO_CROPLAND: from_forest & to_cropland,
@@ -393,7 +447,8 @@ def get_conversion_record(dset: xarray.Dataset) -> ConversionRecord:
         conversion=conversion.rename(None),
         destination_dataset=destination_dataset.rename(None),
         from_forest=from_forest,
-        from_grassland=from_rangeland | from_pasture,
+        from_pasture=from_pasture,
+        from_rangeland=from_rangeland,
         source=(
             from_forest * numpy.uint8(ConversionSource.FOREST)
             + from_rangeland * numpy.uint8(ConversionSource.NATURAL_GRASSLAND)
@@ -463,7 +518,10 @@ def get_conversion_emissions(
         # NB: vegetation only depends on the source
         vegetation=(
             forest_biomass.where(conversion_record.from_forest, other=0)
-            + grassland_biomass.where(conversion_record.from_grassland, other=0)
+            + grassland_biomass.where(
+                conversion_record.from_rangeland | conversion_record.from_pasture,
+                other=0,
+            )
         )
         .where(fired, other=0)
         .rename("tco2e-per-ha"),
@@ -473,7 +531,8 @@ def get_conversion_emissions(
 def get_dropped_emissions(
     forest_carbon: xarray.DataArray,
     from_forest: xarray.DataArray,
-    from_grassland: xarray.DataArray,
+    from_pasture: xarray.DataArray,
+    from_rangeland: xarray.DataArray,
     grassland_carbon: xarray.DataArray,
     has_destination: xarray.DataArray,
 ) -> xarray.DataArray:
@@ -481,7 +540,7 @@ def get_dropped_emissions(
         CO2E_PER_CARBON
         * (
             forest_carbon.where(from_forest, other=0)
-            + grassland_carbon.where(from_grassland, other=0)
+            + grassland_carbon.where(from_rangeland | from_pasture, other=0)
         ).where(~has_destination, other=0)
     ).rename("tco2e-per-ha")
 
@@ -536,7 +595,10 @@ def get_crop_independent_emissions(
             CO2E_PER_CARBON
             * (
                 forest_carbon.where(conversion_record.from_forest, other=0)
-                + grassland_carbon.where(conversion_record.from_grassland, other=0)
+                + grassland_carbon.where(
+                    conversion_record.from_rangeland | conversion_record.from_pasture,
+                    other=0,
+                )
             )
         ).rename("tco2e-per-ha"),
         # NB: the potential, on all peat whether or not it was converted or is occupied
@@ -607,7 +669,13 @@ def get_hectares_per_pixel(darray: xarray.DataArray) -> xarray.DataArray:
 
 @enum.unique
 class NonCommodity(enum.StrEnum):
-    DROPPED = "DROPPED"
+    # Emissions from clearing forest or grassland where, as far as our maps show, the land did not
+    # become cropland or pasture. They are reported on their own, outside the emissions total
+    DROPPED = enum.auto()
+    # Emissions from land that did become cropland or pasture, but that none of the commodities we
+    # model takes: mostly land used for crops or grazing we don't model. They are part of the
+    # emissions total, so this row and the commodity rows add up to it
+    UNATTRIBUTED = enum.auto()
 
 
 @enum.unique
@@ -630,10 +698,11 @@ def get_span_to_component_to_emissions(
 ) -> dict[SpanType, dict[EmissionComponent, xarray.DataArray]]:
     """Split each span's emissions into the three components that claim them.
 
-    A span's `emissions` is vegetation plus soil, and every unit of both is claimed exactly once:
+    A span's emissions are vegetation plus soil, and every unit of both is claimed exactly once:
     peat takes all the soil it sits under whatever the source class, and the source class takes
-    the soil that is left. So the three sum back to the span's own total, which is what lets
-    `emissions_mt` check them rather than restate them.
+    the soil that is left. So the three sum back to the span's own total: the statistical leg
+    builds `emissions_mt` by adding them up, and the jurisdictional-direct leg, which reads
+    `emissions_mt` from `emissions-per-hectare`, can check them against it.
 
     There is no residual, because `get_conversion_emissions` charges only where a conversion
     fired and every conversion names a source class. Carbon that reaches no conversion is real,
@@ -712,8 +781,8 @@ def derive_from_cie(dset: xarray.Dataset) -> xarray.Dataset:
     source = cie("conversion-source").fillna(0).astype(numpy.uint8)
     destination_dataset = cie("destination-dataset").fillna(0).astype(numpy.uint8)
     year = cie("conversion-year")
-    to_cropland = (destination_dataset & TO_CROPLAND).astype(bool)
-    to_pasture = ~to_cropland & (destination_dataset & TO_PASTURE).astype(bool)
+    to_cropland = (destination_dataset & CROPLAND_DATASETS).astype(bool)
+    to_pasture = ~to_cropland & (destination_dataset & PASTURE_DATASETS).astype(bool)
     has_destination = to_cropland | to_pasture
 
     source_to_destination_conversion = {
@@ -794,7 +863,6 @@ def derive_from_cie(dset: xarray.Dataset) -> xarray.Dataset:
             emissions_per_hectare=emissions_per_hectare,
             hectares_per_pixel=cie("hectares-per-pixel:ha").rename("ha"),
             pastureland_occupation_emissions=pastureland_occupation_emissions,
-            span_to_emissions=span_to_emissions,
             span_to_soil_emissions=span_to_soil_emissions,
             span_to_vegetation_emissions=span_to_vegetation_emissions,
         )
@@ -810,7 +878,6 @@ def get_name_to_legacy_darray(
     emissions_per_hectare: xarray.DataArray,
     hectares_per_pixel: xarray.DataArray,
     pastureland_occupation_emissions: xarray.DataArray,
-    span_to_emissions: dict[SpanType, xarray.DataArray],
     span_to_soil_emissions: dict[SpanType, xarray.DataArray],
     span_to_vegetation_emissions: dict[SpanType, xarray.DataArray],
 ) -> dict[str, xarray.DataArray]:
@@ -822,10 +889,6 @@ def get_name_to_legacy_darray(
             "destination-dataset": destination_dataset,
         }
         | {
-            f"emissions:{before:d}-{after:d}": darray
-            for (before, after), darray in span_to_emissions.items()
-        }
-        | {
             f"soil-emissions:{before:d}-{after:d}": darray
             for (before, after), darray in span_to_soil_emissions.items()
         }
@@ -834,17 +897,17 @@ def get_name_to_legacy_darray(
             for (before, after), darray in span_to_vegetation_emissions.items()
         }
         | {
-            "cropland-peatland-occupation": cropland_occupation_emissions,
+            f"{CROPLAND:s}-peatland-occupation": cropland_occupation_emissions,
             # NB: charged to nobody, so it is reported beside the total rather than inside it
             "dropped-emissions": dropped_emissions,
             "emissions-per-hectare": emissions_per_hectare,
             "hectares-per-pixel": hectares_per_pixel,
-            "pastureland-peatland-occupation": pastureland_occupation_emissions,
+            f"{PASTURELAND:s}-peatland-occupation": pastureland_occupation_emissions,
         }
     )
 
 
-@storage.cache_to_zarr(version=2)
+@storage.cache_to_zarr(version=3)
 def workflow(tile_id: str) -> xarray.Dataset:
     logger.info(f"Running the land conversion and emissions worflow for {tile_id=:s}")
     return get_output_dset(
@@ -888,7 +951,9 @@ def get_output_dset(dset: xarray.Dataset) -> xarray.Dataset:
             aboveground_biomass=aboveground_biomass, climate_zones=climate_zones
         )
     ).rename("tcarbon-per-ha")
-    grassland_carbon = get_grassland_carbon(climate_zones=climate_zones)
+    grassland_carbon = get_grassland_carbon(
+        climate_zones=climate_zones, from_pasture=conversion_record.from_pasture
+    )
 
     logger.info("Releasing the pools each conversion carries")
     is_peatland = dset[gnw_global_peatlands.DATASET.fully_qualified_band_name] == 1
@@ -937,7 +1002,8 @@ def get_output_dset(dset: xarray.Dataset) -> xarray.Dataset:
             darray=get_dropped_emissions(
                 forest_carbon=forest_carbon,
                 from_forest=conversion_record.from_forest,
-                from_grassland=conversion_record.from_grassland,
+                from_pasture=conversion_record.from_pasture,
+                from_rangeland=conversion_record.from_rangeland,
                 grassland_carbon=grassland_carbon,
                 has_destination=conversion_record.to_cropland
                 | conversion_record.to_pasture,
@@ -967,7 +1033,6 @@ def get_output_dset(dset: xarray.Dataset) -> xarray.Dataset:
             emissions_per_hectare=emissions_per_hectare,
             hectares_per_pixel=hectares_per_pixel,
             pastureland_occupation_emissions=pastureland_occupation_emissions,
-            span_to_emissions=span_to_emissions,
             span_to_soil_emissions=span_to_soil_emissions,
             span_to_vegetation_emissions=span_to_vegetation_emissions,
         )

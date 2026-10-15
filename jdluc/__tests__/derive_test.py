@@ -457,14 +457,14 @@ class Comparison:
         destination = (
             self.output["cie-destination-dataset"].fillna(0).data.astype(numpy.uint8)
         )
-        return (destination & emit.TO_CROPLAND).astype(bool)
+        return (destination & emit.CROPLAND_DATASETS).astype(bool)
 
     @property
     def to_pasture(self) -> numpy.ndarray:
         destination = (
             self.output["cie-destination-dataset"].fillna(0).data.astype(numpy.uint8)
         )
-        return ~self.to_cropland & (destination & emit.TO_PASTURE).astype(bool)
+        return ~self.to_cropland & (destination & emit.PASTURE_DATASETS).astype(bool)
 
     @property
     def climate_zone(self) -> numpy.ndarray:
