@@ -5,12 +5,21 @@ license: CC BY 4.0
 year: 2026
 
 https://datacatalog.worldbank.org/search/dataset/0038272/world-bank-official-boundaries
+
+Run as a script, it prints the ten-degree tiles that some countries' boundaries touch, each with
+the shard that selects it alone. The country-scoped CLIs (ingest, harmonize, emit and attribute)
+derive their tiles from these boundaries and shard them with `--modulus` and `--residues`, so an
+orchestrator can run one tile per process without deriving the tiles itself:
+
+    uv run python -m jdluc.datasets.worldbank_jurisdictions BOL
 """
 
+import argparse
 import collections.abc
 import dataclasses
 import enum
 import functools
+import json
 import logging
 import os
 import shutil
@@ -234,3 +243,30 @@ def iter_jurisdiction_for_iso_3166_tile_id(
                 level=admin_level.name,
                 name=row["name"],
             )
+
+
+def main() -> int:
+    # NB: logging goes to stderr, so stdout holds only the JSON
+    logging.basicConfig(
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        level=logging.INFO,
+    )
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("iso_3166s", nargs=argparse.ONE_OR_MORE, type=iso_3166_str)
+    args = parser.parse_args()
+    # Sorted, as `utils.iter_sharded` sorts, so that residue i selects exactly the i-th tile
+    tile_ids = sorted(get_ten_degree_tile_ids_for_iso_3166s(iso_3166s=args.iso_3166s))
+    print(
+        json.dumps(
+            [
+                {"modulus": len(tile_ids), "residue": residue, "tile_id": tile_id}
+                for residue, tile_id in enumerate(tile_ids)
+            ]
+        )
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
