@@ -5,6 +5,7 @@ import logging
 import orchestration
 from jdluc import (
     attribute,
+    derive,
     emit,
     export,
     harmonize,
@@ -17,6 +18,9 @@ from jdluc.datasets import worldbank_jurisdictions
 from orchestration import plan
 
 logger = logging.getLogger(__name__)
+
+# A step's export format when it exports nothing
+NO_EXPORT = "none"
 
 
 def compute(
@@ -81,20 +85,30 @@ def trace_countries(
     logger.info(f"exported emissions factors to {uri:s}")
 
 
-def export_tile(tile_id: str) -> None:
-    """emit's cached output for one tile, as the CIE emissions COG."""
-    (uri,) = emit.export_workflow(tile_id=tile_id)
-    logger.info(f"exported emissions COG to {uri:s}")
+STEP_TO_EXPORT_WORKFLOW: dict[plan.Step, collections.abc.Callable[..., list[str]]] = {
+    plan.Step.EMIT: emit.export_workflow,
+    plan.Step.DERIVE: derive.export_workflow,
+}
 
 
-def mosaic(iso_3166s: tuple[str, ...]) -> None:
-    """One VRT over the run's emissions COGs."""
+def export_tile(
+    deliverable: str, format: export.Format, step: plan.Step, tile_id: str
+) -> None:
+    """One deliverable of one step for one tile, from emit's cached output."""
+    (uri,) = STEP_TO_EXPORT_WORKFLOW[step](
+        deliverable_names=(deliverable,), format=format, tile_id=tile_id
+    )
+    logger.info(f"exported {step!s} {deliverable=:s} to {uri:s}")
+
+
+def mosaic(deliverable: str, iso_3166s: tuple[str, ...]) -> None:
+    """One VRT over the run's COGs of one deliverable."""
     uri = export.mosaic_workflow(
-        deliverable_name=emit.CIE_EMISSIONS.name,
+        deliverable_name=deliverable,
         name="-".join(sorted(iso_3166s)),
         tile_ids=[s.tile_id for s in plan.get_tile_shards(iso_3166s=iso_3166s)],
     )
-    logger.info(f"mosaicked emissions VRT to {uri:s}")
+    logger.info(f"mosaicked {deliverable=:s} to {uri:s}")
 
 
 def main() -> int:
@@ -133,6 +147,15 @@ def main() -> int:
             type=attribute.Methodology.__getitem__,
         )
 
+    def add_export_format(subparser: argparse.ArgumentParser, flag: str) -> None:
+        subparser.add_argument(
+            flag,
+            choices=[*export.Format, None],
+            metavar="{" + ",".join([*export.Format, NO_EXPORT]) + "}",
+            required=True,
+            type=lambda s: None if s == NO_EXPORT else export.Format(s),
+        )
+
     def add_tile_id(subparser: argparse.ArgumentParser) -> None:
         subparser.add_argument("--tile-id", required=True)
 
@@ -145,6 +168,14 @@ def main() -> int:
         help="comma-separated ten-degree datasets whose failed tiles must not stop the run",
         type=lambda s: tuple(name for name in s.split(",") if name),
     )
+    subparser.add_argument(
+        "--derive-deliverables",
+        default=(),
+        help="comma-separated derive deliverables to export",
+        type=lambda s: tuple(name for name in s.split(",") if name),
+    )
+    add_export_format(subparser, "--derive-export")
+    add_export_format(subparser, "--emit-export")
     subparser.add_argument("--output-dir", required=True)
 
     subparser = add_subparser("compute", compute)
@@ -156,9 +187,19 @@ def main() -> int:
     add_iso_3166s(subparser)
     add_methodology(subparser)
 
-    add_tile_id(add_subparser("export", export_tile))
+    subparser = add_subparser("export-tile", export_tile)
+    subparser.add_argument("--deliverable", required=True)
+    subparser.add_argument(
+        "--format", choices=list(export.Format), required=True, type=export.Format
+    )
+    subparser.add_argument(
+        "--step", choices=list(plan.Step), required=True, type=plan.Step
+    )
+    add_tile_id(subparser)
 
-    add_iso_3166s(add_subparser("mosaic", mosaic))
+    subparser = add_subparser("mosaic", mosaic)
+    add_iso_3166s(subparser)
+    subparser.add_argument("--deliverable", required=True)
 
     # Each subcommand's flags are exactly its function's parameters
     kwargs = vars(parser.parse_args())

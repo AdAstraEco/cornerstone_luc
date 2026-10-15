@@ -9,6 +9,7 @@ tables appear here by name. When upstream starts reading a new dataset, add it h
 """
 
 import dataclasses
+import enum
 import json
 import logging
 import os
@@ -16,6 +17,9 @@ import os
 from jdluc import (
     attribute,
     config,
+    derive,
+    emit,
+    export,
     harmonize,
     jurisdictional_direct,
     statistical,
@@ -44,6 +48,13 @@ METHODOLOGY_TO_HARMONIZED_DATASET_NAMES = {
     attribute.Methodology.JURISDICTIONAL_DIRECT: jurisdictional_direct.DATASET_NAMES,
     attribute.Methodology.STATISTICAL: statistical.DATASET_NAMES,
 }
+
+
+class Step(enum.StrEnum):
+    """A step whose per-tile output can be exported as deliverables."""
+
+    EMIT = "emit"
+    DERIVE = "derive"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -88,6 +99,37 @@ def get_tile_shards(iso_3166s: tuple[str, ...]) -> list[TileShard]:
     ]
 
 
+def get_exports(
+    derive_deliverables: tuple[str, ...],
+    derive_export: export.Format | None,
+    emit_export: export.Format | None,
+) -> list[tuple[Step, str, export.Format]]:
+    """Each (step, deliverable, format) the run exports; a step whose format is None exports
+    nothing.
+
+    emit exports every deliverable it has, derive those named. The step's format overrides
+    each deliverable's own.
+    """
+    unknown = sorted(set(derive_deliverables) - set(derive.NAME_TO_DELIVERABLE))
+    assert not unknown, (
+        f"{unknown} are not derive deliverables: {sorted(derive.NAME_TO_DELIVERABLE)}"
+    )
+    assert derive_export is None or derive_deliverables, (
+        f"derive exports as {derive_export!s}, but names no deliverable"
+    )
+    step_to_names = {
+        Step.EMIT: tuple(emit.NAME_TO_DELIVERABLE),
+        Step.DERIVE: derive_deliverables,
+    }
+    step_to_format = {Step.EMIT: emit_export, Step.DERIVE: derive_export}
+    return [
+        (step, name, format)
+        for step, format in step_to_format.items()
+        if format is not None
+        for name in step_to_names[step]
+    ]
+
+
 def ingest_boundaries() -> None:
     """The tile list is read off the boundaries, so the plan ingests them first.
 
@@ -103,6 +145,9 @@ def ingest_boundaries() -> None:
 
 def write_plan(
     allow_failures: tuple[str, ...],
+    derive_deliverables: tuple[str, ...],
+    derive_export: export.Format | None,
+    emit_export: export.Format | None,
     iso_3166s: tuple[str, ...],
     methodology: attribute.Methodology,
     output_dir: str,
@@ -112,12 +157,22 @@ def write_plan(
     ``allow_failures`` names ten-degree datasets whose failed tiles must not stop the run.
     Their units go to their own list, so that the workflow can run them as a task that
     compute does not wait to succeed.
+
+    ``emit_export`` and ``derive_export`` are each step's export format, or None for no
+    export. The per-tile export units are split by format, so the workflow can size each
+    format's pods apart: only a COG stages its bands on local disk. Each COG deliverable is
+    also mosaicked. A step with no export gets empty lists, which Argo skips.
     """
     tiled = get_dataset_names(
         methodology=methodology, partitioning=tiling.Partitioning.TEN_DEGREE_TILE
     )
     unknown = sorted(set(allow_failures) - {name.name for name in tiled})
     assert not unknown, f"{unknown} are not ten-degree datasets this run ingests"
+    exports = get_exports(
+        derive_deliverables=derive_deliverables,
+        derive_export=derive_export,
+        emit_export=emit_export,
+    )
 
     ingest_boundaries()
     shards = get_tile_shards(iso_3166s=iso_3166s)
@@ -140,6 +195,21 @@ def write_plan(
             u for u in ingest_units if u["dataset"] in allow_failures
         ],
         "tiles": [dataclasses.asdict(shard) for shard in shards],
+        **{
+            f"export-tiles-{format!s}": [
+                {
+                    "deliverable": name,
+                    "format": str(format),
+                    "step": str(step),
+                    "tile_id": shard.tile_id,
+                }
+                for step, name, step_format in exports
+                if step_format == format
+                for shard in shards
+            ]
+            for format in export.Format
+        },
+        "mosaics": [name for _, name, format in exports if format == export.Format.COG],
     }
     os.makedirs(output_dir, exist_ok=True)
     for task, items in task_to_items.items():
