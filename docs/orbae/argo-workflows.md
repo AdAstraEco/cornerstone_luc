@@ -1,6 +1,6 @@
 # Running the pipeline on Argo Workflows
 
-**Status:** our preferred way to run the pipeline in the cloud, as of 2026-10-15. It replaces a hand-rolled driver (`infra/run_aoi.py` + `infra/k8s/phase-job.yaml`, since removed) that ran one k8s Indexed Job per phase. Proven end to end on Honduras (1 tile) and Côte d'Ivoire (2 tiles), on our nonprod GKE cluster. This note is written from the user's side: what you need, how to run a country, and what to expect. It is not a guide to operating Argo itself.
+**Status:** our preferred way to run the pipeline in the cloud, as of 2026-10-15. It replaces a hand-rolled driver (`infra/run_aoi.py` + `infra/k8s/phase-job.yaml`, since removed) that ran one k8s Indexed Job per phase. Proven end to end on Honduras (1 tile) and Côte d'Ivoire (2 tiles), on our nonprod GKE cluster. Those runs predate the task layout described here, which arrived with the `orchestration` package (`b795c6f`). This note is written from the user's side: what you need, how to run a country, and what to expect. It is not a guide to operating Argo itself.
 
 > **This repo is public.** The cluster, project, bucket, image registry and node-pool names are deliberately absent from this note. They live in the deployed workflow file and its env files, which are kept outside the repo and shared within the team. [`orchestration/workflow.example.yaml`](../../orchestration/workflow.example.yaml) is a committed copy of the workflow with placeholders for those names.
 
@@ -33,7 +33,7 @@ What Argo did **not** change: `jdluc` runs unmodified inside the pods. Argo repl
 | Cadence               | once per country × source version | every code change         |
 | Idempotent            | yes (skips existing tiles)        | yes (`@cache_to_*`)       |
 
-So only the ingest pods carry the keys, ingest can run on cheaper nodes, a flaky third-party source fails an ingest step rather than a compute run, and one warm `INGEST_ROOT` serves many compute runs. `compute` runs `--skip-ingest` against it.
+So only the ingest pods carry the keys, ingest can run on cheaper nodes, a flaky third-party source fails an ingest step rather than a compute run, and one warm `INGEST_ROOT` serves many compute runs. `compute` first runs harmonize with `skip_ingest=True`, so it reads that cache and never needs the keys.
 
 **Storage, not compute, is the first scale risk.** Per-tile intermediates are hundreds of GiB uncompressed (harmonize ~340 GiB, emit more), and they stay in `SCRATCH_ROOT`. Compute is a one-off cost; storage recurs. Before a continent-scale run, decide retention for `SCRATCH_ROOT`, for example GCS lifecycle rules that delete or downgrade the emit zarrs once the deliverables exist. Sizes and what could shrink them are in [`stage-contents.md`](stage-contents.md#storage).
 
@@ -62,10 +62,10 @@ plan -+-> ingest-world[dataset] -------------------------+-> compute[tile] -+-> 
 | Step                            | Pods                 | Does                                                                                                                      | Secret    |
 | ------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------- | --------- |
 | `plan`                          | 1                    | `python -m orchestration plan ISO`: ingests the boundaries if absent, then writes the JSON lists every fan-out loops over | no keys   |
-| `ingest-world`                  | 1 per dataset        | `jdluc/ingest.py NAME --backfill`: boundaries, climate zones, MAPSPAM, FAOSTAT, NASS                                      | with keys |
+| `ingest-world`                  | 1 per dataset        | `jdluc/ingest.py NAME --backfill`: climate zones, plus MAPSPAM and FAOSTAT (statistical) or NASS (jurisdictional direct)  | with keys |
 | `ingest-tiles`                  | 1 per dataset × tile | `jdluc/ingest.py NAME ISO --modulus=N --residues=i`: one dataset on one tile                                              | with keys |
 | `ingest-tiles-allowed-failures` | 1 per dataset × tile | The same, for the datasets in `allow-failures`                                                                            | with keys |
-| `compute`                       | 1 per tile           | `python -m orchestration compute`: harmonize → emit → attribute, with `--skip-ingest`                                     | no keys   |
+| `compute`                       | 1 per tile           | `python -m orchestration compute`: harmonize (from the warm cache) → emit → attribute, for each country the tile touches  | no keys   |
 | `reduce`                        | 1                    | `python -m orchestration reduce`: `trace.workflow` over the country, the cross-tile merge                                 | no keys   |
 | `export`                        | 1 per tile           | `python -m orchestration export`: writes the CIE emissions COG                                                            | no keys   |
 | `mosaic`                        | 1                    | `python -m orchestration mosaic`: writes a VRT over the country's CIE COGs                                                | no keys   |
@@ -75,7 +75,7 @@ Every step runs a CLI from the image directly, with no shell scripting around it
 
 **Ingest runs one pod per dataset and tile, and fails loudly by default.** The tiles of a country run side by side, which a large country or a global run needs. A dataset behind one global download (GPW livestock, Liao) would fetch it once per pod; setting `SOURCE_CACHE_ROOT` in the Secrets shares those downloads between pods. Already-ingested tiles are skipped, so a warm rerun is quick. A failed tile fails its pod, and that fails the run: compute's `--ignore-missing-tiles` would otherwise turn a missing tile into an all-nodata band without complaint. The exception is the datasets in the `allow-failures` parameter, by default only `DESCALS_OIL_PALM`, which is published only where oil palm was found, so most tiles have none. They run as `ingest-tiles-allowed-failures`, and compute runs whether or not that step fails; its failed tiles show as failed pods in `argo get`. The dataset list is ours, not upstream's: see `orchestration/plan.py` for why, and add to it when upstream starts reading a new dataset.
 
-**The tile list is derived, never typed in.** `plan` lists the tiles the country's boundary touches, the same derivation upstream's CLIs use, each with the `--modulus` and `--residues` that select it alone. Each ingest pod passes those to upstream's ingest CLI, so the pods and the CLI can't disagree about which tile is which. An earlier version took a hand-typed tile count, and nothing checked it against the country.
+**The tile list is derived, never typed in.** `plan` ingests the World Bank boundaries itself (a no-op once present), because the tiles are read off them. It then lists the tiles the country's boundary touches, the same derivation upstream's CLIs use, each with the `--modulus` and `--residues` that select it alone. Each ingest pod passes those to upstream's ingest CLI, so the pods and the CLI can't disagree about which tile is which. An earlier version took a hand-typed tile count, and nothing checked it against the country.
 
 **`derive` runs off to the side.** It needs only emit's cached output, so it starts once `compute` finishes and runs alongside `reduce` and `export`. Nothing downstream reads its output.
 
@@ -155,7 +155,7 @@ Intermediate results (the ingest cache and scratch zarrs) stay under `INGEST_ROO
 
 ### Timings
 
-Measured on the first Côte d'Ivoire run. This was a cold bucket and ran **without** the pd-ssd scratch described below, so the disk-heavy steps should come in faster from now on:
+Measured on the first Côte d'Ivoire run. This was a cold bucket and ran **without** the pd-ssd scratch described below, so the disk-heavy steps should come in faster from now on. Ingest then ran one pod per dataset over all the country's tiles; it now runs one pod per dataset and tile, so its per-pod times will be shorter:
 
 | Step                                  | Per pod                                             |
 | ------------------------------------- | --------------------------------------------------- |
@@ -172,7 +172,9 @@ Measured on the first Côte d'Ivoire run. This was a cold bucket and ran **witho
 
 Every stage is cached (`@storage.cache_to_*`). Rerunning a country, or `argo retry` after a failure, skips everything already in the bucket. When a cold `ingest-tiles` pod hit its 3h deadline, `argo retry` finished the remaining dataset in 5 minutes and the run went on to completion.
 
-The flip side: **a new bucket means a cold run.** The cache keys don't include the bucket, so copying the `INGEST_ROOT` and `SCRATCH_ROOT` objects across at the same relative paths warms it again. And the cache is content-blind: changing code without bumping a stage's `version=` reads back the old result (see [`stage-contents.md`](stage-contents.md)).
+A zarr cache entry counts only once a `.complete` marker beside it has been written, after its last chunk (`52ce727`). A pod killed mid-write (out of memory, deadline, preemption) leaves a partial zarr that the next attempt removes and writes again, rather than reading back missing chunks as fill values. Entries written before `52ce727` have no marker, so each is **recomputed once** on the first run after it: expect the first run on an existing bucket to be cold-ish. Two pods writing the same entry at once can still interfere: within a run each tile has one `compute` pod, but two runs whose countries share a tile shouldn't overlap.
+
+The flip side: **a new bucket means a cold run.** The cache keys don't include the bucket, so copying the `INGEST_ROOT` and `SCRATCH_ROOT` objects across at the same relative paths, `.complete` markers included, warms it again. And the cache is content-blind: changing code without bumping a stage's `version=` reads back the old result (see [`stage-contents.md`](stage-contents.md)).
 
 ### Disk is what limits speed
 
@@ -180,20 +182,23 @@ Ingest, export and derive each write tens of GB of uncompressed GeoTIFF locally 
 
 The workflow therefore gives each pod its own **pd-ssd volume at `/localtmp`**, with `TMPDIR` and `CPL_TMPDIR` pointed at it, as the old driver did. The volume is created with the pod and deleted with it. Background is in [`gke-disk-io-findings.md`](gke-disk-io-findings.md). Don't shrink these volumes: pd-ssd throughput scales with size.
 
-The volume is a generic ephemeral volume on GKE's built-in pd-ssd StorageClass (`premium-rwo`), so no StorageClass object of our own is needed. It works on any machine family, e2 included. Separately, the old driver set a small `ephemeral-storage` request and limit (2Gi / 8Gi) on each container. That covers only the container's own overlay (logs and anything not under `/localtmp`), so a stray writer evicts its own pod and not the node.
+The volume is a generic ephemeral volume on GKE's built-in pd-ssd StorageClass (`premium-rwo`), so no StorageClass object of our own is needed. It works on any machine family, e2 included. Separately, each container has a small `ephemeral-storage` request and limit (2Gi / 8Gi). That covers only the container's own overlay (logs and anything not under `/localtmp`), so a stray writer evicts its own pod and not the node.
 
-### Pod sizing, as the old driver measured it
+### Pod sizing
 
-The old driver's per-phase sizes, with the reasons it recorded. The workflow's sizes are close to these but not identical (see *Open questions*):
+The sizes in `orchestration/workflow.example.yaml`, with the reasons the old driver recorded for its own, similar sizes. "Light" is the shared 2 / 4 CPU and 24Gi memory shape.
 
-| Phase          | CPU req / limit | Memory req / limit | `/localtmp` | Deadline | Why                                                                                                                                                                                                                                 |
-| -------------- | --------------- | ------------------ | ----------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ingest-world` | 2 / 4           | 4Gi / 24Gi         | 100Gi       | 4h       | Network-bound; each object is one whole-world download, MAPSPAM the largest                                                                                                                                                         |
-| `ingest-tiles` | 2 / 4           | 4Gi / 24Gi         | 100Gi       | 2h       | Network-bound, one tile's worth. `/localtmp` holds ~8 GB-class COG temps × `--concurrency`                                                                                                                                          |
-| `compute`      | 6 / 8           | 48Gi / 60Gi        | 20Gi        | 6h       | Peak ~39 GiB observed: about one tile per e2-highmem-8 node, with room for system pods. The deadline allows for a data-dense farmland tile. Results stream to GCS, so `/localtmp` only needs room for Dask spill and the GDAL cache |
-| `reduce`       | 2 / 4           | 8Gi / 32Gi         | 10Gi        | 2h       | A groupby-sum over kilobyte-scale parquets, plus reading the admin-1 boundaries                                                                                                                                                     |
-| `export`       | 2 / 4           | 8Gi / 24Gi         | 200Gi       | 3h       | See below                                                                                                                                                                                                                           |
-| `mosaic`       | 1 / 2           | 2Gi / 8Gi          | 10Gi        | 1h       | Reads each tile COG's header and writes a small VRT; no pixels                                                                                                                                                                      |
+| Task               | CPU req / limit | Memory | `/localtmp` | Deadline | Why                                                                                                                                                                     |
+| ------------------ | --------------- | ------ | ----------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `plan`             | light           | 24Gi   | 20Gi        | 30m      | Reads the boundaries and writes a few small JSON lists                                                                                                                  |
+| `ingest-world`     | light           | 24Gi   | 100Gi       | 1h30     | Network-bound; each pod is one whole-world download, MAPSPAM the largest                                                                                                |
+| `ingest-tile`      | light           | 24Gi   | 150Gi       | 3h       | One dataset on one tile: room for a global source download (GPW livestock, ~5 GB) plus one tile staged uncompressed for its COG (Liao, ~55 GB)                          |
+| `compute`          | 6 / 8           | 56Gi   | 20Gi        | 4h       | Peak ~39 GiB observed: one tile per e2-highmem-8 node, with room for system pods. Results stream to GCS, so `/localtmp` only needs room for Dask spill and GDAL's cache |
+| `reduce`           | light           | 24Gi   | 20Gi        | 1h       | A groupby-sum over kilobyte-scale parquets, plus reading the admin-1 boundaries                                                                                         |
+| `export`, `derive` | light           | 24Gi   | 200Gi       | 3h       | See below                                                                                                                                                               |
+| `mosaic`           | 1 / 2           | 8Gi    | 20Gi        | 1h       | Reads each tile COG's header and writes a small VRT; no pixels                                                                                                          |
+
+Memory requests equal limits. Every container also has a 2Gi / 8Gi `ephemeral-storage` request and limit (above). The old driver used 4–8Gi memory requests below 24–32Gi limits, a 48Gi / 60Gi compute pod and a 6h compute deadline; neither set has been measured at scale.
 
 `export` is limited by disk, not memory, since Dask writes in chunks. `cog_translate` first writes an **uncompressed** tiled intermediate, and only then compresses the final COG. That intermediate is ~33 GB for a 5-band float32 10° tile, so ~70 GB for the 10 `cie-` bands. 200Gi leaves headroom and clears GDAL's free-space check, which we keep on so that a too-small disk fails at the start rather than at 97%.
 
@@ -206,13 +211,13 @@ The highmem pool the compute pods use carries a `NoSchedule` taint, shared with 
 - **`argo retry` restarts the run's clock.** The reported duration covers only the retry, not the time since first submission.
 - **No pod logs its own resource peaks.** For memory and disk use, read `kubectl top` or the GKE metrics.
 - **`mosaic` only covers CIE.** There is no mosaic for the `derive` deliverables yet.
-- **`compute` and `reduce` must get identical flags.** The methodology and crop names are cache-key arguments of the attribute legs, so a mismatch doesn't fail: it silently recomputes every tile inside the single `reduce` pod (see `orchestration/__main__.py`).
+- **`compute` and `reduce` must use the same methodology.** It picks the attribute leg and its crop names, which are cache-key arguments, so a mismatch doesn't fail: it silently recomputes every tile inside the single `reduce` pod. The workflow passes one `methodology` parameter to both, so this bites only when running `python -m orchestration` by hand.
 - **A warm cache can fake a fast run.** When measuring timings, make sure the run does real work (fresh tiles, a fresh prefix, or a bumped stage `version=`), or it will finish in seconds and look as if it scaled.
 
 ## Open questions
 
 - **Deadlines.** A cold `ingest-tiles` needed more than 3h without pd-ssd, and `export` came within 6 minutes of its 3h. Re-measure with pd-ssd before choosing new limits.
-- **Sizes and pools.** The workflow's memory requests and node pools differ slightly from the old driver's (*Pod sizing* above). Neither set has been measured at scale.
+- **Sizes.** The workflow's sizes (*Pod sizing* above) have not been measured at scale, and the per-tile ingest pods have not been timed.
 - **Several countries per run**, and several `derive` deliverables per run.
 - **Ingest versioning.** `INGEST_ROOT` isn't keyed by source-dataset version, and mutable sources (Dataverse, GFW) aren't pinned, so a re-ingest isn't guaranteed to reproduce an earlier one.
 - **Storage retention.** No lifecycle rules are set on `SCRATCH_ROOT` yet (see *Design choices*).

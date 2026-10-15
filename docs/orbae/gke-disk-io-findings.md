@@ -1,6 +1,6 @@
 # GKE disk-I/O for bursty geospatial ETL — findings (pass 1)
 
-> **Outcome.** We did not adopt the Local SSD node pool recommended below. Each pod gets its own pd-ssd generic ephemeral volume at `/localtmp` instead, which needs no dedicated node pool and works on the shared e2 pools; see *Disk is what limits speed* in [`argo-workflows.md`](argo-workflows.md). The diagnosis below still stands. The `§` references are to the research brief that commissioned this note, since removed.
+> **Outcome.** We did not adopt the Local SSD node pool recommended below. Each pod gets its own pd-ssd generic ephemeral volume at `/localtmp` instead, which needs no dedicated node pool and works on the shared e2 pools; see *Disk is what limits speed* in [`argo-workflows.md`](argo-workflows.md). The diagnosis below still stands. The `§` references are to the research brief that commissioned this note, since removed. Its references to `phase-job.yaml`, `run_phase.py` and `cluster.env` are to the old driver, since replaced by the `orchestration` package. The cgroup sampler it recommends was built (`resource_monitor.py`) and has since been removed too.
 
 **Status:** first pass. Answers the high-value questions (§6.A, D, E and the core of B/C) with GCP-documented figures. Items explicitly deferred to pass 2 are flagged **[PASS 2]**. This is a research synthesis; nothing here has been tested on our cluster.
 
