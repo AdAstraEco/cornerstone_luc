@@ -64,7 +64,7 @@ The notes below record the exploration that led to Argo, in the order it happene
 
 #### [`cornerstone-k8s.md`](cornerstone-k8s.md) — 2026-09-10
 
-**History: the feasibility spike's proposal; nothing was deployed when this was written.** How to run the pipeline in our GKE cluster as one Kubernetes Job per 10° tile — no Dask scheduler, no change to `jdluc`. Most of the scaffolding it describes has since been removed; the image (`infra/Dockerfile`) and the per-pod entry point (`infra/run_phase.py`) survive under Argo.
+**History: the feasibility spike's proposal; nothing was deployed when this was written.** How to run the pipeline in our GKE cluster as one Kubernetes Job per 10° tile — no Dask scheduler, no change to `jdluc`. Most of the scaffolding it describes has since been removed; the image (now the top-level `Dockerfile`) and the per-pod entry point (`infra/run_phase.py`) survive under Argo.
 
 The reasoning worth reading is the "Why Jobs, not a Dask cluster" section: the goal was to de-risk *the repository*, so anything that also required us to evaluate and operate Dask would let a Dask failure masquerade as a repo failure. Also lists the integration risks found by reading the code first — the cache key needing `.git` in the image, `.env` being a file rather than environment, and caching that can make a scaling run finish instantly and *look* like it scaled.
 

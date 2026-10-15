@@ -14,7 +14,7 @@ What did **not** change: `jdluc` and `infra/run_phase.py` run unmodified inside 
 
 | Piece    | What it is                                                                             | Where it lives                                |
 | -------- | -------------------------------------------------------------------------------------- | --------------------------------------------- |
-| Image    | `infra/Dockerfile`, built from a commit and tagged with its short SHA                  | the team's Artifact Registry                  |
+| Image    | `Dockerfile`, built from a commit and tagged with its short SHA                        | the team's Artifact Registry                  |
 | Workflow | one Argo `Workflow` YAML: the DAG below, pod sizes, node pools                         | outside the repo (team-shared)                |
 | Config   | each pod's `.env`: `INGEST_ROOT`, `SCRATCH_ROOT`, `EXPORT_ROOT`, API keys              | two k8s Secrets, built from `infra/cloud.env` |
 | Identity | the `argo-workflow` service account, bound to a GCP service account with bucket access | set up by the platform team                   |
@@ -80,7 +80,7 @@ kubectl --context "$KUBE_CONTEXT" -n argo create secret generic <secret-no-keys>
 
 The workflow names both Secrets. To change the config, delete and recreate them.
 
-**The image.** Build it from a clean commit and push it, as in the header of `infra/Dockerfile`. Then set the workflow's image to the new tag.
+**The image.** Build it from a clean commit and push it, as in the header of the `Dockerfile`. Then set the workflow's image to the new tag.
 
 **What a run leaves behind.** Pods and their autoscaled nodes go away by themselves. The Secrets, the images in the registry and the bucket's data stay until deleted. The data is the point of the run; before a continent-scale run, decide how long to keep `SCRATCH_ROOT` (see *Storage, not compute, is the first scale risk* in [`scale-out.md`](scale-out.md)).
 

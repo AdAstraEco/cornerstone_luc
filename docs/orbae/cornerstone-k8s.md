@@ -26,7 +26,7 @@ Crucially this needs **no code change**: the stage already spins its own in-proc
 
 We fan tiles out as plain k8s `Job`s in the `dan` namespace, using only privileges Dan already has. This is the minimal instrument for the feasibility question — it adds no long-running scheduler to operate and keeps the thing under test (the repo) isolated from any distribution-framework of our own.
 
-- **One image** ([`infra/Dockerfile`](../../infra/Dockerfile)) built from `uv.lock`, so the pod resolves exactly what a laptop run resolves.
+- **One image** ([`Dockerfile`](../../Dockerfile)) built from `uv.lock`, so the pod resolves exactly what a laptop run resolves.
 - **A Job template** rendered once per tile by a submitter script, which resolves the tiles a country touches and `kubectl apply`s one Job each. `restartPolicy: Never`, `backoffLimit: 1`, `ttlSecondsAfterFinished` for self-cleanup. (Since superseded: those two files became the Indexed-Job template `infra/k8s/phase-job.yaml` and the phase driver `infra/run_aoi.py` — see [`scale-out.md`](scale-out.md) — and both have since been removed in favour of Argo, see [`argo-workflows.md`](argo-workflows.md).)
 - **The scaling knob is submission + autoscaling**: submit N Jobs and the highmem node pool (`e2-highmem-8`, autoscaling 0→N) runs as many concurrently as it has room for. No `kubectl scale` of a worker pool.
 - **GCS access via Workload Identity**: pods run as an existing KSA (already annotated to the GSA the Celery workers use). **No new IAM.** Cluster-specific names live in `infra/cluster.env` (see `infra/cluster.env.example`), not in tracked files.

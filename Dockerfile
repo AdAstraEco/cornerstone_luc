@@ -3,13 +3,13 @@
 # The Argo workflow runs the real stages unchanged inside each pod, one pod per tile per
 # phase, so this image just needs the resolved jdluc environment. We build from uv.lock so the
 # image is pinned to exactly what a laptop run resolves -- the same "lean venv, no conda"
-# choice the architecture doc makes. The workflow sets the command (infra/run_phase.py).
+# choice the architecture doc makes. The workflow sets each step's command.
 #
 # Build + push (do NOT run without Dan's OK), from a clean commit, tagged with its short SHA.
 # IMAGE (the repository, without a tag) comes from infra/cluster.env:
 #   source infra/cluster.env
 #   TAG=$(git rev-parse --short HEAD)
-#   docker build -f infra/Dockerfile -t "$IMAGE:$TAG" \
+#   docker build -t "$IMAGE:$TAG" \
 #     --build-arg JDLUC_GIT_VERSION="$(git rev-parse HEAD)" \
 #     --build-arg JDLUC_GIT_REMOTE_URL="$(git remote get-url origin)" .
 #   docker push "$IMAGE:$TAG"
@@ -52,4 +52,4 @@ ARG JDLUC_GIT_REMOTE_URL=unknown
 ENV JDLUC_GIT_VERSION=${JDLUC_GIT_VERSION} \
     JDLUC_GIT_REMOTE_URL=${JDLUC_GIT_REMOTE_URL}
 
-# No ENTRYPOINT: the workflow sets `python infra/run_phase.py --phase <phase> <ISO_3166>...`.
+# No ENTRYPOINT: each workflow step sets its own command, a CLI from the image.
