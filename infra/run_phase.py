@@ -363,17 +363,25 @@ def main() -> int:
     monitor_label = f"{phase!s}:{tile_id or '-'.join(iso_3166s)}"
     with resource_monitor.monitor(label=monitor_label):
         match phase:
-            case Phase.INGEST_WORLD | Phase.INGEST_TILES:
+            case Phase.INGEST_WORLD:
+                # Whole-world datasets ignore the tile set, and the boundary layer they
+                # sit beside is what *this* phase writes, so never resolve countries here:
+                # on an empty INGEST_ROOT that lookup fails.
                 return run_ingest(
                     concurrency=int(args.concurrency),
                     dataset_names=get_dataset_names_for_phase(
                         methodology=methodology, phase=phase
                     ),
-                    # A whole-world dataset ignores the tile set, so ingest-world's pod passes
-                    # the AOI's whole list and ingest.workflow collapses it.
-                    tile_ids=[tile_id]
-                    if tile_id
-                    else get_tile_ids(iso_3166s=iso_3166s),
+                    tile_ids=[tiling.WHOLE_WORLD_TILE_ID],
+                )
+            case Phase.INGEST_TILES:
+                assert tile_id
+                return run_ingest(
+                    concurrency=int(args.concurrency),
+                    dataset_names=get_dataset_names_for_phase(
+                        methodology=methodology, phase=phase
+                    ),
+                    tile_ids=[tile_id],
                 )
             case Phase.COMPUTE:
                 assert tile_id
