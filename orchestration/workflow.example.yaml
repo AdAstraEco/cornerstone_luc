@@ -7,12 +7,13 @@
 #   argo submit workflow.example.yaml -p iso=HND --generate-name cornerstone-hnd-
 #
 # Each task runs one CLI from the image: `python -m orchestration <task>`, or jdluc's own ingest
-# and derive CLIs. `plan` writes the lists every fan-out loops over, so the workflow itself
-# needs no expressions, nested loops or shell scripting.
+# CLI. `plan` writes the lists every fan-out loops over, so the workflow itself needs no
+# expressions, nested loops or shell scripting. A step that exports nothing gets empty lists,
+# and Argo skips a task with nothing to loop over.
 #
-#   plan ─┬─ ingest-world ──────────────────┐
-#         ├─ ingest-tiles ──────────────────┼─ compute ─┬─ trace ── export ── mosaic
-#         └─ ingest-tiles-allowed-failures ─┘           └─ derive
+#   plan ─┬─ ingest-world ──────────────────┐           ┌─ trace
+#         ├─ ingest-tiles ──────────────────┼─ compute ─┼─ export-tiles-cog ── mosaic
+#         └─ ingest-tiles-allowed-failures ─┘           └─ export-tiles-zarr
 
 apiVersion: argoproj.io/v1alpha1
 kind: Workflow
@@ -32,8 +33,15 @@ spec:
       # is published only where there is oil palm, and its ingest fails on tiles without any.
       - name: allow-failures
         value: DESCALS_OIL_PALM
-      # crop-class-emissions, perennial-discounting-comparison or perennial-debug
-      - name: derive-deliverable
+      # Each step's export: cog, zarr or none. emit exports cie-emissions; derive exports the
+      # derive-deliverables. Without an export derive does not run, as nothing else reads it.
+      - name: emit-export
+        value: cog
+      - name: derive-export
+        value: none
+      # Comma-separated, of crop-class-emissions, perennial-discounting-comparison and
+      # perennial-debug
+      - name: derive-deliverables
         value: crop-class-emissions
 
   # Every pod runs on the worker pool unless its template says otherwise
@@ -88,22 +96,31 @@ spec:
             template: trace
             depends: compute
 
-          - name: export
-            template: export
-            depends: trace
-            withParam: "{{tasks.plan.outputs.parameters.tiles}}"
-            arguments: { parameters: [{ name: tile-id, value: "{{item.tile_id}}" }] }
+          # One deliverable of emit or derive on one tile. Both read only emit's cache, warm
+          # after compute
+          - name: export-tiles-cog
+            template: export-tile-cog
+            depends: compute
+            withParam: "{{tasks.plan.outputs.parameters.export-tiles-cog}}"
+            arguments: &export-tile-arguments
+              parameters:
+                - { name: step, value: "{{item.step}}" }
+                - { name: deliverable, value: "{{item.deliverable}}" }
+                - { name: format, value: "{{item.format}}" }
+                - { name: tile-id, value: "{{item.tile_id}}" }
 
+          - name: export-tiles-zarr
+            template: export-tile-zarr
+            depends: compute
+            withParam: "{{tasks.plan.outputs.parameters.export-tiles-zarr}}"
+            arguments: *export-tile-arguments
+
+          # One VRT per COG deliverable
           - name: mosaic
             template: mosaic
-            depends: export
-
-          # Reads only emit's cache, warm after compute, and nothing reads its output
-          - name: derive
-            template: derive
-            depends: compute
-            withParam: "{{tasks.plan.outputs.parameters.tiles}}"
-            arguments: { parameters: [{ name: tile-id, value: "{{item.tile_id}}" }] }
+            depends: export-tiles-cog
+            withParam: "{{tasks.plan.outputs.parameters.mosaics}}"
+            arguments: { parameters: [{ name: deliverable, value: "{{item}}" }] }
 
     # Ingests the boundaries if absent, then writes one JSON list per fan-out
     - name: plan
@@ -116,6 +133,9 @@ spec:
           - "--methodology={{workflow.parameters.methodology}}"
           - --output-dir=/plan
           - "--allow-failures={{workflow.parameters.allow-failures}}"
+          - "--emit-export={{workflow.parameters.emit-export}}"
+          - "--derive-export={{workflow.parameters.derive-export}}"
+          - "--derive-deliverables={{workflow.parameters.derive-deliverables}}"
         env: &tmpdir-env
           # Temp files on the pod's own SSD, not the node's boot disk (docs/orbae/gke-disk-io-findings.md)
           - { name: TMPDIR, value: /localtmp }
@@ -143,6 +163,9 @@ spec:
           - name: ingest-tiles-allowed-failures
             valueFrom: { path: /plan/ingest-tiles-allowed-failures.json }
           - { name: tiles, valueFrom: { path: /plan/tiles.json } }
+          - { name: export-tiles-cog, valueFrom: { path: /plan/export-tiles-cog.json } }
+          - { name: export-tiles-zarr, valueFrom: { path: /plan/export-tiles-zarr.json } }
+          - { name: mosaics, valueFrom: { path: /plan/mosaics.json } }
 
     - name: ingest-world
       inputs: { parameters: [{ name: dataset }] }
@@ -227,21 +250,26 @@ spec:
         volumeMounts: *mounts
       volumes: [*nokeys, *localtmp-20]
 
-    # Writes cie-emissions/{tile}.tif, staging ~70 GB uncompressed for the COG
-    - name: export
-      inputs: { parameters: [{ name: tile-id }] }
+    # Writes {deliverable}/{tile}.tif, staging the bands uncompressed for the COG: ~70 GB for
+    # cie-emissions
+    - name: export-tile-cog
+      inputs: &export-tile-inputs
+        parameters: [{ name: step }, { name: deliverable }, { name: format }, { name: tile-id }]
       activeDeadlineSeconds: 10800
       container:
         image: *image
-        command: [python, -m, orchestration, export]
-        args: ["--tile-id={{inputs.parameters.tile-id}}"]
+        command: &export-tile-command [python, -m, orchestration, export-tile]
+        args: &export-tile-args
+          - "--step={{inputs.parameters.step}}"
+          - "--deliverable={{inputs.parameters.deliverable}}"
+          - "--format={{inputs.parameters.format}}"
+          - "--tile-id={{inputs.parameters.tile-id}}"
         env: *tmpdir-env
         resources: *light-resources
         volumeMounts: *mounts
       volumes:
         - *nokeys
-        - &localtmp-200
-          name: localtmp
+        - name: localtmp
           ephemeral:
             volumeClaimTemplate:
               spec:
@@ -249,31 +277,32 @@ spec:
                 storageClassName: premium-rwo
                 resources: { requests: { storage: 200Gi } }
 
-    # Writes mosaics/cie-emissions-{iso}.vrt over the country's COGs
+    # Writes {deliverable}/{tile}.zarr, streaming chunks to the bucket with no local staging
+    - name: export-tile-zarr
+      inputs: *export-tile-inputs
+      activeDeadlineSeconds: 10800
+      container:
+        image: *image
+        command: *export-tile-command
+        args: *export-tile-args
+        env: *tmpdir-env
+        resources: *light-resources
+        volumeMounts: *mounts
+      volumes: [*nokeys, *localtmp-20]
+
+    # Writes mosaics/{deliverable}-{iso}.vrt over the country's COGs of one deliverable
     - name: mosaic
+      inputs: { parameters: [{ name: deliverable }] }
       activeDeadlineSeconds: 3600
       container:
         image: *image
         command: [python, -m, orchestration, mosaic]
-        args: ["{{workflow.parameters.iso}}"]
+        args:
+          - "{{workflow.parameters.iso}}"
+          - "--deliverable={{inputs.parameters.deliverable}}"
         env: *tmpdir-env
         resources:
           requests: { cpu: "1", memory: 8Gi, ephemeral-storage: 2Gi }
           limits: { cpu: "2", memory: 8Gi, ephemeral-storage: 8Gi }
         volumeMounts: *mounts
       volumes: [*nokeys, *localtmp-20]
-
-    # Writes {derive-deliverable}/{tile}.tif from emit's cache
-    - name: derive
-      inputs: { parameters: [{ name: tile-id }] }
-      activeDeadlineSeconds: 10800
-      container:
-        image: *image
-        command: [python, jdluc/derive.py]
-        args:
-          - "{{inputs.parameters.tile-id}}"
-          - "--deliverable={{workflow.parameters.derive-deliverable}}"
-        env: *tmpdir-env
-        resources: *light-resources
-        volumeMounts: *mounts
-      volumes: [*nokeys, *localtmp-200]

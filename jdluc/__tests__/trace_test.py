@@ -333,5 +333,5 @@ def test_export_workflow_writes_the_table_by_aoi_and_methodology(
     assert uri == str(tmp_path / "emissions-factors" / "GTM-HND-STATISTICAL.parquet")
     written = pandas.read_parquet(uri)
     pandas.testing.assert_frame_equal(written, table)
-    assert written.attrs["watershed-product-name"] == "emissions-factors"
-    assert written.attrs["watershed-source-name"] == "jdluc-trace"
+    assert written.attrs["cornerstone-product-name"] == "emissions-factors"
+    assert written.attrs["cornerstone-source-name"] == "jdluc-trace"

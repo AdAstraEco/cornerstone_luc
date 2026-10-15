@@ -166,11 +166,11 @@ def to_zarr_dataset(dset: xarray.Dataset, deliverable: Deliverable) -> xarray.Da
 def get_metadata(product_name: str, source_name: str) -> dict[str, str]:
     """Provenance, as `datasets.base` stamps on ingested COGs."""
     return {
-        "watershed-processing-time": utils.get_utc_timestamp(),
-        "watershed-processing-version": utils.get_git_version(),
-        "watershed-product-name": product_name,
-        "watershed-remote-url": utils.get_git_remote_url(),
-        "watershed-source-name": source_name,
+        "cornerstone-processing-time": utils.get_utc_timestamp(),
+        "cornerstone-processing-version": utils.get_git_version(),
+        "cornerstone-product-name": product_name,
+        "cornerstone-remote-url": utils.get_git_remote_url(),
+        "cornerstone-source-name": source_name,
     }
 
 
