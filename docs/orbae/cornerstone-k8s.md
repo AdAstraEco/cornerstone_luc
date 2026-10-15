@@ -1,5 +1,7 @@
 # Spike: run the pipeline in our k8s cloud, one tile per Job
 
+> **History.** We now run the pipeline on Argo: see [`argo-workflows.md`](argo-workflows.md).
+
 **Status:** proposal / scaffolding on branch `spike/dask-k8s`. Nothing is deployed. This document is the plan; the runnable stubs live in [`infra/`](../../infra/).
 
 ## Goal
