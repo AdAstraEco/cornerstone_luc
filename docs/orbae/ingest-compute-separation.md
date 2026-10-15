@@ -4,11 +4,12 @@ Working notes toward a systematic split of **ingest** (fetch source data → war
 from **compute** (harmonize → emit → attribute → trace → `SCRATCH_ROOT`). Prompted by the
 one-off `us-ingest` job.
 
-**Status:** the *Target systematic design* below is implemented by the phase driver in
-[`scale-out.md`](scale-out.md) (§*As built*) — `infra/run_aoi.py` + `infra/run_phase.py`, with
-ingest split into `ingest-world` / `ingest-tiles` and compute running `--skip-ingest` against
-the warm cache on a separate Secret. Orchestration is a driver script, not Argo (see that
-note's options and revisit triggers). Item 4, **versioning**, is *not* done.
+**Status:** the *Target systematic design* below is implemented by the Argo workflow in
+[`argo-workflows.md`](argo-workflows.md), which runs `infra/run_phase.py` in each pod: ingest
+split into `ingest-world` / `ingest-tiles`, and compute running `--skip-ingest` against the
+warm cache on a separate Secret. It was first implemented by the hand-rolled driver in
+[`scale-out.md`](scale-out.md) (§*As built*), which Argo has replaced. Item 4, **versioning**,
+is *not* done.
 
 ## Why separate them
 
