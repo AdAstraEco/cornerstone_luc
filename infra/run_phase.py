@@ -1,14 +1,9 @@
 """Run ONE pod's worth of one phase of an AOI run (docs/orbae/argo-workflows.md).
 
-The Argo workflow runs one pod per phase, or per tile for the per-tile phases, in this order:
+Ingest is not a phase here: the workflow fans out over ``infra/list_datasets.py``'s output and
+runs upstream's ``jdluc/ingest.py`` once per dataset. After it, one pod per phase, or per tile for
+the per-tile phases, in this order:
 
-``ingest-world``
-    One pod: every whole-world dataset the AOI needs (boundaries, IPCC zones, MAPSPAM,
-    NASS tables). Kept out of the per-tile fan-out precisely because these are one
-    object each -- N tile pods would otherwise race to write the same path. Best-effort.
-``ingest-tiles``
-    One pod per tile: the ten-degree datasets for that tile. Holds the source-API
-    credentials. Best-effort (an ocean/edge tile legitimately has no data).
 ``compute``
     One pod per tile: ``harmonize`` -> ``emit`` -> the per-(tile, country) attribute leg,
     chained in-process so a tile costs one pod and one scheduling round rather than three.
@@ -34,7 +29,6 @@ same derivation ``attribute.workflow`` uses.
 
 Run inside the container (the workflow does this for you)::
 
-    python infra/run_phase.py --phase ingest-world HND
     python infra/run_phase.py --phase compute --skip-ingest --tile-id 20N_090W HND
 """
 
@@ -48,36 +42,23 @@ import resource_monitor
 
 from jdluc import (
     attribute,
-    config,
-    datasets,
     emit,
     export,
     harmonize,
-    ingest,
     jurisdictional_direct,
     statistical,
     tiling,
     trace,
 )
-from jdluc.datasets import DatasetName, worldbank_jurisdictions
+from jdluc.datasets import worldbank_jurisdictions
 
 logger = logging.getLogger(__name__)
 
 # k8s Indexed Job: each pod's 0-based index within `completions`.
 COMPLETION_INDEX_ENV_VAR = "JOB_COMPLETION_INDEX"
 
-# No workflow names these, but every stage resolves jurisdictions through them.
-BOUNDARY_DATASET_NAMES = (
-    DatasetName.WORLD_BANK_ADMIN_0,
-    DatasetName.WORLD_BANK_ADMIN_1,
-)
-
-DEFAULT_INGEST_CONCURRENCY = 4
-
 
 class Phase(enum.StrEnum):
-    INGEST_WORLD = "ingest-world"
-    INGEST_TILES = "ingest-tiles"
     COMPUTE = "compute"
     REDUCE = "reduce"
     EXPORT = "export"
@@ -86,43 +67,7 @@ class Phase(enum.StrEnum):
     @property
     def is_per_tile(self) -> bool:
         """Does the workflow fan this phase out over the AOI's tiles (vs one pod for the AOI)?"""
-        return self in (Phase.INGEST_TILES, Phase.COMPUTE, Phase.EXPORT)
-
-
-def get_dataset_names(methodology: attribute.Methodology) -> tuple[DatasetName, ...]:
-    """Every dataset a run of ``methodology`` reads."""
-    return (
-        *BOUNDARY_DATASET_NAMES,
-        *(name for stack in harmonize.Stack for name in stack.value),
-        *(
-            (*jurisdictional_direct.DATASET_NAMES, DatasetName.USDA_NASS_QUICKSTATS)
-            if methodology == attribute.Methodology.JURISDICTIONAL_DIRECT
-            else statistical.DATASET_NAMES
-        ),
-    )
-
-
-def get_dataset_names_for_phase(
-    methodology: attribute.Methodology, phase: Phase
-) -> tuple[DatasetName, ...]:
-    """Split the dataset list by partitioning: whole-world datasets vs per-tile ones.
-
-    This is what keeps ``ingest-world`` and ``ingest-tiles`` from overlapping. A whole-world
-    dataset is a single object however many tiles the AOI has (``ingest.workflow`` rewrites
-    its tile set to ``WHOLE_WORLD_TILE_ID``), so ingesting it from every tile pod would be
-    N concurrent writers to one path.
-    """
-    assert phase in (Phase.INGEST_WORLD, Phase.INGEST_TILES), phase
-    want_whole_world = phase == Phase.INGEST_WORLD
-    return tuple(
-        dataset_name
-        for dataset_name in get_dataset_names(methodology=methodology)
-        if (
-            datasets.NAME_TO_CLS[dataset_name].partitioning
-            == tiling.Partitioning.WHOLE_WORLD
-        )
-        == want_whole_world
-    )
+        return self in (Phase.COMPUTE, Phase.EXPORT)
 
 
 def get_tile_ids(iso_3166s: collections.abc.Iterable[str]) -> list[str]:
@@ -158,53 +103,6 @@ def get_iso_3166s_for_tile_id(
             admin_level=worldbank_jurisdictions.AdminLevel.NATIONAL,
         )
     )
-
-
-def run_ingest(
-    concurrency: int,
-    dataset_names: collections.abc.Sequence[DatasetName],
-    tile_ids: collections.abc.Sequence[str],
-) -> int:
-    """Ingest each dataset over ``tile_ids``, best-effort. Returns a process exit code.
-
-    Best-effort means a per-(dataset, tile) failure is logged and the rest still run: a
-    missing tile is often legitimate (an ocean or map-edge tile among the AOI's bounding
-    tiles), and abandoning the pod would waste the tiles that did fetch. A phase where
-    *nothing* succeeded is a different animal -- bad credentials, no network, wrong root --
-    so that exits non-zero, which fails the step and stops the workflow.
-    """
-    root = config.Config.from_dot_env().ingest_root
-    successes: list[tuple[DatasetName, str]] = []
-    failures: list[tuple[DatasetName, str, str]] = []
-    for dataset_name in dataset_names:
-        logger.info(f"Ingesting {dataset_name!s} over {len(tile_ids):d} tile(s)")
-        try:
-            tile_id_to_result = ingest.workflow(
-                concurrency=concurrency,
-                dataset=datasets.NAME_TO_CLS[dataset_name],
-                overwrite=False,
-                root=root,
-                tile_ids=tile_ids,
-            )
-        except Exception as exc:
-            # ingest.workflow itself only raises on a bad dataset/tile combination; a
-            # per-tile fetch failure comes back inside the result dict.
-            logger.exception(f"Ingest of {dataset_name!s} failed outright")
-            failures.append((dataset_name, "*", repr(exc)))
-            continue
-        for tile_id, result in sorted(tile_id_to_result.items()):
-            if isinstance(result, Exception):
-                failures.append((dataset_name, tile_id, repr(result)))
-            else:
-                successes.append((dataset_name, tile_id))
-
-    logger.info(f"Ingested {len(successes):d} ok, {len(failures):d} failed")
-    for dataset_name, tile_id, message in failures:
-        logger.warning(f"  failed: {dataset_name!s} {tile_id:s}: {message:s}")
-    if not successes:
-        logger.error("Nothing was ingested at all; treating the phase as failed")
-        return 1
-    return 0
 
 
 def run_compute(
@@ -321,12 +219,6 @@ def main() -> int:
         help=f"index into the AOI's sorted tiles; defaults to ${COMPLETION_INDEX_ENV_VAR}",
     )
     parser.add_argument(
-        "--concurrency",
-        type=int,
-        default=DEFAULT_INGEST_CONCURRENCY,
-        help="in-pod ingest threads (ingest phases only)",
-    )
-    parser.add_argument(
         "--methodology-name",
         choices=sorted(e.name for e in attribute.Methodology),
         default=attribute.Methodology.STATISTICAL.name,
@@ -363,26 +255,6 @@ def main() -> int:
     monitor_label = f"{phase!s}:{tile_id or '-'.join(iso_3166s)}"
     with resource_monitor.monitor(label=monitor_label):
         match phase:
-            case Phase.INGEST_WORLD:
-                # Whole-world datasets ignore the tile set, and the boundary layer they
-                # sit beside is what *this* phase writes, so never resolve countries here:
-                # on an empty INGEST_ROOT that lookup fails.
-                return run_ingest(
-                    concurrency=int(args.concurrency),
-                    dataset_names=get_dataset_names_for_phase(
-                        methodology=methodology, phase=phase
-                    ),
-                    tile_ids=[tiling.WHOLE_WORLD_TILE_ID],
-                )
-            case Phase.INGEST_TILES:
-                assert tile_id
-                return run_ingest(
-                    concurrency=int(args.concurrency),
-                    dataset_names=get_dataset_names_for_phase(
-                        methodology=methodology, phase=phase
-                    ),
-                    tile_ids=[tile_id],
-                )
             case Phase.COMPUTE:
                 assert tile_id
                 run_compute(
