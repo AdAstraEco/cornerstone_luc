@@ -54,22 +54,22 @@ The bucket is set **only** in the Secrets. To point a run at a different bucket,
 Each run covers one country (`iso`):
 
 ```
-plan -+-> ingest-world[dataset] -------------------------+-> compute[tile] -+-> reduce -> export[tile] -> mosaic
+plan -+-> ingest-world[dataset] -------------------------+-> compute[tile] -+-> trace -> export[tile] -> mosaic
       +-> ingest-tiles[dataset][tile] -------------------+                  +-> derive[tile]
       +-> ingest-tiles-allowed-failures[dataset][tile] --+
 ```
 
-| Step                            | Pods                 | Does                                                                                                                      | Secret    |
-| ------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------- | --------- |
-| `plan`                          | 1                    | `python -m orchestration plan ISO`: ingests the boundaries if absent, then writes the JSON lists every fan-out loops over | no keys   |
-| `ingest-world`                  | 1 per dataset        | `jdluc/ingest.py NAME --backfill`: climate zones, plus MAPSPAM and FAOSTAT (statistical) or NASS (jurisdictional direct)  | with keys |
-| `ingest-tiles`                  | 1 per dataset × tile | `jdluc/ingest.py NAME ISO --modulus=N --residues=i`: one dataset on one tile                                              | with keys |
-| `ingest-tiles-allowed-failures` | 1 per dataset × tile | The same, for the datasets in `allow-failures`                                                                            | with keys |
-| `compute`                       | 1 per tile           | `python -m orchestration compute`: harmonize (from the warm cache) → emit → attribute, for each country the tile touches  | no keys   |
-| `reduce`                        | 1                    | `python -m orchestration reduce`: `trace.workflow` over the country, the cross-tile merge                                 | no keys   |
-| `export`                        | 1 per tile           | `python -m orchestration export`: writes the CIE emissions COG                                                            | no keys   |
-| `mosaic`                        | 1                    | `python -m orchestration mosaic`: writes a VRT over the country's CIE COGs                                                | no keys   |
-| `derive`                        | 1 per tile           | `jdluc/derive.py`: writes one crop-class deliverable from emit's cache                                                    | no keys   |
+| Step                            | Pods                 | Does                                                                                                                            | Secret    |
+| ------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `plan`                          | 1                    | `python -m orchestration plan ISO`: ingests the boundaries if absent, then writes the JSON lists every fan-out loops over       | no keys   |
+| `ingest-world`                  | 1 per dataset        | `jdluc/ingest.py NAME --backfill`: climate zones, plus MAPSPAM and FAOSTAT (statistical) or NASS (jurisdictional direct)        | with keys |
+| `ingest-tiles`                  | 1 per dataset × tile | `jdluc/ingest.py NAME ISO --modulus=N --residues=i`: one dataset on one tile                                                    | with keys |
+| `ingest-tiles-allowed-failures` | 1 per dataset × tile | The same, for the datasets in `allow-failures`                                                                                  | with keys |
+| `compute`                       | 1 per tile           | `python -m orchestration compute`: harmonize (from the warm cache) → emit → attribute, for each country the tile touches        | no keys   |
+| `trace`                         | 1                    | `python -m orchestration trace`: `trace.workflow` over the country, the cross-tile merge, written as the emissions-factor table | no keys   |
+| `export`                        | 1 per tile           | `python -m orchestration export`: writes the CIE emissions COG                                                                  | no keys   |
+| `mosaic`                        | 1                    | `python -m orchestration mosaic`: writes a VRT over the country's CIE COGs                                                      | no keys   |
+| `derive`                        | 1 per tile           | `jdluc/derive.py`: writes one crop-class deliverable from emit's cache                                                          | no keys   |
 
 Every step runs a CLI from the image directly, with no shell scripting around it.
 
@@ -77,7 +77,9 @@ Every step runs a CLI from the image directly, with no shell scripting around it
 
 **The tile list is derived, never typed in.** `plan` ingests the World Bank boundaries itself (a no-op once present), because the tiles are read off them. It then lists the tiles the country's boundary touches, the same derivation upstream's CLIs use, each with the `--modulus` and `--residues` that select it alone. Each ingest pod passes those to upstream's ingest CLI, so the pods and the CLI can't disagree about which tile is which. An earlier version took a hand-typed tile count, and nothing checked it against the country.
 
-**`derive` runs off to the side.** It needs only emit's cached output, so it starts once `compute` finishes and runs alongside `reduce` and `export`. Nothing downstream reads its output.
+**`trace` was called `reduce`** until it was renamed after the upstream stage it runs. Images from then on have no `reduce` subcommand, so the workflow must name the task `trace`.
+
+**`derive` runs off to the side.** It needs only emit's cached output, so it starts once `compute` finishes and runs alongside `trace` and `export`. Nothing downstream reads its output.
 
 ## One-off setup
 
@@ -141,11 +143,12 @@ The Argo UI shows the same information. Ask the platform team for its address.
 
 Paths are relative to `EXPORT_ROOT`:
 
-| Step     | Writes                                  |
-| -------- | --------------------------------------- |
-| `export` | `cie-emissions/{tile}.tif`              |
-| `mosaic` | `mosaics/cie-emissions-{iso}.vrt`       |
-| `derive` | `{deliverable}/{tile}.tif` (or `.zarr`) |
+| Step     | Writes                                          |
+| -------- | ----------------------------------------------- |
+| `trace`  | `emissions-factors/{iso}-{methodology}.parquet` |
+| `export` | `cie-emissions/{tile}.tif`                      |
+| `mosaic` | `mosaics/cie-emissions-{iso}.vrt`               |
+| `derive` | `{deliverable}/{tile}.tif` (or `.zarr`)         |
 
 Each deliverable has its own folder. Files at the top level of `EXPORT_ROOT`, or a `mosaics/{iso}.vrt`, come from images older than `91efe40` and are superseded.
 
@@ -163,7 +166,7 @@ Measured on the first Côte d'Ivoire run. This was a cold bucket and ran **witho
 | `ingest-tiles` (cold)                 | 2.5h to over 3h                                     |
 | `ingest-tiles` (data already present) | minutes                                             |
 | `compute`                             | 57–61m                                              |
-| `reduce`                              | 2m                                                  |
+| `trace`                               | 2m                                                  |
 | `export`                              | 1h30–1h54, vs ~50m with pd-ssd under the old driver |
 | `derive` (`crop-class-emissions`)     | 38–47m                                              |
 | `mosaic`                              | 39s                                                 |
@@ -194,7 +197,7 @@ The sizes in `orchestration/workflow.example.yaml`, with the reasons the old dri
 | `ingest-world`     | light           | 24Gi   | 100Gi       | 1h30     | Network-bound; each pod is one whole-world download, MAPSPAM the largest                                                                                                |
 | `ingest-tile`      | light           | 24Gi   | 150Gi       | 3h       | One dataset on one tile: room for a global source download (GPW livestock, ~5 GB) plus one tile staged uncompressed for its COG (Liao, ~55 GB)                          |
 | `compute`          | 6 / 8           | 56Gi   | 20Gi        | 4h       | Peak ~39 GiB observed: one tile per e2-highmem-8 node, with room for system pods. Results stream to GCS, so `/localtmp` only needs room for Dask spill and GDAL's cache |
-| `reduce`           | light           | 24Gi   | 20Gi        | 1h       | A groupby-sum over kilobyte-scale parquets, plus reading the admin-1 boundaries                                                                                         |
+| `trace`            | light           | 24Gi   | 20Gi        | 1h       | A groupby-sum over kilobyte-scale parquets, plus reading the admin-1 boundaries                                                                                         |
 | `export`, `derive` | light           | 24Gi   | 200Gi       | 3h       | See below                                                                                                                                                               |
 | `mosaic`           | 1 / 2           | 8Gi    | 20Gi        | 1h       | Reads each tile COG's header and writes a small VRT; no pixels                                                                                                          |
 
@@ -211,13 +214,14 @@ The highmem pool the compute pods use carries a `NoSchedule` taint, shared with 
 - **`argo retry` restarts the run's clock.** The reported duration covers only the retry, not the time since first submission.
 - **No pod logs its own resource peaks.** For memory and disk use, read `kubectl top` or the GKE metrics.
 - **`mosaic` only covers CIE.** There is no mosaic for the `derive` deliverables yet.
-- **`compute` and `reduce` must use the same methodology.** It picks the attribute leg and its crop names, which are cache-key arguments, so a mismatch doesn't fail: it silently recomputes every tile inside the single `reduce` pod. The workflow passes one `methodology` parameter to both, so this bites only when running `python -m orchestration` by hand.
+- **`compute` and `trace` must use the same methodology.** It picks the attribute leg and its crop names, which are cache-key arguments, so a mismatch doesn't fail: it silently recomputes every tile inside the single `trace` pod. The workflow passes one `methodology` parameter to both, so this bites only when running `python -m orchestration` by hand.
 - **A warm cache can fake a fast run.** When measuring timings, make sure the run does real work (fresh tiles, a fresh prefix, or a bumped stage `version=`), or it will finish in seconds and look as if it scaled.
 
 ## Open questions
 
 - **Deadlines.** A cold `ingest-tiles` needed more than 3h without pd-ssd, and `export` came within 6 minutes of its 3h. Re-measure with pd-ssd before choosing new limits.
 - **Sizes.** The workflow's sizes (*Pod sizing* above) have not been measured at scale, and the per-tile ingest pods have not been timed.
+- **Output versioning.** Every deliverable is written at a fixed path, so a rerun overwrites the last. The emissions-factor table especially wants a version (data version, commit or run) in its path before results are shared.
 - **Several countries per run**, and several `derive` deliverables per run.
 - **Ingest versioning.** `INGEST_ROOT` isn't keyed by source-dataset version, and mutable sources (Dataverse, GFW) aren't pinned, so a re-ingest isn't guaranteed to reproduce an earlier one.
 - **Storage retention.** No lifecycle rules are set on `SCRATCH_ROOT` yet (see *Design choices*).

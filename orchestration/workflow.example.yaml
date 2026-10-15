@@ -11,7 +11,7 @@
 # needs no expressions, nested loops or shell scripting.
 #
 #   plan ─┬─ ingest-world ──────────────────┐
-#         ├─ ingest-tiles ──────────────────┼─ compute ─┬─ reduce ── export ── mosaic
+#         ├─ ingest-tiles ──────────────────┼─ compute ─┬─ trace ── export ── mosaic
 #         └─ ingest-tiles-allowed-failures ─┘           └─ derive
 
 apiVersion: argoproj.io/v1alpha1
@@ -84,13 +84,13 @@ spec:
             withParam: "{{tasks.plan.outputs.parameters.tiles}}"
             arguments: { parameters: [{ name: tile-id, value: "{{item.tile_id}}" }] }
 
-          - name: reduce
-            template: reduce
+          - name: trace
+            template: trace
             depends: compute
 
           - name: export
             template: export
-            depends: reduce
+            depends: trace
             withParam: "{{tasks.plan.outputs.parameters.tiles}}"
             arguments: { parameters: [{ name: tile-id, value: "{{item.tile_id}}" }] }
 
@@ -213,12 +213,12 @@ spec:
         - &nokeys { name: cloud-env, secret: { secretName: cornerstone-env-nokeys } }
         - *localtmp-20
 
-    # The cross-tile merge over the country
-    - name: reduce
+    # The cross-tile merge over the country; writes emissions-factors/{iso}-{methodology}.parquet
+    - name: trace
       activeDeadlineSeconds: 3600
       container:
         image: *image
-        command: [python, -m, orchestration, reduce]
+        command: [python, -m, orchestration, trace]
         args:
           - "{{workflow.parameters.iso}}"
           - "--methodology={{workflow.parameters.methodology}}"

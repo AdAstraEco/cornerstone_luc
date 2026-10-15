@@ -6,7 +6,7 @@ cache key is passed straight through to jdluc, with jdluc's own defaults.
 
   python -m orchestration plan HND --methodology=STATISTICAL --output-dir=/plan
   python -m orchestration compute HND --methodology=STATISTICAL --tile-id=10N_090W
-  python -m orchestration reduce HND --methodology=STATISTICAL
+  python -m orchestration trace HND --methodology=STATISTICAL
   python -m orchestration export --tile-id=10N_090W
   python -m orchestration mosaic HND
 
