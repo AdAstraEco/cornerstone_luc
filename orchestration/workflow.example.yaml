@@ -22,6 +22,9 @@ metadata:
 spec:
   entrypoint: cornerstone
   serviceAccountName: argo-workflow
+  # Backstops against a runaway fan-out: at most 25 pods at once, and 6 hours for the whole run
+  parallelism: 25
+  activeDeadlineSeconds: 21600
   arguments:
     parameters:
       # The run's country: one ISO 3166 alpha-3 code
