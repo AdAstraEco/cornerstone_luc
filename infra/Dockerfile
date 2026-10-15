@@ -1,14 +1,18 @@
-# cornerstone image (docs/orbae/cornerstone-k8s.md): the jdluc pipeline, runnable one-tile-per-pod.
+# cornerstone image (docs/orbae/argo-workflows.md): the jdluc pipeline, runnable one-tile-per-pod.
 #
-# Approach B (one k8s Job per tile) runs the real stage unchanged inside the pod, so this
-# image just needs the resolved jdluc environment. We build from uv.lock so the image is
-# pinned to exactly what a laptop run resolves -- the same "lean venv, no conda" choice the
-# architecture doc makes. The k8s Job sets the command (infra/run_phase.py, see phase-job.yaml).
+# The Argo workflow runs the real stages unchanged inside each pod, one pod per tile per
+# phase, so this image just needs the resolved jdluc environment. We build from uv.lock so the
+# image is pinned to exactly what a laptop run resolves -- the same "lean venv, no conda"
+# choice the architecture doc makes. The workflow sets the command (infra/run_phase.py).
 #
-# Build + push (do NOT run without Dan's OK). IMAGE comes from infra/cluster.env:
+# Build + push (do NOT run without Dan's OK), from a clean commit, tagged with its short SHA.
+# IMAGE (the repository, without a tag) comes from infra/cluster.env:
 #   source infra/cluster.env
-#   docker build -f infra/Dockerfile -t "$IMAGE" .
-#   docker push "$IMAGE"
+#   TAG=$(git rev-parse --short HEAD)
+#   docker build -f infra/Dockerfile -t "$IMAGE:$TAG" \
+#     --build-arg JDLUC_GIT_VERSION="$(git rev-parse HEAD)" \
+#     --build-arg JDLUC_GIT_REMOTE_URL="$(git remote get-url origin)" .
+#   docker push "$IMAGE:$TAG"
 
 FROM ghcr.io/astral-sh/uv:python3.14-bookworm-slim
 
@@ -48,4 +52,4 @@ ARG JDLUC_GIT_REMOTE_URL=unknown
 ENV JDLUC_GIT_VERSION=${JDLUC_GIT_VERSION} \
     JDLUC_GIT_REMOTE_URL=${JDLUC_GIT_REMOTE_URL}
 
-# No ENTRYPOINT: the Job sets `python infra/run_phase.py --phase <phase> <ISO_3166>...`.
+# No ENTRYPOINT: the workflow sets `python infra/run_phase.py --phase <phase> <ISO_3166>...`.

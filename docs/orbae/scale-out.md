@@ -1,10 +1,16 @@
 # Design note: scaling the pipeline over multiple machines
 
+> **Superseded by [`argo-workflows.md`](argo-workflows.md).** The revisit triggers below
+> (several people running AOIs, wanting a UI, the driver outgrowing a linear chain) have been
+> hit, and Argo has replaced the driver. `infra/run_aoi.py` and `infra/k8s/` are gone. The
+> body is kept as history: the options weighed, and *Storage, not compute, is the first scale
+> risk*, which still holds.
+
 **Status:** implemented, not yet run in-cluster at scale — see *As built* below. This is the
 follow-up that [`docs/orbae/cornerstone-k8s.md`](cornerstone-k8s.md)
 explicitly deferred: the cornerstone proved the repo runs, is correct, and scales in our GKE
 cluster; this note chooses how to operate that at production scale. Guiding constraint, per the
-repo ethos ([`architecture.md`](architecture.md)): **simplicity over performance**.
+repo ethos ([`architecture.md`](../architecture.md)): **simplicity over performance**.
 
 ## Recommendation (TL;DR)
 
@@ -107,7 +113,8 @@ ingest best-effort / compute strict.
 ## As built
 
 Implemented as above, entirely under `infra/`, with three deliberate deviations. Operational
-detail lives in [`infra/k8s/README.md`](../../infra/k8s/README.md).
+detail lived in `infra/k8s/README.md`, since removed; what is still true of it is in
+[`argo-workflows.md`](argo-workflows.md).
 
 - `infra/run_phase.py` (was `run_tile.py`) — the in-pod entrypoint for every phase: dataset
   selection, the index→tile mapping, `--skip-ingest`, and the in-pod stage chain.

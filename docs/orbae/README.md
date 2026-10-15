@@ -103,11 +103,25 @@ content.
 
 ## 3 · Running it in our infrastructure
 
-### [`cornerstone-k8s.md`](cornerstone-k8s.md) — 2026-09-10
+### [`argo-workflows.md`](argo-workflows.md) — 2026-10-15
 
-**Proposal and plan; nothing was deployed when this was written.** How to run the pipeline in
-our GKE cluster as one Kubernetes Job per 10° tile — no Dask scheduler, no change to `jdluc`.
-The runnable scaffolding it describes lives in [`../../infra/`](../../infra/).
+**How we run it now.** The pipeline as an Argo Workflow DAG, one pod per tile per phase, with
+the tile list derived from the country in-cluster. From the user's side: the pieces, how to
+submit and watch a country, where outputs land, measured timings, and the gotchas. Supersedes
+the hand-rolled driver in `scale-out.md`. Start here for anything about running the pipeline
+today.
+
+### History: how we got here
+
+The notes below record the exploration that led to Argo, in the order it happened. They are
+kept for their reasoning and measurements; none of them describes how we run the pipeline now.
+
+#### [`cornerstone-k8s.md`](cornerstone-k8s.md) — 2026-09-10
+
+**History: the feasibility spike's proposal; nothing was deployed when this was written.** How
+to run the pipeline in our GKE cluster as one Kubernetes Job per 10° tile — no Dask scheduler,
+no change to `jdluc`. Most of the scaffolding it describes has since been removed; the image
+(`infra/Dockerfile`) and the per-pod entry point (`infra/run_phase.py`) survive under Argo.
 
 The reasoning worth reading is the "Why Jobs, not a Dask cluster" section: the goal was to
 de-risk *the repository*, so anything that also required us to evaluate and operate Dask would
@@ -116,9 +130,10 @@ reading the code first — the cache key needing `.git` in the image, `.env` bei
 than environment, and caching that can make a scaling run finish instantly and *look* like it
 scaled.
 
-### [`scaling-reliability-assessment.md`](scaling-reliability-assessment.md) · [`.pdf`](scaling-reliability-assessment.pdf) — 2026-09-11
+#### [`scaling-reliability-assessment.md`](scaling-reliability-assessment.md) · [`.pdf`](scaling-reliability-assessment.pdf) — 2026-09-11
 
-**The finished assessment, written for a build-on-this-or-not decision.** All four phases run
+**History: the spike's finished assessment, written for a build-on-this-or-not decision.** Its
+findings still stand; it predates Argo. All four phases run
 end-to-end on GKE against real country data. Deliberately gives as much weight to the failure
 modes we did *not* hit as to the one we did.
 
@@ -132,6 +147,19 @@ Read §2 before the numbers. The evidence is a live 2-tile Czechia run plus an e
 run: a functional pilot, not a scale test. Per-tile compute can plausibly swing ±2× across the
 globe, so whole-world figures are order-of-magnitude. §10 splits the conclusions into solid
 today / solid with moderate work / unproven. The PDF is a print rendering of the Markdown.
+
+#### [`scale-out.md`](scale-out.md)
+
+**History: the hand-rolled driver.** Chose one Indexed Job per phase, driven by a script, over
+Argo, and listed the triggers for revisiting that choice. Those triggers have been hit, and
+Argo has replaced the driver. Still the reference for the options weighed and for *Storage,
+not compute, is the first scale risk*.
+
+#### [`ingest-compute-separation.md`](ingest-compute-separation.md)
+
+**Design note** on splitting ingest from compute: `ingest-world` / `ingest-tiles` ahead of a
+`compute` that runs `--skip-ingest` against the warm cache, without the API keys. Implemented
+first by the driver and now by the Argo workflow. Versioning (its item 4) is not done.
 
 ### [`storage-cost-brief.md`](storage-cost-brief.md) — 2026-09-10
 
@@ -152,17 +180,16 @@ on measurements rather than estimates wherever local data allows.
 Skimming for the conclusions: `scaling-reliability-assessment.md` §1 and §10, then
 `orbae_spec_alignment.md` §5.
 
+Running the pipeline in the cloud: `argo-workflows.md` alone.
+
 Reading properly, and in roughly the order the thinking happened:
-`cornerstone-k8s.md` → `scaling-reliability-assessment.md` → `storage-cost-brief.md` →
-`data_flow.md` → `orbae_spec_alignment.md`, with the spec and the side-by-side open alongside
-the last of these.
+`cornerstone-k8s.md` → `scaling-reliability-assessment.md` → `scale-out.md` →
+`ingest-compute-separation.md` → `argo-workflows.md` for the infrastructure, then
+`storage-cost-brief.md` → `data_flow.md` → `orbae_spec_alignment.md`, with the spec and the
+side-by-side open alongside the last of these.
 
 ## Loose ends
 
-- **`docs/scale-out.md` is referenced but is not on this branch.** It is the follow-up design
-  note that `cornerstone-k8s.md` deferred — one Indexed Job per phase — and it lives on
-  `scale-out/indexed-jobs` (and on the two `spike/*` branches). `storage-cost-brief.md` cites
-  it.
 - **`docs/storage-cost-findings.md` does not exist.** `storage-cost-brief.md` commissions it.
 - The comparisons are pinned to a repo state of `8130655` (the GLCLUC → TCL/GPW/GACED30
   migration) and a spec state of `0db3abd`. Both go stale as either side moves.

@@ -2,7 +2,7 @@
 
 This document is the reference for the artifacts the pipeline produces: how to get them, grids, and full schemas. For *what* the numbers mean see `methodology.md`; for *how* they are produced see `architecture.md`; to reproduce them yourself see the ["Running the pipeline"](../README.md#running-the-pipeline) section of the README.
 
-The data is licensed [CC-BY 4.0](https://creativecommons.org/licenses/by/4.0/); please follow the attribution guidance in `ATTRIBUTION.md`.
+The data is licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); please follow the attribution guidance in `ATTRIBUTION.md`.
 
 ## Access
 
@@ -66,7 +66,6 @@ The crop-agnostic, per-pixel, per-span LUC emissions produced by the `emit` stag
 | `destination-dataset`                                | float32 | Dataset bitmask | Which layers claimed the pixel at the assessment year — one bit each, so a contested pixel keeps both    |
 | `vegetation-emissions:tco2e-per-ha:{before}-{after}` | float32 | t CO₂e/ha       | Per-span vegetation-carbon loss (above-ground, below-ground, dead organic matter, grassland)             |
 | `soil-emissions:tco2e-per-ha:{before}-{after}`       | float32 | t CO₂e/ha       | Per-span soil-carbon loss (mineral stock change + peatland drainage pulse)                               |
-| `emissions:tco2e-per-ha:{before}-{after}`            | float32 | t CO₂e/ha       | Per-span total (vegetation + soil), before temporal discounting                                          |
 | `cropland-peatland-occupation:tco2e-per-ha`          | float32 | t CO₂e/ha       | Current-year annual peatland-occupation emissions under cropland                                         |
 | `pastureland-peatland-occupation:tco2e-per-ha`       | float32 | t CO₂e/ha       | The same under pasture, split from cropland on the 30 m grid                                             |
 | `dropped-emissions:tco2e-per-ha`                     | float32 | t CO₂e/ha       | Source carbon no destination claimed, reported beside the total rather than inside it                    |
@@ -84,21 +83,21 @@ emissions = xarray.open_zarr("<scratch-root>/<cache-key>.zarr", consolidated=Fal
 
 Deposited per data version as `emissions-factors.parquet` (see [Access](#access)).
 
-The final per-(jurisdiction, crop) table produced by the `trace` stage. Indexed by `(admin_level, admin_id, commodity_name, methodology)` — all strings — where `admin_level` is `PROVINCIAL` (World Bank admin-1) or `NATIONAL` (admin-0, summed from provincial rows) and `methodology` is `JURISDICTIONAL_DIRECT` or `STATISTICAL`. Two `commodity_name` values are not crops: `PASTURE`, which carries emissions and area but no production, and `DROPPED`, which carries only the emissions no destination layer claimed. Neither takes a production figure, so neither is published with an emissions factor.
+The final per-(jurisdiction, commodity) table produced by the `trace` stage. Indexed by `(admin_level, admin_id, commodity_name, methodology)` — all strings — where `admin_level` is `PROVINCIAL` (World Bank admin-1) or `NATIONAL` (admin-0, summed from provincial rows) and `methodology` is `JURISDICTIONAL_DIRECT` or `STATISTICAL`. Four `commodity_name` values are not crops. `BEEF_CATTLE` is a livestock commodity: it carries its share of pasture's emissions and area, and production like a crop's. `PASTURE` keeps the rest of pasture's share, with emissions and area but no production. `DROPPED` and `UNATTRIBUTED` appear in both legs and are not commodities at all. `UNATTRIBUTED` holds emissions that count toward the jurisdiction's total but that none of the commodities we model takes, so the commodity rows plus `UNATTRIBUTED` add up to that total. `DROPPED` holds carbon released where, as far as our maps show, the land became neither cropland nor pasture; it does not count toward the total and comes on top of it. `PASTURE`, `DROPPED` and `UNATTRIBUTED` have no production figure, so none of them has an emissions factor. See "Rows that name no commodity" in [`methodology.md`](methodology.md).
 
-| Column                             | Type    | Units        | Description                                                                                |
-| ---------------------------------- | ------- | ------------ | ------------------------------------------------------------------------------------------ |
-| `jurisdiction_name`                | string  | —            | Display name (e.g. `United States of America \| Iowa`)                                     |
-| `commodity_hectares`               | float64 | ha           | Area the commodity occupies (land occupation), on production's discounted 2000–2020 window |
-| `peatland_commodity_hectares`      | float64 | ha           | Commodity area on peatland                                                                 |
-| `emissions_mt`                     | float64 | t CO₂e       | Total allocated LUC emissions                                                              |
-| `peatland_occupation_emissions_mt` | float64 | t CO₂e       | Annual peatland-occupation emissions on the commodity's pixels                             |
-| `forest_emissions_mt`              | float64 | t CO₂e       | Forest-conversion emissions                                                                |
-| `grassland_emissions_mt`           | float64 | t CO₂e       | Grassland-conversion emissions                                                             |
-| `peatland_conversion_emissions_mt` | float64 | t CO₂e       | Peatland-conversion (drainage-pulse) emissions                                             |
-| `production_kg`                    | float64 | kg           | Crop production (NASS yield × area for the direct leg; MapSPAM for the statistical leg)    |
-| `yield_kg_per_ha`                  | float64 | kg/ha        | `production_kg / commodity_hectares`                                                       |
-| `emissions_factor_kgco2e_per_kg`   | float64 | kg CO₂e / kg | `1000 × emissions_mt / production_kg` — the headline factor                                |
+| Column                             | Type    | Units        | Description                                                                                                                      |
+| ---------------------------------- | ------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| `jurisdiction_name`                | string  | —            | Display name (e.g. `United States of America \| Iowa`)                                                                           |
+| `commodity_hectares`               | float64 | ha           | Area the commodity occupies (land occupation), on production's discounted 2000–2020 window                                       |
+| `peatland_commodity_hectares`      | float64 | ha           | Commodity area on peatland                                                                                                       |
+| `emissions_mt`                     | float64 | t CO₂e       | Total allocated LUC emissions                                                                                                    |
+| `peatland_occupation_emissions_mt` | float64 | t CO₂e       | Annual peatland-occupation emissions on the commodity's pixels                                                                   |
+| `forest_emissions_mt`              | float64 | t CO₂e       | Forest-conversion emissions                                                                                                      |
+| `grassland_emissions_mt`           | float64 | t CO₂e       | Grassland-conversion emissions                                                                                                   |
+| `peatland_conversion_emissions_mt` | float64 | t CO₂e       | Peatland-conversion (drainage-pulse) emissions                                                                                   |
+| `production_kg`                    | float64 | kg           | Production: crops from NASS yield × area (direct leg) or MapSPAM (statistical leg); livestock as FAOSTAT carcass weight, bone in |
+| `yield_kg_per_ha`                  | float64 | kg/ha        | `production_kg / commodity_hectares`                                                                                             |
+| `emissions_factor_kgco2e_per_kg`   | float64 | kg CO₂e / kg | `1000 × emissions_mt / production_kg` — the headline factor                                                                      |
 
 Both attribution legs emit the same columns.
 

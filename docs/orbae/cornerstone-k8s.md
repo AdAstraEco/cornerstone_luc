@@ -1,5 +1,7 @@
 # Spike: run the pipeline in our k8s cloud, one tile per Job
 
+> **History.** We now run the pipeline on Argo: see [`argo-workflows.md`](argo-workflows.md).
+
 **Status:** proposal / scaffolding on branch `spike/dask-k8s`. Nothing is deployed. This document is the plan; the runnable stubs live in [`infra/`](../../infra/).
 
 ## Goal
@@ -25,7 +27,7 @@ Crucially this needs **no code change**: the stage already spins its own in-proc
 We fan tiles out as plain k8s `Job`s in the `dan` namespace, using only privileges Dan already has. This is the minimal instrument for the feasibility question — it adds no long-running scheduler to operate and keeps the thing under test (the repo) isolated from any distribution-framework of our own.
 
 - **One image** ([`infra/Dockerfile`](../../infra/Dockerfile)) built from `uv.lock`, so the pod resolves exactly what a laptop run resolves.
-- **A Job template** rendered once per tile by a submitter script, which resolves the tiles a country touches and `kubectl apply`s one Job each. `restartPolicy: Never`, `backoffLimit: 1`, `ttlSecondsAfterFinished` for self-cleanup. (Since superseded: those two files are now the Indexed-Job template [`infra/k8s/phase-job.yaml`](../../infra/k8s/phase-job.yaml) and the phase driver [`infra/run_aoi.py`](../../infra/run_aoi.py) — see [`scale-out.md`](scale-out.md).)
+- **A Job template** rendered once per tile by a submitter script, which resolves the tiles a country touches and `kubectl apply`s one Job each. `restartPolicy: Never`, `backoffLimit: 1`, `ttlSecondsAfterFinished` for self-cleanup. (Since superseded: those two files became the Indexed-Job template `infra/k8s/phase-job.yaml` and the phase driver `infra/run_aoi.py` — see [`scale-out.md`](scale-out.md) — and both have since been removed in favour of Argo, see [`argo-workflows.md`](argo-workflows.md).)
 - **The scaling knob is submission + autoscaling**: submit N Jobs and the highmem node pool (`e2-highmem-8`, autoscaling 0→N) runs as many concurrently as it has room for. No `kubectl scale` of a worker pool.
 - **GCS access via Workload Identity**: pods run as an existing KSA (already annotated to the GSA the Celery workers use). **No new IAM.** Cluster-specific names live in `infra/cluster.env` (see `infra/cluster.env.example`), not in tracked files.
 - **In-pod parallelism** stays as-is: the stage's own `LocalCluster` (sized by `NUMBER_OF_DASK_WORKERS`) uses the pod's cores for the per-tile compute. Parallelism *across* tiles = number of Job pods; parallelism *within* a tile = the inner threads.
@@ -36,7 +38,7 @@ An earlier draft of this cornerstone stood up a remote Dask scheduler + worker D
 
 ## Known integration points / risks to verify in the cornerstone
 
-- **Cache key needs `.git` in the image.** `storage.cache_to_zarr` derives the stage's module path via `git.Repo(search_parent_directories=True)`, so the image must contain the repo's `.git`. The [`.dockerignore`](../.dockerignore) trims the build context but deliberately keeps `.git`. (Worth a follow-up: derive the path without git.)
+- **Cache key needs `.git` in the image.** `storage.cache_to_zarr` derives the stage's module path via `git.Repo(search_parent_directories=True)`, so the image must contain the repo's `.git`. The [`.dockerignore`](../../.dockerignore) trims the build context but deliberately keeps `.git`. (Worth a follow-up: derive the path without git.)
 - **`.env` is a file, not env.** `Config.from_dot_env()` reads a `.env` file, so pods mount one from a Secret (`infra/k8s/README.md`). Pre-ingest HND once so workers hit the `SCRATCH_ROOT` cache and don't need the USDA/Harvard API keys.
 - **Caching can mask a scaled run.** `cache_to_zarr` short-circuits when the output already exists in `SCRATCH_ROOT`. If a scaling run re-uses already-computed tiles it will finish instantly and *look* like it scaled. Each measured run must do real work: bump the stage `version=`, clear the prefix, or use fresh tiles.
 - **Per-tile memory.** A tile's working set must fit one `e2-highmem-8` (64 GiB; pod limited to 60 GiB). If it doesn't, that Job's pod OOMKills (exit 137) — under one-Job-per-tile that is an isolated, observable finding, not a silent whole-run failure.

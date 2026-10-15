@@ -11,7 +11,9 @@ import xarray
 from jdluc import emit, geo, harmonize, storage, tiling, utils
 from jdluc.datasets import (
     DatasetName,
+    faostat,
     gpw_grassland,
+    gpw_livestock,
     ifpri_mapspam,
     worldbank_jurisdictions,
 )
@@ -61,9 +63,22 @@ assert {e.value for e in Crop} == ifpri_mapspam.RECOVERABLE_CROP_NAMES
 
 @enum.unique
 class Livestock(enum.StrEnum):
-    # TODO: expand to the livestock commodities a pasture mask can name, at which point PASTURE
-    # itself goes away
-    PASTURE = "PASTURE"
+    """The commodities dividing pasture's share of a cell; PASTURE keeps what the others don't."""
+
+    BEEF_CATTLE = enum.auto()
+    PASTURE = enum.auto()
+
+
+LIVESTOCK_TO_SPECIES = {
+    Livestock.BEEF_CATTLE: (gpw_livestock.Species.CATTLE,),
+}
+assert set(LIVESTOCK_TO_SPECIES) == set(Livestock) - {Livestock.PASTURE}
+# No grazer may be named by two commodities, or its livestock units would count toward both shares
+assert sum(len(species) for species in LIVESTOCK_TO_SPECIES.values()) == len(
+    set(LIVESTOCK_TO_SPECIES.values())
+)
+
+assert {e.name for e in faostat.Species} == {e.name for e in gpw_livestock.Species}
 
 
 # `Crop` stays exactly MapSPAM's recoverable crops, because everything that divides by one looks
@@ -80,21 +95,25 @@ DATASET_NAMES = (
     DatasetName.IFPRI_MAPSPAM_PRODUCTION_2005,
     DatasetName.IFPRI_MAPSPAM_PRODUCTION_2010,
     DatasetName.IFPRI_MAPSPAM_PRODUCTION_2020,
+    DatasetName.GPW_LIVESTOCK,
 )
 
 
 EMIT_VARIABLE_NAMES = [
-    "cropland-peatland-occupation:tco2e-per-ha",
+    f"{emit.CROPLAND:s}-peatland-occupation:tco2e-per-ha",
     "dropped-emissions:tco2e-per-ha",
-    "emissions:tco2e-per-ha:2000-2005",
-    "emissions:tco2e-per-ha:2005-2010",
-    "emissions:tco2e-per-ha:2010-2015",
-    "emissions:tco2e-per-ha:2015-2020",
-    "pastureland-peatland-occupation:tco2e-per-ha",
+    f"{emit.PASTURELAND:s}-peatland-occupation:tco2e-per-ha",
 ]
 
+# Components divided by the pooled expansion share. The peat pulse is not one of them: it is stored
+# as two bands, peat drained for cropland and peat drained for pasture, each with its own share.
+POOLED_COMPONENTS = (emit.EmissionComponent.FOREST, emit.EmissionComponent.GRASSLAND)
+assert set(POOLED_COMPONENTS) == set(emit.EmissionComponent) - {
+    emit.EmissionComponent.PEATLAND_CONVERSION
+}
 
-@storage.cache_to_zarr(version=1)
+
+@storage.cache_to_zarr(version=2)
 def get_downscaled_luc_emissions(tile_id: str) -> xarray.Dataset:
     logger.info("Computing emissions on the GLAD grid")
     luc_and_emissions = geo.exact_merge(
@@ -115,9 +134,22 @@ def get_downscaled_luc_emissions(tile_id: str) -> xarray.Dataset:
     for (before, after), component_to_darray in emit.get_span_to_component_to_emissions(
         dset=luc_and_emissions
     ).items():
-        for component, darray in component_to_darray.items():
+        for component in POOLED_COMPONENTS:
             name = f"{component!s}:tco2e-per-ha:{before:d}-{after:d}"
-            luc_and_emissions[name] = darray
+            luc_and_emissions[name] = component_to_darray[component]
+            derived_variable_names.append(name)
+        # NB: `emit` puts soil emissions only on converted pixels, and every conversion ends in
+        # cropland or pasture, so the two bands add up to the whole pulse
+        for land_class, conversions in (
+            (emit.CROPLAND, emit.TO_CROPLAND),
+            (emit.PASTURELAND, emit.TO_PASTURE),
+        ):
+            name = (
+                f"{land_class:s}-peatland-conversion:tco2e-per-ha:{before:d}-{after:d}"
+            )
+            luc_and_emissions[name] = component_to_darray[
+                emit.EmissionComponent.PEATLAND_CONVERSION
+            ].where(luc_and_emissions["conversion"].isin(conversions), other=0)
             derived_variable_names.append(name)
 
     logger.info("Measuring pasture extent at each MAPSPAM snapshot")
@@ -154,12 +186,66 @@ def get_downscaled_luc_emissions(tile_id: str) -> xarray.Dataset:
     )
 
 
+def get_pasture_hectares(dset: xarray.Dataset, year: int) -> xarray.DataArray:
+    darray = dset[f"pasture:fraction:{year:d}"]
+    return darray * emit.get_hectares_per_pixel(darray=darray)
+
+
+def get_livestock_units_band_name(species: gpw_livestock.Species, year: int) -> str:
+    """The band carrying `species`' density in livestock units/ha in `year`."""
+    return f"{species:s}:livestock-units-per-ha:{year:d}"
+
+
+def get_band_name_to_livestock_units(
+    dset: xarray.Dataset, species_to_units_per_head: dict[gpw_livestock.Species, float]
+) -> dict[str, xarray.DataArray]:
+    """Each grazer's density in livestock units/ha, for assigning beside its density in heads.
+
+    Livestock units weigh how much one head of a species grazes, so they divide pasture between
+    grazers; production counts heads, and reads the heads bands.
+    """
+    return {
+        get_livestock_units_band_name(species=species, year=year): dset[
+            gpw_livestock.get_band_name(species=species, year=year)
+        ]
+        * species_to_units_per_head[species]
+        for species, year in gpw_livestock.SPECIES_YEARS
+    }
+
+
+def get_livestock_to_grazing_share(
+    dset: xarray.Dataset, year: int
+) -> dict[Livestock, xarray.DataArray]:
+    """Each commodity's share of a cell's pasture: its grazers' livestock units over all of them.
+
+    Each livestock unit in a cell is taken to graze an equal slice of that cell's pasture. Only the
+    ratios between species' units per head matter, since a share divides each by the cell's total.
+    """
+    species_to_units = {
+        species: dset[get_livestock_units_band_name(species=species, year=year)]
+        for species in gpw_livestock.Species
+    }
+    zero = xarray.DataArray(numpy.float32(0))
+    total = sum(species_to_units.values(), start=zero)
+    total = total.where(total > 0)
+    shares = {
+        # Share is zero where no grazer is mapped at all
+        livestock: (
+            sum((species_to_units[one] for one in species), start=zero) / total
+        ).fillna(0)
+        for livestock, species in LIVESTOCK_TO_SPECIES.items()
+    }
+    return shares | {Livestock.PASTURE: 1 - sum(shares.values(), start=zero)}
+
+
 def get_commodity_hectares(
     commodity: Commodity, dset: xarray.Dataset, year: int
 ) -> xarray.DataArray:
     if isinstance(commodity, Livestock):
-        darray = dset[f"pasture:fraction:{year:d}"]
-        return darray * emit.get_hectares_per_pixel(darray=darray)
+        return (
+            get_pasture_hectares(dset=dset, year=year)
+            * get_livestock_to_grazing_share(dset=dset, year=year)[commodity]
+        )
     else:
         return ifpri_mapspam.get_canonical_quantity(
             canonical_crop_name=commodity.value,
@@ -169,16 +255,23 @@ def get_commodity_hectares(
         )
 
 
-def get_commodity_to_share(
-    after: int, before: int, crops: tuple[Crop, ...], dset: xarray.Dataset
-) -> dict[Commodity, xarray.DataArray]:
-    def get_expansion(commodity: Commodity) -> xarray.DataArray:
-        return (
-            get_commodity_hectares(commodity=commodity, dset=dset, year=after)
-            - get_commodity_hectares(commodity=commodity, dset=dset, year=before)
-        ).clip(min=0)
+def get_crop_expansion(
+    after: int, before: int, crop: Crop, dset: xarray.Dataset
+) -> xarray.DataArray:
+    return (
+        get_commodity_hectares(commodity=crop, dset=dset, year=after)
+        - get_commodity_hectares(commodity=crop, dset=dset, year=before)
+    ).clip(min=0)
 
-    attributed_expansion = sum(get_expansion(commodity=crop) for crop in sorted(Crop))
+
+def get_cropland_expansion(
+    after: int, before: int, dset: xarray.Dataset
+) -> xarray.DataArray:
+    """Every crop's expansion in a cell over a span, whether or not `Crop` claims it."""
+    attributed_expansion = sum(
+        get_crop_expansion(after=after, before=before, crop=crop, dset=dset)
+        for crop in sorted(Crop)
+    )
 
     # Drop any crops which are being newly tracked so they aren't interpreted as an expansion from zero
     before_names = ifpri_mapspam.YEAR_TO_UNRECOVERABLE_CROP_NAMES[before]
@@ -189,36 +282,79 @@ def get_commodity_to_share(
     def get_unattributed(names: set[str], year: int) -> xarray.DataArray:
         # NB: no canonical lookup is required -- these names are already `year`'s own, and
         # nothing divides by them, so the raw band is the whole answer
-        ret = sum(
-            ifpri_mapspam.get_reported_quantity(
-                dset=dset,
-                quantity=ifpri_mapspam.Quantity.PHYSICAL_AREA,
-                reported_crop_name=name,
-                year=year,
-            )
-            for name in sorted(names)
+        return sum(
+            (
+                ifpri_mapspam.get_reported_quantity(
+                    dset=dset,
+                    quantity=ifpri_mapspam.Quantity.PHYSICAL_AREA,
+                    reported_crop_name=name,
+                    year=year,
+                )
+                for name in sorted(names)
+            ),
+            start=xarray.DataArray(numpy.float32(0)),
         )
-        assert isinstance(ret, xarray.DataArray)
-        return ret
 
     unattributed_expansion = (
         get_unattributed(names=after_names, year=after)
         - get_unattributed(names=before_names, year=before)
     ).clip(min=0)
+    return attributed_expansion + unattributed_expansion
+
+
+def get_commodity_to_share(
+    after: int, before: int, crops: tuple[Crop, ...], dset: xarray.Dataset
+) -> dict[Commodity, xarray.DataArray]:
+    """Each commodity's share of everything a cell emitted in a span, whatever each pixel became."""
     # Pastureland expands alongside the crops, measured net and clipped exactly as a crop's is:
     # GPW is annual, and its gross gain would charge pasture for churn MapSPAM cannot see
+    pasture_expansion = (
+        get_pasture_hectares(dset=dset, year=after)
+        - get_pasture_hectares(dset=dset, year=before)
+    ).clip(min=0)
     total_expansion = (
-        attributed_expansion
-        + unattributed_expansion
-        + get_expansion(commodity=Livestock.PASTURE)
+        get_cropland_expansion(after=after, before=before, dset=dset)
+        + pasture_expansion
     )
     total_expansion = total_expansion.where(total_expansion > 0)
-    commodities: tuple[Commodity, ...] = (*crops, Livestock.PASTURE)
+    # Share is zero when there is no expansion at all
+    pasture_share = (pasture_expansion / total_expansion).fillna(0)
     return {
-        # Share is zero when there is no expansion at all
-        commodity: (get_expansion(commodity=commodity) / total_expansion).fillna(0)
-        for commodity in commodities
+        crop: (
+            get_crop_expansion(after=after, before=before, crop=crop, dset=dset)
+            / total_expansion
+        ).fillna(0)
+        for crop in crops
+    } | {
+        # NB: pasture's share is split by who grazes at the end of the span. Measuring each
+        # livestock commodity's own expansion instead would count one grazer replacing another as
+        # new pasture.
+        livestock: pasture_share * grazing_share
+        for livestock, grazing_share in get_livestock_to_grazing_share(
+            dset=dset, year=after
+        ).items()
     }
+
+
+def get_commodity_to_peatland_conversion_share(
+    after: int, before: int, crops: tuple[Crop, ...], dset: xarray.Dataset
+) -> dict[Commodity, xarray.DataArray]:
+    """Each commodity's share of the pulse on peat drained for its own land class.
+
+    A crop takes its share of crop expansion alone, so pasture expanding beside it takes none of
+    the pulse on peat drained for cropland, and where no crop expanded that pulse goes to nobody.
+    The grazers divide the pulse on peat drained for pasture by grazing share at the end of the
+    span, which always sums to one.
+    """
+    cropland_expansion = get_cropland_expansion(after=after, before=before, dset=dset)
+    cropland_expansion = cropland_expansion.where(cropland_expansion > 0)
+    return {
+        crop: (
+            get_crop_expansion(after=after, before=before, crop=crop, dset=dset)
+            / cropland_expansion
+        ).fillna(0)
+        for crop in crops
+    } | get_livestock_to_grazing_share(dset=dset, year=after)
 
 
 SPAN_TO_MAPSPAM_SPAN = {
@@ -233,6 +369,7 @@ assert set(SPAN_TO_MAPSPAM_SPAN) == set(emit.SPAN_TO_LINEAR_DISCOUNT_WEIGHT)
 MAPSPAM_SNAPSHOT_YEARS = tuple(
     sorted({year for span in SPAN_TO_MAPSPAM_SPAN.values() for year in span})
 )
+assert set(MAPSPAM_SNAPSHOT_YEARS).issubset(gpw_livestock.YEARS)
 
 
 def get_discounted_snapshot_mean(
@@ -248,22 +385,42 @@ def get_discounted_snapshot_mean(
 
 
 def get_commodity_name_to_totals(
-    commodity_to_span_to_share: dict[Commodity, dict[emit.SpanType, xarray.DataArray]],
+    commodities: tuple[Commodity, ...],
     dset: xarray.Dataset,
-    occupation_shares: dict[Crop, xarray.DataArray],
+    occupation_shares: dict[Commodity, xarray.DataArray],
+    span_to_commodity_to_peatland_conversion_share: dict[
+        emit.SpanType, dict[Commodity, xarray.DataArray]
+    ],
+    span_to_commodity_to_share: dict[emit.SpanType, dict[Commodity, xarray.DataArray]],
+    species_to_year_to_kg_per_head: dict[gpw_livestock.Species, dict[int, float]],
 ) -> dict[str, dict[str, float]]:
-    cropland_occupation_per_hectare = dset["cropland-peatland-occupation:tco2e-per-ha"]
+    """Each commodity's emissions, area and production, summed over a jurisdiction's cells.
+
+    Both share mappings are keyed by MapSPAM span. Each emissions span uses the shares of the
+    MapSPAM span that contains it (`SPAN_TO_MAPSPAM_SPAN`).
+
+    Beside the commodities sit `DROPPED` and `UNATTRIBUTED` (see `emit.NonCommodity`). Here
+    `UNATTRIBUTED` is what the shares leave of the charge: conversion and occupation by the
+    MapSPAM crops no row models, the forest and grassland charge where neither cropland nor
+    pasture expanded, and the cropland peat pulse where no crop expanded.
+    """
+    cropland_occupation_per_hectare = dset[
+        f"{emit.CROPLAND:s}-peatland-occupation:tco2e-per-ha"
+    ]
     hectares = emit.get_hectares_per_pixel(darray=cropland_occupation_per_hectare)
     cropland_occupation = cropland_occupation_per_hectare * hectares
     pastureland_occupation = (
-        dset["pastureland-peatland-occupation:tco2e-per-ha"] * hectares
+        dset[f"{emit.PASTURELAND:s}-peatland-occupation:tco2e-per-ha"] * hectares
     )
 
     commodity_to_totals: dict[
         Commodity | emit.NonCommodity, dict[str, xarray.DataArray]
     ] = collections.defaultdict(dict)
-    for commodity, span_to_share in commodity_to_span_to_share.items():
+    for commodity in commodities:
         totals = commodity_to_totals[commodity]
+        land_class = (
+            emit.PASTURELAND if isinstance(commodity, Livestock) else emit.CROPLAND
+        )
         component_to_emissions = {
             component: emit.get_linear_discounted_total(
                 span_to_value={
@@ -271,21 +428,61 @@ def get_commodity_name_to_totals(
                         f"{component!s}:tco2e-per-ha:{before:d}-{after:d}"
                     ]
                     * hectares
-                    * span_to_share[SPAN_TO_MAPSPAM_SPAN[(before, after)]]
+                    * span_to_commodity_to_share[SPAN_TO_MAPSPAM_SPAN[(before, after)]][
+                        commodity
+                    ]
                     for (before, after) in emit.SPAN_TO_LINEAR_DISCOUNT_WEIGHT
                 }
             )
-            for component in ("emissions", *emit.EmissionComponent)
+            for component in POOLED_COMPONENTS
+        } | {
+            emit.EmissionComponent.PEATLAND_CONVERSION: emit.get_linear_discounted_total(
+                span_to_value={
+                    (before, after): dset[
+                        f"{land_class:s}-peatland-conversion:tco2e-per-ha:{before:d}-{after:d}"
+                    ]
+                    * hectares
+                    * span_to_commodity_to_peatland_conversion_share[
+                        SPAN_TO_MAPSPAM_SPAN[(before, after)]
+                    ][commodity]
+                    for (before, after) in emit.SPAN_TO_LINEAR_DISCOUNT_WEIGHT
+                }
+            )
         }
         totals |= {
             component.column: component_to_emissions[component]
             for component in emit.EmissionComponent
         }
 
-        # Pastureland takes the peat drained under it whole and reports no production, while a
-        # crop takes its share of the cropland band and reports MapSPAM's
+        # Peat occupation and production: a livestock commodity takes its grazing share of the
+        # pasture peat band and reports its herd's carcass weight; a crop takes its area share of
+        # the cropland peat band and reports MapSPAM's production
         if isinstance(commodity, Livestock):
-            occupation = pastureland_occupation
+            occupation = pastureland_occupation * occupation_shares[commodity]
+            if commodity in LIVESTOCK_TO_SPECIES:
+                # NB: GPW's density is heads per hectare of the whole cell, so times the cell's
+                # hectares it is the cell's entire herd, all of it grazing the cell's pasture
+                # however little of the cell that is. Scaling by the pasture fraction too would
+                # drop part of the herd. Cells with no mapped pasture -- feedlots, natural
+                # rangeland -- produce nothing. Counting production where the herd stands, as a
+                # crop's is counted where it grows, keeps it on the same animals the grazing split
+                # weighs.
+                year_to_kg_per_ha = {
+                    year: sum(
+                        (
+                            dset[gpw_livestock.get_band_name(species=one, year=year)]
+                            * species_to_year_to_kg_per_head[one][year]
+                            for one in sorted(LIVESTOCK_TO_SPECIES[commodity])
+                        ),
+                        start=xarray.DataArray(numpy.float32(0)),
+                    ).where(dset[f"pasture:fraction:{year:d}"] > 0, other=0)
+                    for year in MAPSPAM_SNAPSHOT_YEARS
+                }
+                totals["production_mt"] = (
+                    get_discounted_snapshot_mean(year_to_value=year_to_kg_per_ha)
+                    * hectares
+                    / faostat.KG_PER_TONNE
+                )
         else:
             occupation = cropland_occupation * occupation_shares[commodity]
             totals["production_mt"] = get_discounted_snapshot_mean(
@@ -312,13 +509,61 @@ def get_commodity_name_to_totals(
             occupation / emit.PEATLAND_EMISSIONS_ANNUAL_TCO2E_PER_HA
         )
         totals["peatland_occupation_emissions_mt"] = occupation
-        totals["emissions_mt"] = component_to_emissions["emissions"] + occupation
+        totals["emissions_mt"] = sum(component_to_emissions.values(), start=occupation)
 
     commodity_to_totals[emit.NonCommodity.DROPPED]["emissions_mt"] = (
         dset["dropped-emissions:tco2e-per-ha"] * hectares
     )
 
-    # NB: MapSPAM measures no pasture production, so that row carries none and `trace` declines
+    # The whole charge each component carries, as a commodity holding every share would take it
+    component_to_charged = {
+        component: emit.get_linear_discounted_total(
+            span_to_value={
+                (before, after): dset[
+                    f"{component!s}:tco2e-per-ha:{before:d}-{after:d}"
+                ]
+                * hectares
+                for (before, after) in emit.SPAN_TO_LINEAR_DISCOUNT_WEIGHT
+            }
+        )
+        for component in POOLED_COMPONENTS
+    } | {
+        emit.EmissionComponent.PEATLAND_CONVERSION: emit.get_linear_discounted_total(
+            span_to_value={
+                (before, after): sum(
+                    dset[
+                        f"{land_class:s}-peatland-conversion:tco2e-per-ha:{before:d}-{after:d}"
+                    ]
+                    for land_class in (emit.CROPLAND, emit.PASTURELAND)
+                )
+                * hectares
+                for (before, after) in emit.SPAN_TO_LINEAR_DISCOUNT_WEIGHT
+            }
+        )
+    }
+    unattributed = commodity_to_totals[emit.NonCommodity.UNATTRIBUTED]
+    unattributed |= {
+        component.column: component_to_charged[component]
+        - sum(
+            commodity_to_totals[commodity][component.column]
+            for commodity in commodities
+        )
+        for component in emit.EmissionComponent
+    }
+    unattributed["peatland_occupation_emissions_mt"] = (
+        cropland_occupation
+        + pastureland_occupation
+        - sum(
+            commodity_to_totals[commodity]["peatland_occupation_emissions_mt"]
+            for commodity in commodities
+        )
+    )
+    unattributed["emissions_mt"] = sum(
+        (unattributed[component.column] for component in emit.EmissionComponent),
+        start=unattributed["peatland_occupation_emissions_mt"],
+    )
+
+    # NB: the residual pasture row names no herd, so it carries no production and `trace` declines
     # to publish an emission factor for it rather than dividing by zero
     return {
         name: {"production_mt": numpy.nan} | totals
@@ -333,15 +578,17 @@ def get_crop_to_area_share(
 ) -> dict[Crop, xarray.DataArray]:
     # NB: the denominator walks `year`'s own taxonomy, so every name here is already reported
     total_area = sum(
-        ifpri_mapspam.get_reported_quantity(
-            dset=dset,
-            quantity=ifpri_mapspam.Quantity.PHYSICAL_AREA,
-            reported_crop_name=e.name,
-            year=year,
-        )
-        for e in ifpri_mapspam.YEAR_TO_CROP_CLS[year]
+        (
+            ifpri_mapspam.get_reported_quantity(
+                dset=dset,
+                quantity=ifpri_mapspam.Quantity.PHYSICAL_AREA,
+                reported_crop_name=e.name,
+                year=year,
+            )
+            for e in ifpri_mapspam.YEAR_TO_CROP_CLS[year]
+        ),
+        start=xarray.DataArray(numpy.float32(0)),
     )
-    assert isinstance(total_area, xarray.DataArray)
     total_area = total_area.where(total_area > 0)
     return {
         # Share is zero when no crop occupies the cell at all
@@ -374,16 +621,20 @@ SCHEMA = {
 }
 
 
-@storage.cache_to_parquet(version=1)
+@storage.cache_to_parquet(version=0)
 def workflow(
-    crop_names: tuple[str, ...],
+    commodity_names: tuple[str, ...],
     iso_3166: str,
     tile_id: str,
 ) -> pandas.DataFrame:
     from rioxarray.exceptions import NoDataInBounds
 
-    crops = tuple(Crop[commodity_name] for commodity_name in crop_names)
-    logger.info(f"Computing emissions for {crops=:} and {tile_id=:s}")
+    commodities: tuple[Commodity, ...] = tuple(
+        Crop[name] if name in Crop.__members__ else Livestock[name]
+        for name in commodity_names
+    )
+    crops = tuple(commodity for commodity in commodities if isinstance(commodity, Crop))
+    logger.info(f"Computing emissions for {commodities=:} and {tile_id=:s}")
     merged = geo.exact_merge(
         # NB: this is deferred because it is expensive and would like to cache it
         get_downscaled_luc_emissions(tile_id=tile_id),
@@ -396,6 +647,44 @@ def workflow(
             tile_resolution=tiling.TileResolution.MAPSPAM,
         ),
     )
+
+    stocks = faostat.load(dataset=faostat.LIVESTOCK_DATASET)
+    # Each grazer's livestock units per head, as FAOSTAT counts them for this country
+    merged = merged.assign(
+        get_band_name_to_livestock_units(
+            dset=merged,
+            species_to_units_per_head={
+                gpw_livestock.Species[species.name]: units_per_head
+                for species, units_per_head in faostat.get_species_to_livestock_units_per_head(
+                    iso_3166=iso_3166,
+                    livestock_units=faostat.load(
+                        dataset=faostat.LIVESTOCK_PATTERNS_DATASET
+                    ),
+                    stocks=stocks,
+                ).items()
+            },
+        )
+    )
+
+    # National carcass weight per standing head. A year FAOSTAT reports no meat for gets a rate of
+    # 0, which is what `attribute` would make of a missing production anyway.
+    livestock = stocks.reset_index()
+    livestock = livestock[
+        (livestock["admin_id"] == iso_3166)
+        & livestock["year"].isin(MAPSPAM_SNAPSHOT_YEARS)
+    ]
+    kg_per_head = (livestock["production_kg"] / livestock["stocks_head"]).fillna(0)
+    species_to_year_to_kg_per_head = {
+        species: dict.fromkeys(MAPSPAM_SNAPSHOT_YEARS, 0.0)
+        for species in gpw_livestock.Species
+    }
+    for name, year, value in zip(
+        livestock["commodity_name"].astype(str),
+        livestock["year"].astype(int),
+        kg_per_head.astype(float),
+        strict=True,
+    ):
+        species_to_year_to_kg_per_head[gpw_livestock.Species[name]][year] = value
 
     def it() -> collections.abc.Iterator[dict[str, float | str]]:
         for (
@@ -420,13 +709,14 @@ def workflow(
                     )
                     for (before, after) in dict.fromkeys(SPAN_TO_MAPSPAM_SPAN.values())
                 }
-                commodities: tuple[Commodity, ...] = (*crops, Livestock.PASTURE)
-                commodity_to_span_to_share = {
-                    commodity: {
-                        span: commodity_to_share[commodity]
-                        for span, commodity_to_share in span_to_commodity_to_share.items()
-                    }
-                    for commodity in commodities
+                span_to_commodity_to_peatland_conversion_share = {
+                    (before, after): get_commodity_to_peatland_conversion_share(
+                        after=after,
+                        before=before,
+                        crops=crops,
+                        dset=clipped,
+                    )
+                    for (before, after) in span_to_commodity_to_share
                 }
 
                 logger.info(
@@ -434,17 +724,24 @@ def workflow(
                     f"{len(commodities):d} commodities"
                 )
                 commodity_name_to_totals = get_commodity_name_to_totals(
-                    commodity_to_span_to_share=commodity_to_span_to_share,
+                    commodities=commodities,
                     dset=clipped,
                     # NB: unlike conversion emissions, peatland occupation is a land-management flux on land
                     # that is drained *now* -- it has no relationship to expansion, and expansion is zero on
                     # the long-established peat cropland that dominates this pool. So allocate it by each
                     # crop's share of area occupied -- matching the approach for the jurisdictional-direct leg.
+                    # The pasture peat band is divided by grazing share instead.
                     occupation_shares=get_crop_to_area_share(
                         crops=crops,
                         dset=clipped,
                         year=max(ifpri_mapspam.YEARS),
+                    )
+                    | get_livestock_to_grazing_share(
+                        dset=clipped, year=max(ifpri_mapspam.YEARS)
                     ),
+                    span_to_commodity_to_peatland_conversion_share=span_to_commodity_to_peatland_conversion_share,
+                    span_to_commodity_to_share=span_to_commodity_to_share,
+                    species_to_year_to_kg_per_head=species_to_year_to_kg_per_head,
                 )
                 for commodity_name, totals in commodity_name_to_totals.items():
                     yield totals | {

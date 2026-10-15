@@ -3,12 +3,13 @@ import enum
 from jdluc.datasets import (
     base,
     descals_oil_palm,
-    faostat_production,
+    faostat,
     glad_glcluc,
     gnw_global_peatlands,
     gnw_harris_agb,
     gnw_tcl,
     gpw_grassland,
+    gpw_livestock,
     huang_bgb,
     ifpri_mapspam,
     ipcc_climate_zones,
@@ -29,12 +30,15 @@ class DatasetName(enum.StrEnum):
         return name
 
     DESCALS_OIL_PALM = enum.auto()
-    FAOSTAT_PRODUCTION = enum.auto()
+    FAOSTAT_LIVESTOCK_PATTERNS = enum.auto()
+    FAOSTAT_PRODUCTION_CROPS = enum.auto()
+    FAOSTAT_PRODUCTION_LIVESTOCK = enum.auto()
     GLAD_GLCLUC = enum.auto()
     GNW_GLOBAL_PEATLANDS = enum.auto()
     GNW_HARRIS_AGB = enum.auto()
     GNW_TREE_COVER_LOSS = enum.auto()
     GPW_GRASSLAND = enum.auto()
+    GPW_LIVESTOCK = enum.auto()
     HUANG_BGB = enum.auto()
     IFPRI_MAPSPAM_PHYSICAL_AREA_2000 = enum.auto()
     IFPRI_MAPSPAM_PHYSICAL_AREA_2005 = enum.auto()
@@ -58,12 +62,15 @@ NAME_TO_CLS: dict[
     DatasetName, base.RasterDataset | base.TabularDataset | base.VectorDataset
 ] = {
     DatasetName.DESCALS_OIL_PALM: descals_oil_palm.DATASET,
-    DatasetName.FAOSTAT_PRODUCTION: faostat_production.DATASET,
+    DatasetName.FAOSTAT_LIVESTOCK_PATTERNS: faostat.LIVESTOCK_PATTERNS_DATASET,
+    DatasetName.FAOSTAT_PRODUCTION_CROPS: faostat.CROP_DATASET,
+    DatasetName.FAOSTAT_PRODUCTION_LIVESTOCK: faostat.LIVESTOCK_DATASET,
     DatasetName.GLAD_GLCLUC: glad_glcluc.DATASET,
     DatasetName.GNW_GLOBAL_PEATLANDS: gnw_global_peatlands.DATASET,
     DatasetName.GNW_HARRIS_AGB: gnw_harris_agb.DATASET,
     DatasetName.GNW_TREE_COVER_LOSS: gnw_tcl.DATASET,
     DatasetName.GPW_GRASSLAND: gpw_grassland.DATASET,
+    DatasetName.GPW_LIVESTOCK: gpw_livestock.DATASET,
     DatasetName.HUANG_BGB: huang_bgb.DATASET,
     DatasetName.IFPRI_MAPSPAM_PHYSICAL_AREA_2000: ifpri_mapspam.PHYSICAL_AREA_2000,
     DatasetName.IFPRI_MAPSPAM_PHYSICAL_AREA_2005: ifpri_mapspam.PHYSICAL_AREA_2005,

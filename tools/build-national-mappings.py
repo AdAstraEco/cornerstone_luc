@@ -48,7 +48,7 @@ OVERRIDES = pull.DATA / "admin_1_overrides.json"
 ORBAE_OUTPUT = pull.DATA / "orbae_to_world_bank_admin_1.json"
 
 # An equal-area projection, so a province's area does not depend on its latitude.
-EQUAL_AREA_CRS = "EPSG:6933"
+EQUAL_AREA_CRS = 6933
 SQUARE_METRES_PER_SQUARE_KILOMETRE = 1e6
 
 WRI_REVISION = "559fe23eb752e9df270a1bf93e7f290044026bab"
@@ -58,41 +58,39 @@ GADM_KEY_URL = (
 )
 # Administrative-type words one side appends and the other does not: the World Bank writes "Anhui
 # Sheng" where GADM writes "Anhui". Stripped from both sides, so neither spelling is privileged.
-ADMINISTRATIVE_WORDS = frozenset(
-    {
-        "administrativeregion",
-        "autonomousregion",
-        "canton",
-        "capital",
-        "city",
-        "county",
-        "department",
-        "departamento",
-        "district",
-        "division",
-        "emirate",
-        "governorate",
-        "krai",
-        "krong",
-        "kray",
-        "municipality",
-        "oblast",
-        "oblasti",
-        "okrug",
-        "parish",
-        "prefecture",
-        "province",
-        "provincia",
-        "regiao",
-        "region",
-        "republic",
-        "sheng",
-        "state",
-        "territory",
-        "voivodeship",
-        "zhou",
-    }
-)
+ADMINISTRATIVE_WORDS = {
+    "administrativeregion",
+    "autonomousregion",
+    "canton",
+    "capital",
+    "city",
+    "county",
+    "department",
+    "departamento",
+    "district",
+    "division",
+    "emirate",
+    "governorate",
+    "krai",
+    "krong",
+    "kray",
+    "municipality",
+    "oblast",
+    "oblasti",
+    "okrug",
+    "parish",
+    "prefecture",
+    "province",
+    "provincia",
+    "regiao",
+    "region",
+    "republic",
+    "sheng",
+    "state",
+    "territory",
+    "voivodeship",
+    "zhou",
+}
 # A floor rather than an expected value: the share moves whenever either source is revised, and
 # pinning it exactly would fail on every legitimate change. It is here to catch a collapse -- a
 # renamed column matching nothing -- not to police normal drift. 62.8% at the current revisions.
