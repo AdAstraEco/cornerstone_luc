@@ -907,7 +907,8 @@ def get_name_to_legacy_darray(
     )
 
 
-@storage.cache_to_zarr(version=3)
+# NB: not 3, which conversion-candidates already used for its `cand-` bands
+@storage.cache_to_zarr(version=4)
 def workflow(tile_id: str) -> xarray.Dataset:
     logger.info(f"Running the land conversion and emissions worflow for {tile_id=:s}")
     return get_output_dset(
