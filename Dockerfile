@@ -8,7 +8,7 @@
 # Build + push (do NOT run without Dan's OK), from a clean commit, tagged with its short SHA.
 # IMAGE is the registry repository, without a tag:
 #   TAG=$(git rev-parse --short HEAD)
-#   docker build -t "$IMAGE:$TAG" \
+#   docker build --platform=linux/amd64 -t "$IMAGE:$TAG" \
 #     --build-arg JDLUC_GIT_VERSION="$(git rev-parse HEAD)" \
 #     --build-arg JDLUC_GIT_REMOTE_URL="$(git remote get-url origin)" .
 #   docker push "$IMAGE:$TAG"
