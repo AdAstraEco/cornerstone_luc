@@ -103,6 +103,13 @@ content.
 
 ## 3 · Running it in our infrastructure
 
+### [`argo-workflows.md`](argo-workflows.md) — 2026-10-15
+
+**How we run it now.** The pipeline as an Argo Workflow DAG, one pod per tile per phase, with
+the tile list derived from the country in-cluster. From the user's side: the pieces, how to
+submit and watch a country, where outputs land, measured timings, and the gotchas. Supersedes
+the hand-rolled driver in `scale-out.md`; the notes below are the history that led here.
+
 ### [`cornerstone-k8s.md`](cornerstone-k8s.md) — 2026-09-10
 
 **Proposal and plan; nothing was deployed when this was written.** How to run the pipeline in
