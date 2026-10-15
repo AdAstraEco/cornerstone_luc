@@ -6,8 +6,7 @@
 # choice the architecture doc makes. The workflow sets each step's command.
 #
 # Build + push (do NOT run without Dan's OK), from a clean commit, tagged with its short SHA.
-# IMAGE (the repository, without a tag) comes from infra/cluster.env:
-#   source infra/cluster.env
+# IMAGE is the registry repository, without a tag:
 #   TAG=$(git rev-parse --short HEAD)
 #   docker build -t "$IMAGE:$TAG" \
 #     --build-arg JDLUC_GIT_VERSION="$(git rev-parse HEAD)" \
