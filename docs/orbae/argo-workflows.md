@@ -1,57 +1,81 @@
 # Running the pipeline on Argo Workflows
 
-**Status:** our preferred way to run the pipeline in the cloud, as of 2026-10-15. It replaces the hand-rolled driver (`infra/run_aoi.py` + `infra/k8s/phase-job.yaml`, since removed) described in [`scale-out.md`](scale-out.md). Proven end to end on Honduras (1 tile) and Côte d'Ivoire (2 tiles), on our nonprod GKE cluster. This note is written from the user's side: what you need, how to run a country, and what to expect. It is not a guide to operating Argo itself.
+**Status:** our preferred way to run the pipeline in the cloud, as of 2026-10-15. It replaces a hand-rolled driver (`infra/run_aoi.py` + `infra/k8s/phase-job.yaml`, since removed) that ran one k8s Indexed Job per phase. Proven end to end on Honduras (1 tile) and Côte d'Ivoire (2 tiles), on our nonprod GKE cluster. This note is written from the user's side: what you need, how to run a country, and what to expect. It is not a guide to operating Argo itself.
 
-> **This repo is public.** The cluster, project, bucket, image registry and node-pool names are deliberately absent from this note. They live in the gitignored `infra/cluster.env` and `infra/cloud.env`, and in the workflow file, which is kept outside the repo for the same reason (it is shared within the team).
+> **This repo is public.** The cluster, project, bucket, image registry and node-pool names are deliberately absent from this note. They live in the deployed workflow file and its env files, which are kept outside the repo and shared within the team. [`orchestration/workflow.example.yaml`](../../orchestration/workflow.example.yaml) is a committed copy of the workflow with placeholders for those names.
 
-## Why Argo now
+## Design choices
 
-[`scale-out.md`](scale-out.md) chose a small driver script over Argo, and listed the triggers for revisiting that: several people running AOIs at once, wanting a UI, the driver growing beyond a linear chain. Those have now arrived. Argo is also now installed on the cluster as part of its own infrastructure, so we no longer have to run a controller ourselves, which was the main argument against it.
+These are the decisions behind the shape below, kept here because the notes that made them have been retired.
 
-What did **not** change: `jdluc` and `infra/run_phase.py` run unmodified inside the pods, one pod per tile per phase. Argo replaces only the driver: sequencing, fan-out, retries and visibility. The "no new compute platform, `jdluc` unmodified" principle of the earlier notes still holds.
+**One tile per pod, and no Dask cluster.** The pipeline processes each 10° tile independently, and one tile's working set fits one highmem node. So the unit of distribution is a whole tile: a pod runs a tile's stages with each stage's own in-process `LocalCluster`, exactly as a laptop run does. Nothing crosses between tiles except attribute's final merge, a `groupby().sum()` over kilobyte-scale parquets. A shared Dask scheduler was tried first and dropped. It adds version skew between driver and workers, a scheduler a heavy tile can destabilise, and a `storage.py` change, and a Dask failure would then look like a pipeline failure.
+
+**The cache is the resume mechanism.** Every stage is wrapped in `@storage.cache_to_zarr` / `@storage.cache_to_parquet`, writing idempotently to `SCRATCH_ROOT`. Retrying anything skips finished work, so orchestration can stay simple.
+
+**The options weighed:**
+
+| Option                  | Verdict                                                                                                                                                              |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Plain k8s Jobs + driver | What we ran first: one Indexed Job per phase and a polling script. Fine for a linear chain; no UI, and the driver is ours to maintain.                               |
+| **Argo Workflows**      | **Current.** Chosen once several people were running countries, a UI was wanted, and Argo was installed on the cluster anyway, so we no longer operate a controller. |
+| Distributed Dask        | Wrong granularity: tasks are hour-long with ~40 GB working sets, and already parallel inside the pod.                                                                |
+| GCP Batch               | Simple job arrays, but a second compute platform next to GKE. Cloud Run Jobs is out regardless: its 32 GiB cap is below a tile's peak.                               |
+| Celery                  | Hours-long 40 GB tasks don't fit its model, and it would tie this public repo to internal infrastructure.                                                            |
+
+What Argo did **not** change: `jdluc` runs unmodified inside the pods. Argo replaces only the driver: sequencing, fan-out, retries and visibility. Our own glue is the small `orchestration` package, one subcommand per workflow task, and it may not change a result: every cache-key argument goes straight through to `jdluc`.
+
+**Ingest is separate from compute.** They are different workloads:
+
+|                       | Ingest                            | Compute                   |
+| --------------------- | --------------------------------- | ------------------------- |
+| Bound by              | network and disk                  | memory and CPU            |
+| Needs source-API keys | **yes** (USDA, Harvard Dataverse) | **no** (reads warm cache) |
+| Cadence               | once per country × source version | every code change         |
+| Idempotent            | yes (skips existing tiles)        | yes (`@cache_to_*`)       |
+
+So only the ingest pods carry the keys, ingest can run on cheaper nodes, a flaky third-party source fails an ingest step rather than a compute run, and one warm `INGEST_ROOT` serves many compute runs. `compute` runs `--skip-ingest` against it.
+
+**Storage, not compute, is the first scale risk.** Per-tile intermediates are hundreds of GiB uncompressed (harmonize ~340 GiB, emit more), and they stay in `SCRATCH_ROOT`. Compute is a one-off cost; storage recurs. Before a continent-scale run, decide retention for `SCRATCH_ROOT`, for example GCS lifecycle rules that delete or downgrade the emit zarrs once the deliverables exist. Sizes and what could shrink them are in [`stage-contents.md`](stage-contents.md#storage).
 
 ## The pieces
 
-| Piece    | What it is                                                                             | Where it lives                                |
-| -------- | -------------------------------------------------------------------------------------- | --------------------------------------------- |
-| Image    | `Dockerfile`, built from a commit and tagged with its short SHA                        | the team's Artifact Registry                  |
-| Workflow | one Argo `Workflow` YAML: the DAG below, pod sizes, node pools                         | outside the repo (team-shared)                |
-| Config   | each pod's `.env`: `INGEST_ROOT`, `SCRATCH_ROOT`, `EXPORT_ROOT`, API keys              | two k8s Secrets, built from `infra/cloud.env` |
-| Identity | the `argo-workflow` service account, bound to a GCP service account with bucket access | set up by the platform team                   |
-| Data     | ingest cache, scratch zarrs, exported deliverables                                     | one GCS bucket, set in the Secrets            |
+| Piece    | What it is                                                                             | Where it lives                                                                         |
+| -------- | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Image    | `Dockerfile`, built from a commit and tagged with its short SHA                        | the team's Artifact Registry                                                           |
+| Workflow | one Argo `Workflow` YAML: the DAG below, pod sizes, node pools                         | outside the repo (team-shared); `orchestration/workflow.example.yaml` has placeholders |
+| Config   | each pod's `.env`: `INGEST_ROOT`, `SCRATCH_ROOT`, `EXPORT_ROOT`, API keys              | two k8s Secrets, built from a cloud `.env`                                             |
+| Identity | the `argo-workflow` service account, bound to a GCP service account with bucket access | set up by the platform team                                                            |
+| Data     | ingest cache, scratch zarrs, exported deliverables                                     | one GCS bucket, set in the Secrets                                                     |
 
-The bucket is set **only** in the Secrets. To point a run at a different bucket, change `infra/cloud.env`, recreate the Secrets, and submit. Neither the image nor the workflow changes.
+The bucket is set **only** in the Secrets. To point a run at a different bucket, change the cloud `.env`, recreate the Secrets, and submit. Neither the image nor the workflow changes.
 
 ## The DAG
 
 Each run covers one country (`iso`):
 
 ```
-list-world-datasets -> ingest-world[dataset] -> list-tiles -+-> ingest-tiles[dataset][tile] ---------------------+-> compute[tile] -+-> reduce -> export[tile] -> mosaic
-list-tile-datasets ----------------------------------------+-> ingest-tiles-allowed-failures[dataset][tile] ----+                  +-> derive[tile]
+plan -+-> ingest-world[dataset] -------------------------+-> compute[tile] -+-> reduce -> export[tile] -> mosaic
+      +-> ingest-tiles[dataset][tile] -------------------+                  +-> derive[tile]
+      +-> ingest-tiles-allowed-failures[dataset][tile] --+
 ```
 
-| Step                            | Pods                 | Does                                                                                   | Secret      |
-| ------------------------------- | -------------------- | -------------------------------------------------------------------------------------- | ----------- |
-| `list-world-datasets`           | 1                    | `infra/list_datasets.py --partitioning=whole-world`: the whole-world datasets, as JSON | no keys     |
-| `list-tile-datasets`            | 1                    | `infra/list_datasets.py --partitioning=ten-degree-tile`: the tiled datasets, as JSON   | no keys     |
-| `ingest-world`                  | 1 per dataset        | `jdluc/ingest.py NAME --backfill`: boundaries, climate zones, MAPSPAM, FAOSTAT, NASS   | with keys   |
-| `list-tiles`                    | 1                    | `python -m jdluc.datasets.worldbank_jurisdictions ISO`: the country's tiles, as JSON   | no keys     |
-| `ingest-tiles`                  | 1 per dataset × tile | `jdluc/ingest.py NAME ISO --modulus=N --residues=i`: one dataset on one tile           | with keys   |
-| `ingest-tiles-allowed-failures` | 1 per dataset × tile | The same, for the datasets in `ingest-allow-failures`                                  | with keys   |
-| `compute`                       | 1 per tile           | harmonize → emit → attribute, with `--skip-ingest`                                     | no keys     |
-| `reduce`                        | 1                    | `trace.workflow` over the country: the cross-tile merge                                | with keys\* |
-| `export`                        | 1 per tile           | Writes the CIE emissions COG                                                           | with keys\* |
-| `mosaic`                        | 1                    | Writes a VRT over the country's CIE COGs                                               | with keys\* |
-| `derive`                        | 1 per tile           | Writes one crop-class deliverable (`jdluc/derive.py`) from emit's cache                | no keys     |
-
-\* These don't need the source-API keys. The old driver ran them without keys; tightening this is an open question below.
+| Step                            | Pods                 | Does                                                                                                                      | Secret    |
+| ------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `plan`                          | 1                    | `python -m orchestration plan ISO`: ingests the boundaries if absent, then writes the JSON lists every fan-out loops over | no keys   |
+| `ingest-world`                  | 1 per dataset        | `jdluc/ingest.py NAME --backfill`: boundaries, climate zones, MAPSPAM, FAOSTAT, NASS                                      | with keys |
+| `ingest-tiles`                  | 1 per dataset × tile | `jdluc/ingest.py NAME ISO --modulus=N --residues=i`: one dataset on one tile                                              | with keys |
+| `ingest-tiles-allowed-failures` | 1 per dataset × tile | The same, for the datasets in `allow-failures`                                                                            | with keys |
+| `compute`                       | 1 per tile           | `python -m orchestration compute`: harmonize → emit → attribute, with `--skip-ingest`                                     | no keys   |
+| `reduce`                        | 1                    | `python -m orchestration reduce`: `trace.workflow` over the country, the cross-tile merge                                 | no keys   |
+| `export`                        | 1 per tile           | `python -m orchestration export`: writes the CIE emissions COG                                                            | no keys   |
+| `mosaic`                        | 1                    | `python -m orchestration mosaic`: writes a VRT over the country's CIE COGs                                                | no keys   |
+| `derive`                        | 1 per tile           | `jdluc/derive.py`: writes one crop-class deliverable from emit's cache                                                    | no keys   |
 
 Every step runs a CLI from the image directly, with no shell scripting around it.
 
-**Ingest runs one pod per dataset and tile, and fails loudly by default.** The tiles of a country run side by side, which a large country or a global run needs. A dataset behind one global download (GPW livestock, Liao) would fetch it once per pod; setting `SOURCE_CACHE_ROOT` in the Secrets shares those downloads between pods. Already-ingested tiles are skipped, so a warm rerun is quick. A failed tile fails its pod, and that fails the run: compute's `--ignore-missing-tiles` would otherwise turn a missing tile into an all-nodata band without complaint. The exception is the datasets in the `ingest-allow-failures` parameter, a JSON list that is by default only `DESCALS_OIL_PALM`, which is published only where oil palm was found, so most tiles have none. They run as `ingest-tiles-allowed-failures`, and compute runs whether or not that step fails; its failed tiles show as failed pods in `argo get`. The dataset list is ours, not upstream's: see `infra/list_datasets.py` for why, and add to it when upstream starts reading a new dataset.
+**Ingest runs one pod per dataset and tile, and fails loudly by default.** The tiles of a country run side by side, which a large country or a global run needs. A dataset behind one global download (GPW livestock, Liao) would fetch it once per pod; setting `SOURCE_CACHE_ROOT` in the Secrets shares those downloads between pods. Already-ingested tiles are skipped, so a warm rerun is quick. A failed tile fails its pod, and that fails the run: compute's `--ignore-missing-tiles` would otherwise turn a missing tile into an all-nodata band without complaint. The exception is the datasets in the `allow-failures` parameter, by default only `DESCALS_OIL_PALM`, which is published only where oil palm was found, so most tiles have none. They run as `ingest-tiles-allowed-failures`, and compute runs whether or not that step fails; its failed tiles show as failed pods in `argo get`. The dataset list is ours, not upstream's: see `orchestration/plan.py` for why, and add to it when upstream starts reading a new dataset.
 
-**The tile list is derived, never typed in.** `list-tiles` prints the tiles the country's boundary touches, the same derivation upstream's CLIs use, each with the `--modulus` and `--residues` that select it alone. Each ingest pod passes those to upstream's ingest CLI, so the pods and the CLI can't disagree about which tile is which. It runs after `ingest-world` because that is the step that fetches the boundaries. An earlier version took a hand-typed tile count, and nothing checked it against the country.
+**The tile list is derived, never typed in.** `plan` lists the tiles the country's boundary touches, the same derivation upstream's CLIs use, each with the `--modulus` and `--residues` that select it alone. Each ingest pod passes those to upstream's ingest CLI, so the pods and the CLI can't disagree about which tile is which. An earlier version took a hand-typed tile count, and nothing checked it against the country.
 
 **`derive` runs off to the side.** It needs only emit's cached output, so it starts once `compute` finishes and runs alongside `reduce` and `export`. Nothing downstream reads its output.
 
@@ -61,28 +85,28 @@ Done once per cluster, or again whenever the cloud config changes.
 
 **Identity.** The pods reach GCS through Workload Identity: the workflow's k8s service account is bound to a GCP service account with read/write access to the bucket. No keys go in the image or the Secrets. The platform team set this up; a new cluster or bucket needs the same binding before anything will run.
 
-**The two Secrets.** `Config.from_dot_env()` reads a `.env` *file*, not the process environment, so each pod mounts a Secret at `/app/.env`. The cloud config is kept apart from the repo-root `.env`, which stays pointed at local paths for local runs:
+**The two Secrets.** `Config.from_dot_env()` reads a `.env` *file*, not the process environment, so each pod mounts a Secret at `/app/.env`. The cloud config is kept apart from the repo-root `.env`, which stays pointed at local paths for local runs. Start it from the repo's `.env.example`, and keep the real files outside the repo, beside the deployed workflow:
 
 ```bash
-cp infra/cloud.env.example infra/cloud.env   # gitignored; fill in real values
+cp .env.example ../cloud.env   # outside the repo; fill in real values
 ```
 
 All six fields must be **present**, or `Config.from_dot_env()` raises: `INGEST_ROOT`, `SCRATCH_ROOT`, `EXPORT_ROOT`, `NUMBER_OF_DASK_WORKERS` (the per-pod Dask worker count; keep it at or below the pod's CPU limit), `USDA_NASS_API_KEY` and `HARVARD_DATAVERSE_GUESTBOOK_JSON`.
 
-Only the ingest steps use the API keys. To keep the keys off the other pods, make `infra/cloud-nokeys.env`, a copy of `cloud.env` with the two key fields present but blank. Then create one Secret from each file, in the namespace the workflow runs in:
+Only the ingest steps use the API keys. To keep the keys off the other pods, make `cloud-nokeys.env`, a copy of `cloud.env` with the two key fields present but blank. Then create one Secret from each file, in the namespace the workflow runs in:
 
 ```bash
 kubectl --context "$KUBE_CONTEXT" -n argo create secret generic <secret-with-keys> \
-  --from-file=.env=infra/cloud.env
+  --from-file=.env=../cloud.env
 kubectl --context "$KUBE_CONTEXT" -n argo create secret generic <secret-no-keys> \
-  --from-file=.env=infra/cloud-nokeys.env
+  --from-file=.env=../cloud-nokeys.env
 ```
 
 The workflow names both Secrets. To change the config, delete and recreate them.
 
 **The image.** Build it from a clean commit and push it, as in the header of the `Dockerfile`. Then set the workflow's image to the new tag.
 
-**What a run leaves behind.** Pods and their autoscaled nodes go away by themselves. The Secrets, the images in the registry and the bucket's data stay until deleted. The data is the point of the run; before a continent-scale run, decide how long to keep `SCRATCH_ROOT` (see *Storage, not compute, is the first scale risk* in [`scale-out.md`](scale-out.md)).
+**What a run leaves behind.** Pods and their autoscaled nodes go away by themselves. The Secrets, the images in the registry and the bucket's data stay until deleted. The data is the point of the run; before a continent-scale run, decide how long to keep `SCRATCH_ROOT` (see *Storage, not compute, is the first scale risk* under *Design choices*).
 
 ## Running a country
 
@@ -108,8 +132,8 @@ The Argo UI shows the same information. Ask the platform team for its address.
 
 ### Parameters
 
-- **`iso`:** one ISO 3166 alpha-3 code. `run_phase.py` accepts several countries, but the workflow passes a single value.
-- **`ingest-allow-failures`:** a JSON list of tiled datasets whose failed tiles don't fail the run, by default `["DESCALS_OIL_PALM"]`.
+- **`iso`:** one ISO 3166 alpha-3 code. `orchestration` accepts several countries, but the workflow passes a single value.
+- **`allow-failures`:** a comma-separated list of tiled datasets whose failed tiles don't fail the run, by default `DESCALS_OIL_PALM`.
 - **`methodology`:** `STATISTICAL` (the default) or `JURISDICTIONAL_DIRECT`, which is US-only.
 - **`derive-deliverable`:** one of `crop-class-emissions` (the default), `perennial-discounting-comparison` or `perennial-debug`. One deliverable per run. `perennial-debug` is written as zarr, not COG.
 
@@ -136,7 +160,6 @@ Measured on the first Côte d'Ivoire run. This was a cold bucket and ran **witho
 | Step                                  | Per pod                                             |
 | ------------------------------------- | --------------------------------------------------- |
 | `ingest-world` (data already present) | ~1m                                                 |
-| `list-tiles`                          | 14s                                                 |
 | `ingest-tiles` (cold)                 | 2.5h to over 3h                                     |
 | `ingest-tiles` (data already present) | minutes                                             |
 | `compute`                             | 57–61m                                              |
@@ -149,13 +172,13 @@ Measured on the first Côte d'Ivoire run. This was a cold bucket and ran **witho
 
 Every stage is cached (`@storage.cache_to_*`). Rerunning a country, or `argo retry` after a failure, skips everything already in the bucket. When a cold `ingest-tiles` pod hit its 3h deadline, `argo retry` finished the remaining dataset in 5 minutes and the run went on to completion.
 
-The flip side: **a new bucket means a cold run.** The cache keys don't include the bucket, so copying the `INGEST_ROOT` and `SCRATCH_ROOT` objects across at the same relative paths warms it again. And the cache is content-blind: changing code without bumping a stage's `version=` reads back the old result (see [`data_flow.md`](data_flow.md)).
+The flip side: **a new bucket means a cold run.** The cache keys don't include the bucket, so copying the `INGEST_ROOT` and `SCRATCH_ROOT` objects across at the same relative paths warms it again. And the cache is content-blind: changing code without bumping a stage's `version=` reads back the old result (see [`stage-contents.md`](stage-contents.md)).
 
 ### Disk is what limits speed
 
 Ingest, export and derive each write tens of GB of uncompressed GeoTIFF locally before converting it to a COG. One cold ingest pod wrote about 128 GB. On the node's shared boot disk, those writes throttle to a crawl: I/O pressure reached 53% while CPU pressure stayed at zero.
 
-The workflow therefore gives each pod its own **pd-ssd volume at `/localtmp`**, with `TMPDIR` and `CPL_TMPDIR` pointed at it, as the old driver did. The volume is created with the pod and deleted with it. Background is in [`../gke-disk-io-findings.md`](../gke-disk-io-findings.md). Don't shrink these volumes: pd-ssd throughput scales with size.
+The workflow therefore gives each pod its own **pd-ssd volume at `/localtmp`**, with `TMPDIR` and `CPL_TMPDIR` pointed at it, as the old driver did. The volume is created with the pod and deleted with it. Background is in [`gke-disk-io-findings.md`](gke-disk-io-findings.md). Don't shrink these volumes: pd-ssd throughput scales with size.
 
 The volume is a generic ephemeral volume on GKE's built-in pd-ssd StorageClass (`premium-rwo`), so no StorageClass object of our own is needed. It works on any machine family, e2 included. Separately, the old driver set a small `ephemeral-storage` request and limit (2Gi / 8Gi) on each container. That covers only the container's own overlay (logs and anything not under `/localtmp`), so a stray writer evicts its own pod and not the node.
 
@@ -172,22 +195,24 @@ The old driver's per-phase sizes, with the reasons it recorded. The workflow's s
 | `export`       | 2 / 4           | 8Gi / 24Gi         | 200Gi       | 3h       | See below                                                                                                                                                                                                                           |
 | `mosaic`       | 1 / 2           | 2Gi / 8Gi          | 10Gi        | 1h       | Reads each tile COG's header and writes a small VRT; no pixels                                                                                                                                                                      |
 
-`export` is limited by disk, not memory, since Dask writes in chunks. `cog_translate` first writes an **uncompressed** tiled intermediate, and only then compresses the final COG. That intermediate is ~33 GB for a 5-band float32 10° tile, so ~70 GB for the 11 `cie-` bands. 200Gi leaves headroom and clears GDAL's free-space check, which we keep on so that a too-small disk fails at the start rather than at 97%.
+`export` is limited by disk, not memory, since Dask writes in chunks. `cog_translate` first writes an **uncompressed** tiled intermediate, and only then compresses the final COG. That intermediate is ~33 GB for a 5-band float32 10° tile, so ~70 GB for the 10 `cie-` bands. 200Gi leaves headroom and clears GDAL's free-space check, which we keep on so that a too-small disk fails at the start rather than at 97%.
 
 The highmem pool the compute pods use carries a `NoSchedule` taint, shared with other workloads, so pods bound for it need a matching toleration. Without one, the autoscaler won't even add a node.
 
 ## Gotchas
 
-- **Pod logs disappear once a run is cleaned up.** Argo isn't set to archive them. Save any log you'll want (especially the `resource_monitor` JSON lines, which hold the memory and disk peaks) before the run is garbage-collected.
+- **Pod logs disappear once a run is cleaned up.** Argo isn't set to archive them. Save any log you'll want before the run is garbage-collected.
 - **`argo get -o json` embeds raw log text**, which strict JSON parsers reject. Use `json.loads(..., strict=False)` in Python, or the table output.
 - **`argo retry` restarts the run's clock.** The reported duration covers only the retry, not the time since first submission.
-- **`derive` doesn't go through `run_phase.py`**, so it has no `resource_monitor` output. Use `kubectl top` or GKE metrics instead.
+- **No pod logs its own resource peaks.** For memory and disk use, read `kubectl top` or the GKE metrics.
 - **`mosaic` only covers CIE.** There is no mosaic for the `derive` deliverables yet.
+- **`compute` and `reduce` must get identical flags.** The methodology and crop names are cache-key arguments of the attribute legs, so a mismatch doesn't fail: it silently recomputes every tile inside the single `reduce` pod (see `orchestration/__main__.py`).
+- **A warm cache can fake a fast run.** When measuring timings, make sure the run does real work (fresh tiles, a fresh prefix, or a bumped stage `version=`), or it will finish in seconds and look as if it scaled.
 
 ## Open questions
 
 - **Deadlines.** A cold `ingest-tiles` needed more than 3h without pd-ssd, and `export` came within 6 minutes of its 3h. Re-measure with pd-ssd before choosing new limits.
-- **Secrets.** `reduce`, `export` and `mosaic` could run without the keys, as they did under the old driver.
 - **Sizes and pools.** The workflow's memory requests and node pools differ slightly from the old driver's (*Pod sizing* above). Neither set has been measured at scale.
-- **Where the workflow file lives.** It is outside the repo because it names infrastructure. A version with placeholders in place of those names could be committed if we want it under version control.
 - **Several countries per run**, and several `derive` deliverables per run.
+- **Ingest versioning.** `INGEST_ROOT` isn't keyed by source-dataset version, and mutable sources (Dataverse, GFW) aren't pinned, so a re-ingest isn't guaranteed to reproduce an earlier one.
+- **Storage retention.** No lifecycle rules are set on `SCRATCH_ROOT` yet (see *Design choices*).

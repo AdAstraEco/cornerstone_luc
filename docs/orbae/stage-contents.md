@@ -1,13 +1,13 @@
 # Data model — what each stage holds
 
-Working note, verified against `8130655` (upstream tip). Companion to [`architecture.md`](../architecture.md), which covers the stage sequence; this is about band contents, dependence, and width.
+Working note, verified against `8130655` (the upstream tip at the time). Since then `emit` has gained the ten `cie-` bands, described in [`crop_independent_emissions.md`](crop_independent_emissions.md); the rest is unchanged. Companion to [`architecture.md`](../architecture.md), which covers the stage sequence; this is about band contents, dependence, and width.
 
 **Δ** marks what `8130655` — *migrate from GLCLUC to TCL/GPW/GACED30* — changed against its parent `3389d4f`: **+** added · **~** renamed or split · blank unchanged. Removals are listed under each table.
 
 ```mermaid
 flowchart LR
   H["harmonize<br/><b>57 bands</b><br/>40 000²·f32<br/>340 GiB/tile"]
-  E["emit<br/><b>20 bands</b><br/>40 000²·f32<br/>119 GiB/tile"]
+  E["emit<br/><b>30 bands</b><br/>40 000²·f32<br/>179 GiB/tile"]
   D["downscale<br/><b>23 bands</b><br/>120²<br/>1.3 MiB/tile"]
   A["attribute<br/><b>11–12 cols</b><br/>admin × crop"]
   T["trace<br/><b>~13 cols</b><br/>+ EF"]
@@ -35,7 +35,7 @@ Flat namespace `{source}:{product}:{band}`, one 2D variable each, no band or tim
 
 **Width, roughly.** 228 B/px as stored vs ~63 native — call it **3–4× larger than it needs to be**: ~340 GiB/tile against ~90, or ~90 TiB against ~25 over 280 tiles. The 50 annual class bands are ~88% of that. Harmonize is ~3× the size of the layer it feeds, and the excess is representational. ⁵
 
-## Emit — 20 bands
+## Emit — 20 bands, plus 10 `cie-`
 
 | Δ     | band                                           | n   | contents                                                                | ref-yr ⁶    | dest ⁷                   | disc. |
 | ----- | ---------------------------------------------- | --- | ----------------------------------------------------------------------- | ----------- | ------------------------ | ----- |
@@ -55,6 +55,8 @@ Flat namespace `{source}:{product}:{band}`, one 2D variable each, no band or tim
 
 Spans: `2000-2005`, `2005-2010`, `2010-2015`, `2015-2020`. 80 B/px → 119 GiB/tile, 32.6 TiB global.
 
+**Since `8130655`:** the ten `cie-` bands (Crop-Independent Emissions, the Orbae layer 1) sit beside these. Every band above can be derived from them (`emit.derive_from_cie`), and the downstream legs now read through that. With them, emit is 120 B/px → ~179 GiB/tile uncompressed. See [`crop_independent_emissions.md`](crop_independent_emissions.md).
+
 ## What is lost, and where
 
 |                                                | harmonize     | emit                      | downscale        | attribute   |
@@ -70,6 +72,19 @@ Spans: `2000-2005`, `2005-2010`, `2010-2015`, `2015-2020`. 80 B/px → 119 GiB/t
 | emissions per (admin, crop)                    | —             | —                         | —                | ✓           |
 
 Downscale averages ~111 000 GLAD pixels into one MapSPAM cell (40 000² → 120²); everything after is tabular. Attribute collapses geometry and the span dimension; source × destination compresses to three component columns, plus a `DROPPED` pseudo-commodity row. Trace adds `production_kg`, `yield_kg_per_ha`, `emissions_factor_kgco2e_per_kg`.
+
+## Storage
+
+Open question: how much of the footprint is inherent to persisting inspectable per-pixel rasters at every stage (the design ethos in [`architecture.md`](../architecture.md)), and how much is encoding slack? Nobody has measured it yet. The leads:
+
+- **Encoding is the zarr v3 default.** `storage.write_dask_dataset_to_zarr` passes no encoding: zstd level 0, no shuffle filter, 2048² chunks.
+- **Everything is float32,** including the class enums and bitmasks. Harmonize's annual class bands are ~88% of its width and natively uint8 (footnote ⁵).
+- **Emit is now redundant by design.** The 20 legacy bands are derivable from the 10 `cie-` ones, so a lean emit that persists only `cie-` is a concrete option, not a hypothesis.
+- **Harmonize may not need persisting at all.** It is a VRT-defined rescale of the ingested COGs, so it is cheap to recompute.
+- **Retention costs nothing in code.** GCS lifecycle rules on the scratch prefix, once the deliverables exist.
+- **30 m → 10 m is ~9× the pixels,** so every figure here scales by about 9.
+
+Measure on a land-dense window, not an ocean tile: the Honduras tile `20N_090W` compresses ~135:1, which says nothing about farmland.
 
 ______________________________________________________________________
 

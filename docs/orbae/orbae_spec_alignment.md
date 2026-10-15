@@ -2,6 +2,14 @@
 
 **Status:** draft for discussion · **Repo state:** `8130655` (migrate from GLCLUC to TCL/GPW/GACED30) · **Spec state:** `docs/orbae/orbae_emissions_layer_spec.md` as committed in `0db3abd`
 
+> **Since this was written (2026-10).** `emit` now also writes the Crop-Independent Emissions (`cie-`) bands, Orbae's layer 1, and the old bands are derived from them (`emit.derive_from_cie`); see [`crop_independent_emissions.md`](crop_independent_emissions.md). Against the §5 list:
+>
+> - **Resolved in the `cie-` bands:** 1, the destination is read and required (they are gated on the source alone, and keep the destination only as evidence, in `cie-destination-dataset`); 2, peat occupation gated on the destination (`cie-peat-occupation-emissions` covers all peat); and 6, five-year spans (the pools are undiscounted, and `cie-conversion-year` carries the timing). The source class is no longer lost where no destination resolves (`cie-conversion-source`).
+> - **Partly resolved:** 3, soil variants (`cie-mineral-soil-carbon-at-risk` is the stock before any loss fraction, so the factor is the consumer's choice, but the perennial F_LU column still isn't in the repo); 4, reference-year dependence (the destination test is gone from the layer, but the lookback window is still clipped at `emit.ASSESSMENT_YEAR`, which is still outside the cache key); 5, intermediates (the pools are now stored separately, but still as one zarr per tile, with no schema check).
+> - **Untouched:** 7–9, and the documentation discrepancies in §6.
+>
+> The body below is unchanged and still describes `8130655`. Its `emit.py` line numbers refer to that commit.
+
 This document compares three things that are usually collapsed into two:
 
 1. **The spec** — `docs/orbae/orbae_emissions_layer_spec.md`

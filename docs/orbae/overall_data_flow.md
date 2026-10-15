@@ -1,6 +1,6 @@
 # Overall data flow — repo pipeline and Orbae data model
 
-Drawn from [`data_flow.md`](data_flow.md), [`orbae_emissions_data_model.md`](orbae_emissions_data_model.md), [`jdluc_derivability.md`](jdluc_derivability.md), and [`orbae_spec_alignment.md`](orbae_spec_alignment.md) §0.
+Drawn from [`stage-contents.md`](stage-contents.md), [`orbae_emissions_data_model.md`](orbae_emissions_data_model.md), [`jdluc_derivability.md`](jdluc_derivability.md), and [`orbae_spec_alignment.md`](orbae_spec_alignment.md) §0.
 
 ```mermaid
 %%{init: {"layout": "elk", "elk": {"considerModelOrder": "NODES_AND_EDGES", "nodePlacementStrategy": "LINEAR_SEGMENTS"}}}%%

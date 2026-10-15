@@ -63,7 +63,7 @@ The vegetation, soil and year identities are unit-tested in `jdluc/__tests__/emi
 
 - Every band is float32 with NaN as no-data, including the enum and bitmask bands (`geo.unify_dtype_and_no_data`).
 - Bands share the tile's 30 m grid. The units follow the band name after the first `:`.
-- Adding the `cie-` bands takes each tile from 20 bands to 30. The `emit` cache version is 2.
+- Adding the `cie-` bands takes each tile from 20 bands to 30. The `emit` cache version is 4.
 
 ## Not yet covered
 

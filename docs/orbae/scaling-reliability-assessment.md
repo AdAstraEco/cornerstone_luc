@@ -1,6 +1,8 @@
-______________________________________________________________________
+# Cornerstone LUC: scaling and reliability assessment
 
-## title: "Cornerstone LUC — Scaling & Reliability Assessment" subtitle: "What a live cloud run tells us about building on this pipeline" date: "September 2026" geometry: margin=2.2cm fontsize: 11pt colorlinks: true
+*What a live cloud run tells us about building on this pipeline.* September 2026.
+
+> **A dated report.** It was written before the `8130655` migration, against the GLAD land-class code, and it describes the hand-rolled Indexed-Job driver that Argo has since replaced (see [`argo-workflows.md`](argo-workflows.md)). Its findings on architecture, cost structure and risk still stand. Its per-tile figures (17–20 min and ~51 GiB on Czechia) come from different code and different tiles than the Argo timings (57–61 min on Côte d'Ivoire), so don't compare the two directly.
 
 # 1. Executive summary
 

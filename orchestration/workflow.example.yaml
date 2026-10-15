@@ -117,7 +117,7 @@ spec:
           - --output-dir=/plan
           - "--allow-failures={{workflow.parameters.allow-failures}}"
         env: &tmpdir-env
-          # Temp files on the pod's own SSD, not the node's boot disk (docs/gke-disk-io-findings.md)
+          # Temp files on the pod's own SSD, not the node's boot disk (docs/orbae/gke-disk-io-findings.md)
           - { name: TMPDIR, value: /localtmp }
           - { name: CPL_TMPDIR, value: /localtmp }
         resources: &light-resources
