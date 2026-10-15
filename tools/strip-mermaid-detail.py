@@ -9,8 +9,10 @@ code fences is passed through unchanged.
     tools/strip-mermaid-detail.py docs/orbae/overall_data_flow.md > /tmp/plain.md
     tools/strip-mermaid-detail.py chart.mmd > plain.mmd
 """
+
 import re
 import sys
+from pathlib import Path
 
 # *text*, not **bold**; optionally followed by the label's closing `"]
 ITALIC_LINE = re.compile(r"^\s*\*[^*].*?\*\s*(?P<close>`\"\]\s*)?$")
@@ -25,7 +27,7 @@ def strip(text: str) -> str:
             continue
         m = ITALIC_LINE.match(line) if in_mermaid else None
         if m:
-            if m.group("close"):            # detail was the last label line:
+            if m.group("close"):  # detail was the last label line:
                 out[-1] = out[-1].rstrip() + m.group("close").rstrip()
             continue
         out.append(line)
@@ -33,5 +35,5 @@ def strip(text: str) -> str:
 
 
 if __name__ == "__main__":
-    src = open(sys.argv[1]).read() if len(sys.argv) > 1 else sys.stdin.read()
+    src = Path(sys.argv[1]).read_text() if len(sys.argv) > 1 else sys.stdin.read()
     sys.stdout.write(strip(src))

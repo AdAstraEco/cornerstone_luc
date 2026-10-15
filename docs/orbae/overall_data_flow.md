@@ -1,7 +1,6 @@
 # Overall data flow — repo pipeline and Orbae data model
 
-Drawn from [`data_flow.md`](data_flow.md), [`orbae_emissions_data_model.md`](orbae_emissions_data_model.md),
-[`jdluc_derivability.md`](jdluc_derivability.md), and [`orbae_spec_alignment.md`](orbae_spec_alignment.md) §0.
+Drawn from [`data_flow.md`](data_flow.md), [`orbae_emissions_data_model.md`](orbae_emissions_data_model.md), [`jdluc_derivability.md`](jdluc_derivability.md), and [`orbae_spec_alignment.md`](orbae_spec_alignment.md) §0.
 
 ```mermaid
 %%{init: {"layout": "elk", "elk": {"considerModelOrder": "NODES_AND_EDGES", "nodePlacementStrategy": "LINEAR_SEGMENTS"}}}%%
@@ -146,8 +145,6 @@ flowchart TB
   style align fill:none,stroke:#e0a800,stroke-width:2px,stroke-dasharray:6 4;
 ```
 
-Green: Cornerstone repo stages. Light blue: Orbae data model intermediates. Dark blue:
-outputs. Grey dashed: external data sources. Amber: the two candidate outputs of `emit`, side by side.
+Green: Cornerstone repo stages. Light blue: Orbae data model intermediates. Dark blue: outputs. Grey dashed: external data sources. Amber: the two candidate outputs of `emit`, side by side.
 
-Italic lines inside boxes are detail. For a headings-only version, run
-`tools/strip-mermaid-detail.py docs/orbae/overall_data_flow.md` and render the result.
+Italic lines inside boxes are detail. For a headings-only version, run `tools/strip-mermaid-detail.py docs/orbae/overall_data_flow.md` and render the result.

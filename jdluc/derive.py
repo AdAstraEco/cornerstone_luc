@@ -92,8 +92,8 @@ CROP_CLASS_TO_ZONE_TO_FLU: dict[CropClass, dict[Zone, float]] = {
         Zone.BOREAL_MOIST: 0.72,
         Zone.BOREAL_DRY: 0.72,
     },
-    CropClass.PADDY_RICE: {zone: 1.00 for zone in Zone},
-    CropClass.PASTURE: {zone: 1.00 for zone in Zone},
+    CropClass.PADDY_RICE: dict.fromkeys(Zone, 1.0),
+    CropClass.PASTURE: dict.fromkeys(Zone, 1.0),
 }
 
 

@@ -777,9 +777,9 @@ def test_perennial_discounting_comparison_discounts_each_term_both_ways() -> Non
     )
     # Peat occupation is one band, and each discounting's total is its own terms' sum
     occupation = cog_band(result, "peat_occupation_emissions_per_year", "perennial")
-    assert [name for name in result if "peat-occupation-emissions" in name] == [
-        "ccl-peat-occupation-emissions-per-year:tco2e-per-ha-per-year:perennial"
-    ]
+    assert [
+        name for name in map(str, result) if "peat-occupation-emissions" in name
+    ] == ["ccl-peat-occupation-emissions-per-year:tco2e-per-ha-per-year:perennial"]
     for discounting in ("equal", "linear"):
         numpy.testing.assert_allclose(
             cog_band(result, "total_emissions_amortized", "perennial", discounting),

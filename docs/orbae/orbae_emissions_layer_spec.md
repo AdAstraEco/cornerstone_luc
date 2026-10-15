@@ -1,55 +1,46 @@
 # **Orbae Emissions Layer — Draft Specification**
 
+THIS DOCUMENT IS AN OBJECT OF DISCUSSION. IT DOES NOT REPRESENT THE CURRENT STATE OF THE REPOSITORY. IT IS HERE FOR COMPARISON PURPOSES ONLY. DO NOT TREAT AS A REFERENCE. Live version: https://docs.google.com/document/d/1OIevmee4GZqhuvW7mtaUxCQghBElAqvcBtFA4ucKoKY/edit?tab=t.0
 
-THIS DOCUMENT IS AN OBJECT OF DISCUSSION. 
-IT DOES NOT REPRESENT THE CURRENT STATE OF THE REPOSITORY. 
-IT IS HERE FOR COMPARISON PURPOSES ONLY. 
-DO NOT TREAT AS A REFERENCE. 
-Live version: https://docs.google.com/document/d/1OIevmee4GZqhuvW7mtaUxCQghBElAqvcBtFA4ucKoKY/edit?tab=t.0
-
-## The emissions layer encode the conversion and corresponding emissions associated with the 
-
-## 
+## The emissions layer encode the conversion and corresponding emissions associated with the
 
 ## **1 · Key Principles**
 
 The development of the emissions layer is bounded by the following key principles:
 
-* **Preserve the conversion evidence base.** Keep the detection and recording of conversions separate from decisions about which conversions are relevant to a particular downstream use.  
-* **Unfiltered first.** Every land conversion we detect goes into the layer, no matter what the land became afterwards. Filtering and cleaning happen later, as separate and documented steps applied on top of the finished layer — never while the layer is being built. (Cornerstone's proof of concept, which only kept conversions ending in cropland and buildup, etc., is the pattern to avoid.)  
-* **No crop information inside the layer.** Crop masks, yields and farm polygons stay outside. Because the layer does not know which crop grows where, it carries the soil-carbon result for all three crop groups (annual, perennial, rice, pasture, forestry) side by side, and leaves peat occupation without a detected conversion, as well as the crop attribution itself, to the downstream step.  
-* **Every intermediate result is a real, named product.** The layer is built in a handful of steps, and each step leaves behind a stored result with a fixed set of columns and a check that it passed. Each step works only from the result of the step before it.  
-* **Sequence the processing in a way that simplifies computation, i.e.,**   
-  * **work on total emissions as long as possible \- in order to simplify aggregation.**   
-  * **No reference year until the very end.** Where and when land was converted, and how much carbon that was released, are computed without any reference year, assessment window or amortization rule. Those are applied as a final, cheap step — so one computation serves every year and every amortization scheme.  
-* **Avoid cleaning rules that create artificial changes in the results for different reference years.** The consistent use of  TCL and GPW (cascading use, removal of flapping pixels, etc.) in a way that does not make LUC GHG results dependent on the rules, i.e., minimize the influence of these rules on the reference year. 
+- **Preserve the conversion evidence base.** Keep the detection and recording of conversions separate from decisions about which conversions are relevant to a particular downstream use.
+- **Unfiltered first.** Every land conversion we detect goes into the layer, no matter what the land became afterwards. Filtering and cleaning happen later, as separate and documented steps applied on top of the finished layer — never while the layer is being built. (Cornerstone's proof of concept, which only kept conversions ending in cropland and buildup, etc., is the pattern to avoid.)
+- **No crop information inside the layer.** Crop masks, yields and farm polygons stay outside. Because the layer does not know which crop grows where, it carries the soil-carbon result for all three crop groups (annual, perennial, rice, pasture, forestry) side by side, and leaves peat occupation without a detected conversion, as well as the crop attribution itself, to the downstream step.
+- **Every intermediate result is a real, named product.** The layer is built in a handful of steps, and each step leaves behind a stored result with a fixed set of columns and a check that it passed. Each step works only from the result of the step before it.
+- **Sequence the processing in a way that simplifies computation, i.e.,**
+  - **work on total emissions as long as possible - in order to simplify aggregation.**
+  - **No reference year until the very end.** Where and when land was converted, and how much carbon that was released, are computed without any reference year, assessment window or amortization rule. Those are applied as a final, cheap step — so one computation serves every year and every amortization scheme.
+- **Avoid cleaning rules that create artificial changes in the results for different reference years.** The consistent use of TCL and GPW (cascading use, removal of flapping pixels, etc.) in a way that does not make LUC GHG results dependent on the rules, i.e., minimize the influence of these rules on the reference year.
 
 ## **2 · Requirements**
 
-* **No filtering of conversion events with crop masks.** The core layer must retain every event produced by the approved conversion-detection process, irrespective of destination land use. Application-specific exclusions must be applied only in separately identified downstream products.  
-* **Scenario-specific results per crop type:** The core layer must provide scenario-specific results for every supported land-use /crop-type category–annual, perennial, paddy rice, pastureland, and forestry– without assigning a category to a location using crop masks, yields, or farm polygons. Spatial attribution must occur downstream  
-* **Emissions breakdown/resolution:** Emissions must be computed by ecosystem converted (forest, natural grassland, pasture), by carbon pool (biomass, mineral soil, peat) and by gas (CO₂, CH₄, N₂O). The open version is an aggregation of the full version.  
-* **Peat:** The core layer must embed emissions from peat occupation to all peat pixels \- whether converted or not. On top of these emissions from occupation we assign emissions from conversion if we have a converting pixel. The downstream delivered product combines the two while retaining their separate contributions.  
-* **The core layer is derived from a consistent conversion-event period**. For fixed source-data versions and processing rules, changing the assessment reference year must not change the underlying conversion-event records or their unamortized emissions. Reference-year selection, assessment-window eligibility, and amortization must be applied downstream.  
-* **Perhaps too much implementation focus….**The core must retain unamortized event-level emissions by ecosystem converted, carbon pool, gas, and supported land-use scenario. Aggregated totals must be derived from those components.
+- **No filtering of conversion events with crop masks.** The core layer must retain every event produced by the approved conversion-detection process, irrespective of destination land use. Application-specific exclusions must be applied only in separately identified downstream products.
+- **Scenario-specific results per crop type:** The core layer must provide scenario-specific results for every supported land-use /crop-type category–annual, perennial, paddy rice, pastureland, and forestry– without assigning a category to a location using crop masks, yields, or farm polygons. Spatial attribution must occur downstream
+- **Emissions breakdown/resolution:** Emissions must be computed by ecosystem converted (forest, natural grassland, pasture), by carbon pool (biomass, mineral soil, peat) and by gas (CO₂, CH₄, N₂O). The open version is an aggregation of the full version.
+- **Peat:** The core layer must embed emissions from peat occupation to all peat pixels - whether converted or not. On top of these emissions from occupation we assign emissions from conversion if we have a converting pixel. The downstream delivered product combines the two while retaining their separate contributions.
+- **The core layer is derived from a consistent conversion-event period**. For fixed source-data versions and processing rules, changing the assessment reference year must not change the underlying conversion-event records or their unamortized emissions. Reference-year selection, assessment-window eligibility, and amortization must be applied downstream.
+- \*\*Perhaps too much implementation focus….\*\*The core must retain unamortized event-level emissions by ecosystem converted, carbon pool, gas, and supported land-use scenario. Aggregated totals must be derived from those components.
 
-
-  
 **OPEN Tasks & Questions**
 
-* **Expand the emissions layer to pasture and forestry.**  In order to facilitate use of the emissions layer for forestry and livestock, we need to compute SOC losses specifically towards pastureland but also towards forest conversion \- need to add the LUCfactor defaults to the climate zone shape file and then compute emissions specifically for these two additional use cases **(overall we have an emissions layer for annual, perennial (tree crops), paddy rice, pasture and (potentially) forestry.**   
-* **How the rules for GPW affect its use and the application of linear depreciation**. If we have several conversion events recorded for the same pixel, i.e., a conversion from natural grassland in 2006 and in 2016 and in 2023, how should we handle this?   
-  * If we work with last event, we would select 2022  
-* **Consistent breakdown of CO2, N2O and CH4**:   
-  * **Peat:**   
-    * Currently: the cornerstone pulse with an average of method 2.3   
-    * Better: Develop a more refined breakdown specifically for cornerstone  
-  * **Biomass and SOC:**   
-    * Currently: general breakdown based on method 2.3 for both SOC and biomass \- continental WRI approach  
-    * Better \-\> Biomass: We can compute with GFW fire database (if we work with GFW Forest gross emissions this breakdown for biomass is already included \- hurray)  
-    * Better \-\> SOC: compute N2O emissions from dinitrification \- this results from SOC losses \-\>  \- see EQUATION 11.8 \- FSOM. & table 11.3 here: [https://www.ipcc-nggip.iges.or.jp/public/2006gl/pdf/4\_Volume4/V4\_11\_Ch11\_N2O\&CO2.pdf](https://www.ipcc-nggip.iges.or.jp/public/2006gl/pdf/4_Volume4/V4_11_Ch11_N2O&CO2.pdf) “mineralisation of N associated with loss of soil C in mineral and drained/managed organic soils through land-use change or management practices,”  
-* **One result, several delivery formats.** The layer is computed once in a particular format (pixel or h3 cells); the cloud-optimized GeoTIFF, Zarr and hexagon-table deliverables are all exports of that same result. Exports only re-grid and subset — they never recompute.  
-* 
+- **Expand the emissions layer to pasture and forestry.** In order to facilitate use of the emissions layer for forestry and livestock, we need to compute SOC losses specifically towards pastureland but also towards forest conversion - need to add the LUCfactor defaults to the climate zone shape file and then compute emissions specifically for these two additional use cases **(overall we have an emissions layer for annual, perennial (tree crops), paddy rice, pasture and (potentially) forestry.**
+- **How the rules for GPW affect its use and the application of linear depreciation**. If we have several conversion events recorded for the same pixel, i.e., a conversion from natural grassland in 2006 and in 2016 and in 2023, how should we handle this?
+  - If we work with last event, we would select 2022
+- **Consistent breakdown of CO2, N2O and CH4**:
+  - **Peat:**
+    - Currently: the cornerstone pulse with an average of method 2.3
+    - Better: Develop a more refined breakdown specifically for cornerstone
+  - **Biomass and SOC:**
+    - Currently: general breakdown based on method 2.3 for both SOC and biomass - continental WRI approach
+    - Better -> Biomass: We can compute with GFW fire database (if we work with GFW Forest gross emissions this breakdown for biomass is already included - hurray)
+    - Better -> SOC: compute N2O emissions from dinitrification - this results from SOC losses -> - see EQUATION 11.8 - FSOM. & table 11.3 here: [https://www.ipcc-nggip.iges.or.jp/public/2006gl/pdf/4_Volume4/V4_11_Ch11_N2O&CO2.pdf](https://www.ipcc-nggip.iges.or.jp/public/2006gl/pdf/4_Volume4/V4_11_Ch11_N2O&CO2.pdf) “mineralisation of N associated with loss of soil C in mineral and drained/managed organic soils through land-use change or management practices,”
+- **One result, several delivery formats.** The layer is computed once in a particular format (pixel or h3 cells); the cloud-optimized GeoTIFF, Zarr and hexagon-table deliverables are all exports of that same result. Exports only re-grid and subset — they never recompute.
+-
 
 ## **3 · Calculation sequence**
 
@@ -61,11 +52,11 @@ Eight steps. Each one takes named inputs, produces a named intermediate result, 
 
 **Inputs.**
 
-*Tree cover loss.* Global Forest Watch tree cover loss (Hansen, GFC-2025-v1.13), which gives the year of loss per pixel for 2001 to 2025\. A pixel is treated as forest only where tree canopy cover in the year 2000 exceeds ten per cent. Pixels that show a loss but sit below that canopy threshold are not deleted — they are kept and marked, so the effect of the threshold stays visible.
+*Tree cover loss.* Global Forest Watch tree cover loss (Hansen, GFC-2025-v1.13), which gives the year of loss per pixel for 2001 to 2025. A pixel is treated as forest only where tree canopy cover in the year 2000 exceeds ten per cent. Pixels that show a loss but sit below that canopy threshold are not deleted — they are kept and marked, so the effect of the threshold stays visible.
 
-Alternative: Forest gross emissions layer: 
+Alternative: Forest gross emissions layer:
 
-*Grassland and pasture.* Global Pasture Watch, version 2, annual, 2000 to 2024\. We use two classes: pasture, and natural grassland — into which the shrubland and rangeland category is merged. Two events are read from the annual series: the year a pixel leaves natural grassland (to anything else, pasture included), and the year a pixel leaves pasture. Where a pixel leaves the same class more than once across the series, only one conversion is relevant, and it is **the last one**. The first occurrence is retained alongside as an audit attribute, because the peat pulse in step 2.2 needs it.
+*Grassland and pasture.* Global Pasture Watch, version 2, annual, 2000 to 2024. We use two classes: pasture, and natural grassland — into which the shrubland and rangeland category is merged. Two events are read from the annual series: the year a pixel leaves natural grassland (to anything else, pasture included), and the year a pixel leaves pasture. Where a pixel leaves the same class more than once across the series, only one conversion is relevant, and it is **the last one**. The first occurrence is retained alongside as an audit attribute, because the peat pulse in step 2.2 needs it.
 
 *Peat.* Peatland presence from Xu et al. (2018), PEATMAP. Peat is not an event source and does not compete with the other two. It is a property of the soil, it needs no year, and on its own it is already enough to make a pixel emit — see step 2.2. (The Global Forest Watch peat composite is a second-version input, not this one.)
 
@@ -73,7 +64,7 @@ Alternative: Forest gross emissions layer:
 
 ### **Step 1b — Value sources**
 
-**What it does.** Assembles the numbers that the emissions will later be based on. Nothing is attached to any pixel here — that happens in step 3\. This step exists so that every default has one declared origin and one version stamp.
+**What it does.** Assembles the numbers that the emissions will later be based on. Nothing is attached to any pixel here — that happens in step 3. This step exists so that every default has one declared origin and one version stamp.
 
 **Inputs.**
 
@@ -99,7 +90,7 @@ Alternative: Forest gross emissions layer:
 
 **What it does.** Reduces the candidates from step 1a to exactly one conversion event per pixel.
 
-**How it decides.** By materiality, not by date. Forest outranks natural grassland, which outranks pasture. A forest loss in 2020 therefore wins over a grassland loss in 2008 on the same pixel. Likewise, a natural grassland loss in 2005 therefore wins over a pastureland loss in 2012\. Within Global Pasture Watch, the last conversion out of the class is the event.
+**How it decides.** By materiality, not by date. Forest outranks natural grassland, which outranks pasture. A forest loss in 2020 therefore wins over a grassland loss in 2008 on the same pixel. Likewise, a natural grassland loss in 2005 therefore wins over a pastureland loss in 2012. Within Global Pasture Watch, the last conversion out of the class is the event.
 
 No destination class is read at this point. What the land became is not part of the event.
 
@@ -113,7 +104,7 @@ No destination class is read at this point. What the land became is not part of 
 
 *Peat with a conversion event* becomes a peat conversion. It is dated by the **first** conversion year observed on the pixel — not by the step 2.1 event year. The drainage pulse fires once per pixel, ever.
 
-*Peat without a conversion event* becomes peat occupation. It has no year and is treated as ongoing; the year is assigned in step 4\. This works because all peat which can be occupied by a crop (and that includes both, peat with and peat without a conversion event) emits in the refined peat model.
+*Peat without a conversion event* becomes peat occupation. It has no year and is treated as ongoing; the year is assigned in step 4. This works because all peat which can be occupied by a crop (and that includes both, peat with and peat without a conversion event) emits in the refined peat model.
 
 No land cover data is consulted in this step. Whether occupied peat is in fact drained is a land-cover question, and therefore a detached filter in step 5, never part of creation.
 
@@ -165,7 +156,7 @@ Two things about this construction should stay visible. The averaging is weighte
 
 Three amortisation variants are computed and kept side by side, so the choice stays an output setting and not a baked-in assumption:
 
-*Linear.* The weight is twenty minus the years since conversion, divided by 210\. Recent conversions weigh most, and the weights sum to exactly one across the twenty years — no carbon is created or destroyed.
+*Linear.* The weight is twenty minus the years since conversion, divided by 210. Recent conversions weigh most, and the weights sum to exactly one across the twenty years — no carbon is created or destroyed.
 
 *Equal.* One twentieth in each of the twenty years.
 
@@ -199,7 +190,7 @@ One ambition of an AI use case could be that a client uploads an excel file with
 
 This could well only live in our infrastructure and not be open source, but be our added value that we bring the the open source stack.
 
----
+______________________________________________________________________
 
 ## **Declared differences to the Cornerstone proof of concept**
 
@@ -225,24 +216,13 @@ Differences in the input data stack are excluded here — Cornerstone will follo
 
 **Versioning discipline.** Cornerstone's cache keys are content-blind and require a manual version bump when an assumption changes — a silent-staleness risk. We stamp the version of every contributing input into the export itself.
 
-## 
-
-## 
-
-## 
-
 ## **3 · Attribute skeleton — what is created where**
 
-| Created at | Attributes | Lifecycle |
-| :---- | :---- | :---- |
-| **L1** keys | h3\_index · cell\_area\_m2 · country\_iso, admin1–3\_id · climate\_zone · method\_version, input\_versions | Carried unchanged to L5; admin keys and climate zone dropped in COG. |
-| **L1** observations | tcl\_loss\_year · tcl\_from\_fire · gpw\_natgrass\_seq, gpw\_pasture\_seq · peat\_present · agb\_tC\_ha, bgb\_tC\_ha · soc\_tC\_ha | Carried to L3; stocks consumed into fluxes at L3; sequences dropped after L3. |
-| **L2** events | ecosystem\_converted · conversion\_year · events\_all · peat\_converted | Carried to L6 as ecosystem and year bands; conversion\_year → amortization factor at L4. |
-| **L3** fluxes | \<pool\>\_\<variant\>\_\<gas\> — pools {biomass, dom, soc, peat\_pulse, peat\_occ\_rate}; variants {annual, perennial, rice} for soc; gases {co2, ch4, n2o} | Scaled at L4; collapsed to shipped bands at L6. total\_co2e always derived. |
-| **L4** reference | reference\_year · window\_years · amortization\_scheme · amortization\_factor · em\_\<pool\>\_\<variant\>\_\<gas\> | Parameters become export metadata; emissions become bands. |
-| **L5** filters | filter\_\<name\> · filter\_spec\_version | Become masks / subsets at L6. |
-
-## 
-
-## 
-
+| Created at          | Attributes                                                                                                                                            | Lifecycle                                                                               |
+| :------------------ | :---------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------- |
+| **L1** keys         | h3_index · cell_area_m2 · country_iso, admin1–3_id · climate_zone · method_version, input_versions                                                    | Carried unchanged to L5; admin keys and climate zone dropped in COG.                    |
+| **L1** observations | tcl_loss_year · tcl_from_fire · gpw_natgrass_seq, gpw_pasture_seq · peat_present · agb_tC_ha, bgb_tC_ha · soc_tC_ha                                   | Carried to L3; stocks consumed into fluxes at L3; sequences dropped after L3.           |
+| **L2** events       | ecosystem_converted · conversion_year · events_all · peat_converted                                                                                   | Carried to L6 as ecosystem and year bands; conversion_year → amortization factor at L4. |
+| **L3** fluxes       | \<pool>\_\<variant>\_\<gas> — pools {biomass, dom, soc, peat_pulse, peat_occ_rate}; variants {annual, perennial, rice} for soc; gases {co2, ch4, n2o} | Scaled at L4; collapsed to shipped bands at L6. total_co2e always derived.              |
+| **L4** reference    | reference_year · window_years · amortization_scheme · amortization_factor · em\_\<pool>\_\<variant>\_\<gas>                                           | Parameters become export metadata; emissions become bands.                              |
+| **L5** filters      | filter\_\<name> · filter_spec_version                                                                                                                 | Become masks / subsets at L6.                                                           |

@@ -8,9 +8,7 @@ This document compares three things that are usually collapsed into two:
 2. **The repo's own documentation** — `docs/methodology.md`, `docs/architecture.md`, `docs/further_research.md`, `docs/peatland_methodology_supplement.md`
 3. **The code** — what `jdluc/` actually does
 
-
-
----
+______________________________________________________________________
 
 ## 0 · How to read this
 
@@ -34,24 +32,24 @@ flowchart LR
 
 The crosswalk, spec → repo:
 
-| spec step | repo stage | where in code |
-|---|---|---|
-| **1a** Event sources | ingest → harmonize | `jdluc/datasets/`, `harmonize.Stack.LUC_AND_EMISSIONS` |
-| **1b** Value sources | ingest → harmonize, plus constants in `emit.py` | same, plus module-level tables |
-| **2.1** Conversion event | **emit** | `get_conversion_record` |
-| **2.2** Peat event & soil regime | **emit** — *not a separate step* | folded into `get_conversion_emissions` |
-| **3** Emissions per event | **emit** | `get_conversion_emissions`, `get_peatland_occupation_emissions` |
-| **4** Reference year | **emit + attribute** — *split across the stage boundary* | `get_span_to_charge` (emit); `get_linear_discounted_total` (both) |
-| **5** Filters | attribute — *no filter layer exists* | fused into each leg's rollup |
-| **6** Export | emit (zarr) / attribute / trace (parquet) | `get_dset_for_output`, `cache_to_parquet` |
+| spec step                        | repo stage                                               | where in code                                                     |
+| -------------------------------- | -------------------------------------------------------- | ----------------------------------------------------------------- |
+| **1a** Event sources             | ingest → harmonize                                       | `jdluc/datasets/`, `harmonize.Stack.LUC_AND_EMISSIONS`            |
+| **1b** Value sources             | ingest → harmonize, plus constants in `emit.py`          | same, plus module-level tables                                    |
+| **2.1** Conversion event         | **emit**                                                 | `get_conversion_record`                                           |
+| **2.2** Peat event & soil regime | **emit** — *not a separate step*                         | folded into `get_conversion_emissions`                            |
+| **3** Emissions per event        | **emit**                                                 | `get_conversion_emissions`, `get_peatland_occupation_emissions`   |
+| **4** Reference year             | **emit + attribute** — *split across the stage boundary* | `get_span_to_charge` (emit); `get_linear_discounted_total` (both) |
+| **5** Filters                    | attribute — *no filter layer exists*                     | fused into each leg's rollup                                      |
+| **6** Export                     | emit (zarr) / attribute / trace (parquet)                | `get_dset_for_output`, `cache_to_parquet`                         |
 
 And in the other direction — **repo stages and components the spec does not name at all**:
 
-| repo stage | what it does | why the spec has no slot for it |
-|---|---|---|
-| **harmonize** | Aligns every ingested source onto one common 30 m grid, one 10° tile at a time, as a lazy `xarray.Dataset` backed by zarr | The spec assumes a common grid rather than specifying how one is reached — its step 1b output is *"a versioned set of value layers on the same thirty-metre grid"*, which is this stage's product, not an input to it. It is the machinery that makes "every value layer on the same grid" true rather than aspirational, and it is where resampling, nodata and dtype policy per dataset are decided |
-| **trace** | Joins the attribution rollups to production and derives the per-(jurisdiction, crop) emissions factor in kgCO₂e/kg | Legitimately out of scope: the spec specifies a layer, not a factor table. Noted because "the emissions layer" in repo terms ends at `emit`, and **two further stages** stand between it and anything a client sees |
-| **`validation/`** | A separate package that pulls reference figures and reports the pipeline's output against them | No counterpart in the spec. Notable because it is **the only part of the system already parameterised by reference year** (`REFERENCE_YEAR = 2020`, `--year`) — the emissions layer the spec is about is not |
+| repo stage        | what it does                                                                                                              | why the spec has no slot for it                                                                                                                                                                                                                                                                                                                                                                       |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **harmonize**     | Aligns every ingested source onto one common 30 m grid, one 10° tile at a time, as a lazy `xarray.Dataset` backed by zarr | The spec assumes a common grid rather than specifying how one is reached — its step 1b output is *"a versioned set of value layers on the same thirty-metre grid"*, which is this stage's product, not an input to it. It is the machinery that makes "every value layer on the same grid" true rather than aspirational, and it is where resampling, nodata and dtype policy per dataset are decided |
+| **trace**         | Joins the attribution rollups to production and derives the per-(jurisdiction, crop) emissions factor in kgCO₂e/kg        | Legitimately out of scope: the spec specifies a layer, not a factor table. Noted because "the emissions layer" in repo terms ends at `emit`, and **two further stages** stand between it and anything a client sees                                                                                                                                                                                   |
+| **`validation/`** | A separate package that pulls reference figures and reports the pipeline's output against them                            | No counterpart in the spec. Notable because it is **the only part of the system already parameterised by reference year** (`REFERENCE_YEAR = 2020`, `--year`) — the emissions layer the spec is about is not                                                                                                                                                                                          |
 
 The asymmetry is worth sitting with. The spec's eight steps map onto **three** of the repo's five stages; two repo stages have no spec counterpart, and one spec step (5, filters) has no repo counterpart. Neither document is a superset of the other.
 
@@ -65,24 +63,24 @@ Every finding carries one of these:
 
 **The three that matter** — these describe the relationship between the two *methods*:
 
-| | tag | meaning |
-|---|---|---|
-| ✅ | **Aligned** | same approach, same result |
-| 🤝 | **Convergent** | different route, same number — no action needed, but worth knowing |
-| ❌ | **Disagreement** | a genuine methodological fork. Not a verdict: a fork is a place where two defensible answers were given to the same question |
+|     | tag              | meaning                                                                                                                      |
+| --- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| ✅  | **Aligned**      | same approach, same result                                                                                                   |
+| 🤝  | **Convergent**   | different route, same number — no action needed, but worth knowing                                                           |
+| ❌  | **Disagreement** | a genuine methodological fork. Not a verdict: a fork is a place where two defensible answers were given to the same question |
 
 **Two that describe absence or accuracy** rather than disagreement:
 
-| | tag | meaning |
-|---|---|---|
-| 🛠️ | **Unbuilt** | the spec wants it; neither side has it |
+|          | tag                        | meaning                                                                                                                                                                                                                                                                                                                                               |
+| -------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 🛠️       | **Unbuilt**                | the spec wants it; neither side has it                                                                                                                                                                                                                                                                                                                |
 | 📕 📙 📘 | **documentation accuracy** | a document misdescribes something. 📕 **Spec-incorrect** — the spec describes a repo state that never existed · 📙 **Spec-stale** — the spec describes a repo state that no longer exists · 📘 **Doc drift** — the repo's own documentation and the repo's code disagree (all collected in [§6](#6--where-the-repos-documentation-and-code-disagree)) |
 
 ### Provenance of claims
 
 Every claim about the code below is cited to `file:line` and was checked against source. Where a claim is about *intent* rather than behaviour — what someone meant, rather than what runs — it says so in the text. Points where the repo's own documentation and its code disagree are flagged 📘 in place and collected in **[§6 · Where the repo's documentation and code disagree](#6--where-the-repos-documentation-and-code-disagree)**.
 
----
+______________________________________________________________________
 
 ## 1 · Stage by stage
 
@@ -94,23 +92,23 @@ Every claim about the code below is cited to `file:line` and was checked against
 
 **The repo's stack** (`harmonize.Stack.LUC_AND_EMISSIONS` + `CROP_SUPPLEMENT`):
 
-| purpose | repo | spec | tag |
-|---|---|---|---|
-| Forest loss | GNW Hansen TCL, `lossyear` | GFW TCL (GFC-2025-v1.13) | ✅ **Aligned** |
-| Canopy threshold | **not ingested** — `band_names=["lossyear"]` only ([gnw_tcl.py:32](../../jdluc/datasets/gnw_tcl.py:32)) | `treecover2000 > 10%`, kept and marked | ❌ **Disagreement** |
-| Grassland | GPW v2-beta, 2000–2024 | GPW v2, 2000–2024 | ✅ **Aligned** |
-| Grassland class merge | `NATURAL` + `OPEN_SHRUBLAND` → rangeland; `CULTIVATED` → pasture | shrubland/rangeland merged into natural grassland; pasture separate | ✅ **Aligned** |
-| Peat presence | GNW Global Peatlands | **Xu et al. (2018) PEATMAP** — spec says explicitly *"The Global Forest Watch peat composite is a second-version input, not this one"* | ❌ **Disagreement** |
-| AGB | GNW Harris | Harris et al. | ✅ **Aligned** |
-| BGB | Huang et al., fallback R2S 0.25 ([emit.py:54](../../jdluc/emit.py:54)) | Huang et al., fallback 25% of AGB | ✅ **Aligned** |
-| Soil carbon | SoilGrids OCS 0–30 cm | SoilGrids OCS 0–30 cm | ✅ **Aligned** |
-| Climate zones | IPCC (Lewis 2022), 10 zones incl. tropical wet/moist/dry/montane | AdAstra FAO GEZ map, tropical moist+wet collapsed | ❌ **Disagreement** (declared by spec) |
-| Grassland biomass | Houghton/BLUE, per climate zone ([emit.py:114](../../jdluc/emit.py:114)) | climate-zone stock + CTrees country woody top-up | ❌ **Disagreement** (declared by spec) |
-| DOM | CDM AR-TOOL-12 fractions of AGB ([emit.py:96](../../jdluc/emit.py:96)) | CDM AR-TOOL-12, per Cornerstone | ✅ **Aligned** |
-| Pixel area | computed from latitude ([emit.py:509](../../jdluc/emit.py:509)) | computed from latitude, not assumed constant | ✅ **Aligned** |
-| Destination layers | GACED30 cropland, Descals oil palm, GPW cultivated | **none** — no destination is read | ❌ **Disagreement** (see §2.2) |
-| Gas shares | **none** | Fitts et al. (2025), regional | 🛠️ **Unbuilt** on repo side |
-| Peat EFs by zone/land use | **none** — two flat constants | Orbae v2.3 per zone and land use, with gas split | ❌ **Disagreement** |
+| purpose                   | repo                                                                                                    | spec                                                                                                                                   | tag                                    |
+| ------------------------- | ------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| Forest loss               | GNW Hansen TCL, `lossyear`                                                                              | GFW TCL (GFC-2025-v1.13)                                                                                                               | ✅ **Aligned**                         |
+| Canopy threshold          | **not ingested** — `band_names=["lossyear"]` only ([gnw_tcl.py:32](../../jdluc/datasets/gnw_tcl.py:32)) | `treecover2000 > 10%`, kept and marked                                                                                                 | ❌ **Disagreement**                    |
+| Grassland                 | GPW v2-beta, 2000–2024                                                                                  | GPW v2, 2000–2024                                                                                                                      | ✅ **Aligned**                         |
+| Grassland class merge     | `NATURAL` + `OPEN_SHRUBLAND` → rangeland; `CULTIVATED` → pasture                                        | shrubland/rangeland merged into natural grassland; pasture separate                                                                    | ✅ **Aligned**                         |
+| Peat presence             | GNW Global Peatlands                                                                                    | **Xu et al. (2018) PEATMAP** — spec says explicitly *"The Global Forest Watch peat composite is a second-version input, not this one"* | ❌ **Disagreement**                    |
+| AGB                       | GNW Harris                                                                                              | Harris et al.                                                                                                                          | ✅ **Aligned**                         |
+| BGB                       | Huang et al., fallback R2S 0.25 ([emit.py:54](../../jdluc/emit.py:54))                                  | Huang et al., fallback 25% of AGB                                                                                                      | ✅ **Aligned**                         |
+| Soil carbon               | SoilGrids OCS 0–30 cm                                                                                   | SoilGrids OCS 0–30 cm                                                                                                                  | ✅ **Aligned**                         |
+| Climate zones             | IPCC (Lewis 2022), 10 zones incl. tropical wet/moist/dry/montane                                        | AdAstra FAO GEZ map, tropical moist+wet collapsed                                                                                      | ❌ **Disagreement** (declared by spec) |
+| Grassland biomass         | Houghton/BLUE, per climate zone ([emit.py:114](../../jdluc/emit.py:114))                                | climate-zone stock + CTrees country woody top-up                                                                                       | ❌ **Disagreement** (declared by spec) |
+| DOM                       | CDM AR-TOOL-12 fractions of AGB ([emit.py:96](../../jdluc/emit.py:96))                                  | CDM AR-TOOL-12, per Cornerstone                                                                                                        | ✅ **Aligned**                         |
+| Pixel area                | computed from latitude ([emit.py:509](../../jdluc/emit.py:509))                                         | computed from latitude, not assumed constant                                                                                           | ✅ **Aligned**                         |
+| Destination layers        | GACED30 cropland, Descals oil palm, GPW cultivated                                                      | **none** — no destination is read                                                                                                      | ❌ **Disagreement** (see §2.2)         |
+| Gas shares                | **none**                                                                                                | Fitts et al. (2025), regional                                                                                                          | 🛠️ **Unbuilt** on repo side            |
+| Peat EFs by zone/land use | **none** — two flat constants                                                                           | Orbae v2.3 per zone and land use, with gas split                                                                                       | ❌ **Disagreement**                    |
 
 **Note on the canopy threshold.** This is not a disagreement anyone has argued for — it is simply not reachable. The repo ingests `lossyear` alone, so `treecover2000 > 10%` cannot be evaluated without an ingest change. It is a one-band addition, not a redesign.
 
@@ -122,20 +120,19 @@ Every claim about the code below is cited to `file:line` and was checked against
 >
 > This is not an accident of exposition: four of the spec's eight steps live inside one function here, so anything cross-cutting necessarily originates in it.
 
-
 **What this stage is for.** One cached function per 10° tile, producing per-pixel conversion and emissions bands as a lazy dask graph persisted to zarr. It is crop-agnostic and feeds both attribution legs. See §2.1 for why its granularity is the central architectural fact.
 
 #### Conversion resolution (spec 2.1)
 
-| aspect | repo | spec | tag |
-|---|---|---|---|
-| One event per pixel | yes — `Conversion` members are mutually exclusive | yes | ✅ **Aligned** |
-| Forest outranks grassland | yes — `from_rangeland = ~from_forest & …` ([emit.py:349](../../jdluc/emit.py:349)) | yes, forest outranks natural grassland outranks pasture | ✅ **Aligned** |
-| Repeat departures | last one wins — `get_last_departure_year` ([emit.py:286](../../jdluc/emit.py:286)) | last one wins | ✅ **Aligned** |
-| **Rangeland vs pasture** | resolved **by date**: `rangeland_departure_year > pasture_departure_year` ([emit.py:350](../../jdluc/emit.py:350)) | resolved **by materiality**: natural grassland outranks pasture regardless of date — *"a natural grassland loss in 2005 wins over a pastureland loss in 2012"* | ❌ **Disagreement** |
-| First departure retained | **no** | yes, as an audit attribute — step 2.2 needs it | ❌ **Disagreement** |
-| Candidate count, cascade flag | **no** | yes, both kept for audit | ❌ **Disagreement** |
-| Destination read | yes, and required | no | ❌ **Disagreement** — §2.2 |
+| aspect                        | repo                                                                                                               | spec                                                                                                                                                           | tag                        |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| One event per pixel           | yes — `Conversion` members are mutually exclusive                                                                  | yes                                                                                                                                                            | ✅ **Aligned**             |
+| Forest outranks grassland     | yes — `from_rangeland = ~from_forest & …` ([emit.py:349](../../jdluc/emit.py:349))                                 | yes, forest outranks natural grassland outranks pasture                                                                                                        | ✅ **Aligned**             |
+| Repeat departures             | last one wins — `get_last_departure_year` ([emit.py:286](../../jdluc/emit.py:286))                                 | last one wins                                                                                                                                                  | ✅ **Aligned**             |
+| **Rangeland vs pasture**      | resolved **by date**: `rangeland_departure_year > pasture_departure_year` ([emit.py:350](../../jdluc/emit.py:350)) | resolved **by materiality**: natural grassland outranks pasture regardless of date — *"a natural grassland loss in 2005 wins over a pastureland loss in 2012"* | ❌ **Disagreement**        |
+| First departure retained      | **no**                                                                                                             | yes, as an audit attribute — step 2.2 needs it                                                                                                                 | ❌ **Disagreement**        |
+| Candidate count, cascade flag | **no**                                                                                                             | yes, both kept for audit                                                                                                                                       | ❌ **Disagreement**        |
+| Destination read              | yes, and required                                                                                                  | no                                                                                                                                                             | ❌ **Disagreement** — §2.2 |
 
 The **rangeland-vs-pasture rule is worth calling out** because neither document acknowledges it. The repo resolves by recency within the grassland family; the spec resolves by materiality. Both apply "forest first", so the disagreement is confined to pixels that left both natural grassland and pasture inside the window — but on those pixels the two methods can pick different source classes, with different carbon stocks.
 
@@ -143,30 +140,30 @@ The **rangeland-vs-pasture rule is worth calling out** because neither document 
 
 #### Soil regime and peat (spec 2.2)
 
-| aspect | repo | spec | tag |
-|---|---|---|---|
-| Strict either-or soil regime | yes — peat **replaces** the mineral term ([emit.py:426](../../jdluc/emit.py:426)) | yes — *"the two are never both computed on the same pixel"* | ✅ **Aligned** |
-| Soil-regime published as a band | **no** | yes | ❌ **Disagreement** |
-| Pulse fires once per pixel ever | yes, by construction (one conversion per pixel) | yes | ✅ **Aligned** |
-| Pulse dating | the step-2.1 event year (last departure / loss year) | the **first** conversion year observed | ❌ **Disagreement** |
-| Flag where pulse year ≠ event year | **cannot be computed** — first departure not retained | yes | ❌ **Disagreement** |
-| Peat without a conversion event | **emits nothing** | peat occupation, ongoing, no year | ❌ **Disagreement** |
+| aspect                             | repo                                                                              | spec                                                        | tag                 |
+| ---------------------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------- | ------------------- |
+| Strict either-or soil regime       | yes — peat **replaces** the mineral term ([emit.py:426](../../jdluc/emit.py:426)) | yes — *"the two are never both computed on the same pixel"* | ✅ **Aligned**      |
+| Soil-regime published as a band    | **no**                                                                            | yes                                                         | ❌ **Disagreement** |
+| Pulse fires once per pixel ever    | yes, by construction (one conversion per pixel)                                   | yes                                                         | ✅ **Aligned**      |
+| Pulse dating                       | the step-2.1 event year (last departure / loss year)                              | the **first** conversion year observed                      | ❌ **Disagreement** |
+| Flag where pulse year ≠ event year | **cannot be computed** — first departure not retained                             | yes                                                         | ❌ **Disagreement** |
+| Peat without a conversion event    | **emits nothing**                                                                 | peat occupation, ongoing, no year                           | ❌ **Disagreement** |
 
 #### Emissions per event (spec 3)
 
-| aspect | repo | spec | tag |
-|---|---|---|---|
-| Full source stock released, no differencing | yes ([emit.py:417](../../jdluc/emit.py:417) docstring: *"The whole source stock goes, since a conversion has no destination stock to subtract"*) | yes | ✅ **Aligned** |
-| Biomass depends on source only | yes ([emit.py:445](../../jdluc/emit.py:445)) | yes | ✅ **Aligned** |
-| DOM forest only | yes — folded into `forest_carbon` | yes | ✅ **Aligned** |
-| Mineral SOC keyed on | climate zone alone; one resolved variant ([emit.py:146](../../jdluc/emit.py:146)) | climate zone **×** crop group, carried as 3 (or 5) parallel unresolved variants | ❌ **Disagreement** — [§2.5](#25--the-layer-resolves-one-soil-variant-the-spec-carries-a-family-of-them) |
-| Pasture mineral SOC | **zero** — LU and management factors assumed 1.0 ([emit.py:430](../../jdluc/emit.py:430)) | a pasture LUC factor, to be added | 🛠️ **Unbuilt** / spec OPEN task |
-| Peat pulse | 621 tCO₂e/ha | 621 tCO₂e/ha | ✅ **Aligned** on value |
-| Peat occupation | 37.3 tCO₂e/ha/yr | 37.3 tCO₂e/ha/yr, re-expressed on AR5 → 37.20 | 🤝 **Convergent** on value |
-| Occupation coverage | **only where a destination resolved** ([emit.py:681](../../jdluc/emit.py:681)) | **every** organic-soil pixel, converted or not | ❌ **Disagreement** — and see §3.1 |
-| Pulse and occupation additive on a converted peat pixel | yes ([emit.py:687](../../jdluc/emit.py:687)) | yes | ✅ **Aligned** |
-| Gases | CO₂e only, no gas dimension | CO₂ / CH₄ / N₂O per pool, Fitts et al. shares | ❌ **Disagreement** (declared) |
-| GWP | AR6 | AR5 (CH₄ 28, N₂O 265) | ❌ **Disagreement** (declared) |
+| aspect                                                  | repo                                                                                                                                             | spec                                                                            | tag                                                                                                      |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Full source stock released, no differencing             | yes ([emit.py:417](../../jdluc/emit.py:417) docstring: *"The whole source stock goes, since a conversion has no destination stock to subtract"*) | yes                                                                             | ✅ **Aligned**                                                                                           |
+| Biomass depends on source only                          | yes ([emit.py:445](../../jdluc/emit.py:445))                                                                                                     | yes                                                                             | ✅ **Aligned**                                                                                           |
+| DOM forest only                                         | yes — folded into `forest_carbon`                                                                                                                | yes                                                                             | ✅ **Aligned**                                                                                           |
+| Mineral SOC keyed on                                    | climate zone alone; one resolved variant ([emit.py:146](../../jdluc/emit.py:146))                                                                | climate zone **×** crop group, carried as 3 (or 5) parallel unresolved variants | ❌ **Disagreement** — [§2.5](#25--the-layer-resolves-one-soil-variant-the-spec-carries-a-family-of-them) |
+| Pasture mineral SOC                                     | **zero** — LU and management factors assumed 1.0 ([emit.py:430](../../jdluc/emit.py:430))                                                        | a pasture LUC factor, to be added                                               | 🛠️ **Unbuilt** / spec OPEN task                                                                          |
+| Peat pulse                                              | 621 tCO₂e/ha                                                                                                                                     | 621 tCO₂e/ha                                                                    | ✅ **Aligned** on value                                                                                  |
+| Peat occupation                                         | 37.3 tCO₂e/ha/yr                                                                                                                                 | 37.3 tCO₂e/ha/yr, re-expressed on AR5 → 37.20                                   | 🤝 **Convergent** on value                                                                               |
+| Occupation coverage                                     | **only where a destination resolved** ([emit.py:681](../../jdluc/emit.py:681))                                                                   | **every** organic-soil pixel, converted or not                                  | ❌ **Disagreement** — and see §3.1                                                                       |
+| Pulse and occupation additive on a converted peat pixel | yes ([emit.py:687](../../jdluc/emit.py:687))                                                                                                     | yes                                                                             | ✅ **Aligned**                                                                                           |
+| Gases                                                   | CO₂e only, no gas dimension                                                                                                                      | CO₂ / CH₄ / N₂O per pool, Fitts et al. shares                                   | ❌ **Disagreement** (declared)                                                                           |
+| GWP                                                     | AR6                                                                                                                                              | AR5 (CH₄ 28, N₂O 265)                                                           | ❌ **Disagreement** (declared)                                                                           |
 
 **On 621 and 37.3.** The spec is right that 37.3 is the temperate cropland value: [`peatland_methodology_supplement.md`](../peatland_methodology_supplement.md) tabulates the IPCC 2013 Wetlands Supplement factors by zone and land use, and temperate cropland totals 29.0 + 1.1 + 1.6 + 5.6 = **37.3** on AR6 GWPs. It is adopted as `E_LM`, the steady state of the blended all-GHG reference curve. 621 is `P_LUC`, a least-squares fit of the GHGP linear ramp to that curve over years 1–20 — which the spec also describes correctly in its step 3.
 
@@ -177,7 +174,6 @@ That is the substantive disagreement, and it is sharper than a provenance disput
 ### 1.3 · Attribute — spec steps 4 (second half), 5, 6 (partly)
 
 > **Structural findings touching this stage:** [§2.3 · reference-year independence](#23--reference-year-independence-is-three-separate-questions) — the amortisation discount is applied *here*, by each leg separately, which is what makes the per-span bands re-amortisable without recomputation · [§2.4 · five-year spans](#24--five-year-spans-change-the-numbers-and-only-one-consumer-needs-them) — the span granularity exists for this stage's statistical leg, and the direct leg does not use it.
-
 
 **What this stage is for.** Clips per-pixel emissions to jurisdiction polygons and crop masks, rolling up to per-(jurisdiction, crop) totals via one of two legs: `JURISDICTIONAL_DIRECT` (mask to CDL crop codes; USA only today) or `STATISTICAL` (downsample to the MapSPAM ~10 km grid and split by crop-expansion share).
 
@@ -196,7 +192,7 @@ Neither of the spec's two named filters can currently be computed: the canopy-th
 
 The spec has no slot for this stage and does not need one — it specifies a layer, not a factor table. Noted here for completeness, because "the emissions layer" in repo terms ends at `emit`, and two further stages stand between it and anything a client sees.
 
----
+______________________________________________________________________
 
 ## 2 · Structural findings
 
@@ -214,16 +210,16 @@ Four things are being asked for per step: it is **stored**, it is **named and ad
 
 Across the span the spec calls steps 1a to 6, it names **eight** such products. The repo materialises **two**: the harmonized stack ([harmonize.py:314](../../jdluc/harmonize.py:314)) and the emissions layer ([emit.py:612](../../jdluc/emit.py:612)), each one cached zarr per 10° tile.
 
-| spec step | its named output | materialised in the repo? |
-|---|---|---|
-| 1a | event sources, unfiltered | folded into the harmonize zarr |
-| 1b | versioned value layers | partly — rasters in the harmonize zarr; the climate-zone tables are module constants in `emit.py`, never written |
-| 2.1 | conversion event, candidate count, cascade flag | **no** |
-| 2.2 | soil regime, peat conversion year, first conversion year, occupation mask | **no** |
-| 3 | one layer per pool and gas, undiscounted | **no** — pools are summed into `soil` and `vegetation` before anything is written |
-| 4 | amortisation factor, years since conversion, in-window flag | **no** — only the discounted result |
-| 5 | one boolean layer per filter | **no** — no filter layer exists (§1.3) |
-| 6 | long-form export | **no** (§4) |
+| spec step | its named output                                                          | materialised in the repo?                                                                                        |
+| --------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| 1a        | event sources, unfiltered                                                 | folded into the harmonize zarr                                                                                   |
+| 1b        | versioned value layers                                                    | partly — rasters in the harmonize zarr; the climate-zone tables are module constants in `emit.py`, never written |
+| 2.1       | conversion event, candidate count, cascade flag                           | **no**                                                                                                           |
+| 2.2       | soil regime, peat conversion year, first conversion year, occupation mask | **no**                                                                                                           |
+| 3         | one layer per pool and gas, undiscounted                                  | **no** — pools are summed into `soil` and `vegetation` before anything is written                                |
+| 4         | amortisation factor, years since conversion, in-window flag               | **no** — only the discounted result                                                                              |
+| 5         | one boolean layer per filter                                              | **no** — no filter layer exists (§1.3)                                                                           |
+| 6         | long-form export                                                          | **no** (§4)                                                                                                      |
 
 **This is not a complaint about decomposition.** Where the spec's steps and the repo's code compute the same thing, they agree, and the fact that the repo does in one function what the spec describes in four is of no consequence by itself. Two real things follow from the missing artifacts, and neither is about tidiness:
 
@@ -247,11 +243,11 @@ The repo computes the source half and the destination half of the conversion ind
 
 ```python
 conversion_to_mask = {
-    Conversion.FOREST_TO_CROPLAND:    from_forest    & to_cropland,
-    Conversion.FOREST_TO_PASTURE:     from_forest    & to_pasture,
+    Conversion.FOREST_TO_CROPLAND: from_forest & to_cropland,
+    Conversion.FOREST_TO_PASTURE: from_forest & to_pasture,
     Conversion.RANGELAND_TO_CROPLAND: from_rangeland & to_cropland,
-    Conversion.RANGELAND_TO_PASTURE:  from_rangeland & to_pasture,
-    Conversion.PASTURE_TO_CROPLAND:   from_pasture   & to_cropland,
+    Conversion.RANGELAND_TO_PASTURE: from_rangeland & to_pasture,
+    Conversion.PASTURE_TO_CROPLAND: from_pasture & to_cropland,
 }
 ```
 
@@ -270,18 +266,19 @@ Both are responses to the same real problem. They are not the same response.
 Less than it appears, at the emit stage; more than it appears, downstream.
 
 **Already in the spec's favour:**
+
 - `destination-dataset` publishes the *evidence* (which of three layers claimed the pixel) separately from the *decision*, as a bitmask, so the resolution is re-derivable without re-reading inputs.
 - `conversion-year` is computed destination-free ([emit.py:389–396](../../jdluc/emit.py:389)).
 - `get_span_to_component_to_emissions` ([emit.py:554](../../jdluc/emit.py:554)) already re-derives per-component emissions from *published* bands — an existing post-hoc re-derivation seam.
 
 **The blockers, and what each is:**
 
-| blocker | nature |
-|---|---|
-| `conversion` collapses to `NONE` for unclaimed pixels, so the **source class is unrecoverable** — and `dropped-emissions` sums forest and grassland into one number | publishing |
-| **Carbon stocks are never written.** `forest_carbon` and `grassland_carbon` are computed full-grid at [emit.py:641–651](../../jdluc/emit.py:641) and consumed in place | publishing |
-| **Soil terms exist only under the resolved destination.** `cropland_soil` and `pasture_soil` are computed full-grid at [emit.py:423–431](../../jdluc/emit.py:426), then masked | publishing |
-| **Occupation is gated on the destination** ([emit.py:681–686](../../jdluc/emit.py:681)) | publishing — `is_peatland` is full-grid and the factor is a constant |
+| blocker                                                                                                                                                                        | nature                                                               |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
+| `conversion` collapses to `NONE` for unclaimed pixels, so the **source class is unrecoverable** — and `dropped-emissions` sums forest and grassland into one number            | publishing                                                           |
+| **Carbon stocks are never written.** `forest_carbon` and `grassland_carbon` are computed full-grid at [emit.py:641–651](../../jdluc/emit.py:641) and consumed in place         | publishing                                                           |
+| **Soil terms exist only under the resolved destination.** `cropland_soil` and `pasture_soil` are computed full-grid at [emit.py:423–431](../../jdluc/emit.py:426), then masked | publishing                                                           |
+| **Occupation is gated on the destination** ([emit.py:681–686](../../jdluc/emit.py:681))                                                                                        | publishing — `is_peatland` is full-grid and the factor is a constant |
 
 Every one of those arrays already exists, unmasked, inside `workflow()`. Deferring the destination is a **band-publishing change, not an algorithm change.** The masking happens at the last step and throws away work already done.
 
@@ -303,23 +300,23 @@ The spec wants `linear`, `equal` and `none` *"computed and kept side by side, so
 
 **First — the span granularity is not neutral between the variants.** A scheme is expressible at five-year granularity only if it is constant within each span. Checked against the repo's spans:
 
-| spec variant | expressible as one weight per 5-year span? |
-|---|---|
-| **equal** — 1/20 per year | ✅ **exactly**. A constant function bins losslessly (each span weight is 1/20) |
-| **linear** — (20−*d*)/210 | ⚠️ **only as an approximation** — the ±12.5% of §2.4 |
+| spec variant                      | expressible as one weight per 5-year span?                                                                        |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| **equal** — 1/20 per year         | ✅ **exactly**. A constant function bins losslessly (each span weight is 1/20)                                    |
+| **linear** — (20−*d*)/210         | ⚠️ **only as an approximation** — the ±12.5% of §2.4                                                              |
 | **none** — full amount at *d* = 0 | ❌ **not at all.** *d* = 0 is a single year inside a span covering *d* = 0…4; no per-span constant can isolate it |
 
 So the banding question and the variants question are the same question. `none` cannot be added without going annual; `linear` is currently an approximation of itself; only `equal` would be exact today.
 
 **Second — there is exactly one definition and one function, with five call sites.** This is the good news. The scheme lives in `SPAN_TO_LINEAR_DISCOUNT_WEIGHT` and is applied by `emit.get_linear_discounted_total` ([emit.py:493](../../jdluc/emit.py:493)), which every consumer calls:
 
-| # | call site | what it discounts |
-|---|---|---|
-| 1 | [emit.py:688](../../jdluc/emit.py:688) | `emissions-per-hectare` — the headline per-pixel total |
-| 2 | [emit.py:694](../../jdluc/emit.py:694) | `dropped-emissions` |
-| 3 | [jurisdictional_direct.py:149](../../jdluc/jurisdictional_direct.py:149) | per-component emissions, direct leg |
-| 4 | [statistical.py:268](../../jdluc/statistical.py:268) | per-component emissions × expansion share, statistical leg |
-| 5 | [statistical.py:242](../../jdluc/statistical.py:242) | **the production denominator** |
+| #   | call site                                                                | what it discounts                                          |
+| --- | ------------------------------------------------------------------------ | ---------------------------------------------------------- |
+| 1   | [emit.py:688](../../jdluc/emit.py:688)                                   | `emissions-per-hectare` — the headline per-pixel total     |
+| 2   | [emit.py:694](../../jdluc/emit.py:694)                                   | `dropped-emissions`                                        |
+| 3   | [jurisdictional_direct.py:149](../../jdluc/jurisdictional_direct.py:149) | per-component emissions, direct leg                        |
+| 4   | [statistical.py:268](../../jdluc/statistical.py:268)                     | per-component emissions × expansion share, statistical leg |
+| 5   | [statistical.py:242](../../jdluc/statistical.py:242)                     | **the production denominator**                             |
 
 Parameterising the scheme is therefore a small, well-bounded change: give the function a scheme argument and thread a selector through five places. The weight is a per-pixel scalar and commutes with the spatial reduction to jurisdictions, so nothing about the clipping or summing has to move.
 
@@ -349,13 +346,13 @@ What is left is the **granularity**, and it is not neutral.
 
 Every conversion inside a span receives the same weight regardless of its actual year. Against the repo's own annual ramp:
 
-| conversion year | *d* | span weight | annual weight | error |
-|---|---|---|---|---|
-| 2020 | 0 | 0.0875 | 0.1000 | **−12.5%** |
-| 2019 | 1 | 0.0875 | 0.0950 | −7.9% |
-| 2018 | 2 | 0.0875 | 0.0900 | −2.8% |
-| 2017 | 3 | 0.0875 | 0.0850 | +2.9% |
-| 2016 | 4 | 0.0875 | 0.0800 | **+9.4%** |
+| conversion year | *d* | span weight | annual weight | error      |
+| --------------- | --- | ----------- | ------------- | ---------- |
+| 2020            | 0   | 0.0875      | 0.1000        | **−12.5%** |
+| 2019            | 1   | 0.0875      | 0.0950        | −7.9%      |
+| 2018            | 2   | 0.0875      | 0.0900        | −2.8%      |
+| 2017            | 3   | 0.0875      | 0.0850        | +2.9%      |
+| 2016            | 4   | 0.0875      | 0.0800        | **+9.4%**  |
 
 These cancel only if conversions are distributed uniformly within the span. They are not: the Matopiba figure in [`methodology.md`](../methodology.md) shows clearance falling "in a few blocks rather than advancing as a front," concentrated between 2006 and 2015. A jurisdiction whose clearance clusters at one end of a span carries a systematic error of up to ~12%, in whichever direction its clustering falls.
 
@@ -365,12 +362,12 @@ This applies to the **direct leg**, which touches MapSPAM nowhere: `jurisdiction
 
 Worth isolating because it is easy to mistake for the banding effect. The repo normalises by **200** (the integral of the continuous ramp), the spec by **210** (the sum over 20 integer years). Both conserve mass; they distribute differently:
 
-| years since conversion | repo | spec | repo/spec |
-|---|---|---|---|
-| 0–4 | 0.4375 | 0.4286 | 102.1% |
-| 5–9 | 0.3125 | 0.3095 | 101.0% |
-| 10–14 | 0.1875 | 0.1905 | 98.4% |
-| 15–19 | 0.0625 | 0.0714 | **87.5%** |
+| years since conversion | repo   | spec   | repo/spec |
+| ---------------------- | ------ | ------ | --------- |
+| 0–4                    | 0.4375 | 0.4286 | 102.1%    |
+| 5–9                    | 0.3125 | 0.3095 | 101.0%    |
+| 10–14                  | 0.1875 | 0.1905 | 98.4%     |
+| 15–19                  | 0.0625 | 0.0714 | **87.5%** |
 
 The repo front-loads slightly relative to the spec, most visibly on the oldest block. This is a continuous-vs-discrete convention difference, not a disagreement about the shape of the ramp. 🤝 **Convergent** in intent; worth one sentence of agreement about which convention to standardise on.
 
@@ -385,6 +382,7 @@ Shallower than it looks in `emit`, real in exactly one consumer.
 **In `jurisdictional_direct`: zero coupling.** It collapses spans on the first line it touches them.
 
 **In `statistical`: real, and in three places.**
+
 - `SPAN_TO_MAPSPAM_SPAN` maps each emissions span to a MapSPAM snapshot pair ([statistical.py:224](../../jdluc/statistical.py:224)), with 2010–2015 and 2015–2020 both borrowing the 2010→2020 expansion because MapSPAM has no 2015 snapshot.
 - `get_discounted_snapshot_mean` reuses `emit.SPAN_TO_LINEAR_DISCOUNT_WEIGHT` for the **production denominator**, so the emissions span weights serve double duty on both sides of the emissions factor.
 - `assert set(SPAN_TO_MAPSPAM_SPAN) == set(emit.SPAN_TO_LINEAR_DISCOUNT_WEIGHT)` ([statistical.py:232](../../jdluc/statistical.py:232)) — the concrete line that welds the two definitions together.
@@ -413,13 +411,13 @@ This is the most important thing to know before costing the change, and it is no
 
 Under IPCC Tier 1, **three of the spec's five categories carry no mineral-soil loss at all**:
 
-| spec category | F_LU (IPCC) | as applied | mineral SOC loss |
-|---|---|---|---|
-| annual / long-term cultivated | 0.69 – 0.92 by zone | unchanged | **real** |
-| perennial / tree crop | 0.72 temperate · **1.01** tropics | 1.01 → **1.00** | **real outside the tropics; zero inside them** |
-| paddy rice | **1.35**, all climates | 1.35 → **1.00** | **zero** |
-| pastureland | 1.00, all climates (Table 6.2) | unchanged | **zero** |
-| forestry | reference state | — | **zero** |
+| spec category                 | F_LU (IPCC)                       | as applied      | mineral SOC loss                               |
+| ----------------------------- | --------------------------------- | --------------- | ---------------------------------------------- |
+| annual / long-term cultivated | 0.69 – 0.92 by zone               | unchanged       | **real**                                       |
+| perennial / tree crop         | 0.72 temperate · **1.01** tropics | 1.01 → **1.00** | **real outside the tropics; zero inside them** |
+| paddy rice                    | **1.35**, all climates            | 1.35 → **1.00** | **zero**                                       |
+| pastureland                   | 1.00, all climates (Table 6.2)    | unchanged       | **zero**                                       |
+| forestry                      | reference state                   | —               | **zero**                                       |
 
 The two capped values are worth stating precisely, because the usual shorthand gets them backwards. IPCC does **not** say paddy rice and tropical perennials lose no soil carbon — it says they *gain* it (F_LU above 1.0 means the new land use sustains a stock above reference). The cap to 1.00 is a modelling decision: `soc × (1 − F_LU)` would go negative, and the pipeline does not model SOC gain from land-use change, so the gain is discarded and the loss is zero. That is conservative in the accounting sense, and it is a choice, not an IPCC finding.
 
@@ -445,15 +443,15 @@ That is not an argument against carrying variants. The reason to carry them is s
 
 Checked value-by-value, `CLIMATE_ZONE_TO_SOC_RETENTION_FRACTION` **is** the long-term-cultivated (annual cropland) row of Table 5.5:
 
-| zone | repo | Table 5.5 F_LU, long-term cultivated |
-|---|---|---|
-| tropical wet / moist | 0.83 | 0.83 |
-| tropical dry | 0.92 | 0.92 |
-| warm temperate moist | 0.69 | 0.69 |
-| warm temperate dry | 0.76 | 0.76 |
-| cool temperate / boreal moist | 0.70 | 0.70 |
-| cool temperate / boreal dry | 0.77 | 0.77 |
-| **tropical montane** | **0.76** | **0.83** (mapped to tropical moist/wet) |
+| zone                          | repo     | Table 5.5 F_LU, long-term cultivated    |
+| ----------------------------- | -------- | --------------------------------------- |
+| tropical wet / moist          | 0.83     | 0.83                                    |
+| tropical dry                  | 0.92     | 0.92                                    |
+| warm temperate moist          | 0.69     | 0.69                                    |
+| warm temperate dry            | 0.76     | 0.76                                    |
+| cool temperate / boreal moist | 0.70     | 0.70                                    |
+| cool temperate / boreal dry   | 0.77     | 0.77                                    |
+| **tropical montane**          | **0.76** | **0.83** (mapped to tropical moist/wet) |
 
 The repo is not applying an unlabelled generic factor. It is applying the **annual-cropland** factor to every cropland destination, and the spec's `annual` variant is what it already computes. One zone diverges: the repo approximates tropical montane as the mean of warm-temperate-moist and tropical-moist ([emit.py:149](../../jdluc/emit.py:149)), where the reference mapping puts it at tropical moist/wet.
 
@@ -475,10 +473,10 @@ And the multiplication is hoistable: `soc_stock × (1 − F_LU_variant)` is sour
 
 #### What the change actually requires
 
-| | what it changes | where |
-|---|---|---|
-| **Architecture** | carry the soil result as two variants rather than one resolved number | `emit.py` — one extra band; §2.1 and §2.2 are the same migration |
-| **Value sources** | acquire the perennial F_LU column keyed by climate zone | spec step 1b — data this repo does not hold, but which exists in AdAstra's climate-zone work |
+|                   | what it changes                                                       | where                                                                                        |
+| ----------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| **Architecture**  | carry the soil result as two variants rather than one resolved number | `emit.py` — one extra band; §2.1 and §2.2 are the same migration                             |
+| **Value sources** | acquire the perennial F_LU column keyed by climate zone               | spec step 1b — data this repo does not hold, but which exists in AdAstra's climate-zone work |
 
 The architectural half rides along with the destination-deferral migration nearly free, because the soil terms are already computed full-grid and masked at the last step (§2.2). The value half is a lookup-table addition, not a modelling exercise — the factors exist and are IPCC Tier 1.
 
@@ -489,7 +487,7 @@ The architectural half rides along with the destination-deferral migration nearl
 
 **Tag: ❌ Disagreement** — real, but substantially cheaper than the spec's framing implies.
 
----
+______________________________________________________________________
 
 ## 3 · Corrections to the spec
 
@@ -529,14 +527,14 @@ The "Declared differences" section opens:
 
 **That migration has happened.** Commit `8130655` moved the repo from GLAD GLCLUC onto TCL + GPW v2 + GACED30. The exclusion was written in the future tense and is now in the past, which means the section is scoped against a repo that no longer exists, and several items inside it have moved:
 
-| spec claim | current state |
-|---|---|
-| Grassland biomass: *"Cornerstone uses Houghton/BLUE"* | still true ([emit.py:114](../../jdluc/emit.py:114)) |
-| Crop-group handling: *"Cornerstone resolves one soil loss factor per pixel"* | still true |
-| GWP: AR5 vs AR6 | still true |
-| Gas disaggregation: *"Cornerstone reports CO₂e only"* | still true |
-| Climate-zone keys | still true |
-| Input stack excluded as "will follow" | ❌ **has followed** — this should be re-read as an alignment, not an exclusion |
+| spec claim                                                                   | current state                                                                  |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Grassland biomass: *"Cornerstone uses Houghton/BLUE"*                        | still true ([emit.py:114](../../jdluc/emit.py:114))                            |
+| Crop-group handling: *"Cornerstone resolves one soil loss factor per pixel"* | still true                                                                     |
+| GWP: AR5 vs AR6                                                              | still true                                                                     |
+| Gas disaggregation: *"Cornerstone reports CO₂e only"*                        | still true                                                                     |
+| Climate-zone keys                                                            | still true                                                                     |
+| Input stack excluded as "will follow"                                        | ❌ **has followed** — this should be re-read as an alignment, not an exclusion |
 
 Several *new* input differences are now visible that the exclusion previously hid, and which nobody has declared: **the peat presence layer** (GNW vs PEATMAP — the spec explicitly rejects the GNW composite) and **the canopy threshold** (not ingestable today). Both are in §1.1.
 
@@ -564,12 +562,12 @@ Worth adding that the two models are structurally different in a way the spec do
 
 So the spec's peat totals and its non-peat pools would sit on different bases. Re-expressing the peat factors on the declared 28/265:
 
-| land use | as published | on declared AR5 | shift |
-|---|---|---|---|
-| tropical annual cropland | 56.92 | 56.62 | −0.5% |
-| tropical pasture | 42.32 | 41.75 | −1.4% |
-| temperate annual cropland | 38.18 | 37.16 | −2.7% |
-| boreal annual cropland | 37.48 | 36.46 | −2.7% |
+| land use                  | as published | on declared AR5 | shift |
+| ------------------------- | ------------ | --------------- | ----- |
+| tropical annual cropland  | 56.92        | 56.62           | −0.5% |
+| tropical pasture          | 42.32        | 41.75           | −1.4% |
+| temperate annual cropland | 38.18        | 37.16           | −2.7% |
+| boreal annual cropland    | 37.48        | 36.46           | −2.7% |
 
 Small, and systematically negative — larger where N₂O carries more of the total, which is why temperate and boreal move most. Easily fixed rather than argued about: the source publishes the gas-level split for every land use, so the re-expression is arithmetic. Flagged because the spec is otherwise careful about exactly this — it explicitly re-expresses the 37.3 occupation components off AR6 and calls that *"the only self-consistent way to carry them into our accounting."* The same care has not been applied to the factors it proposes to replace them with.
 
@@ -583,34 +581,34 @@ The gap is not a rounding or mapping difference. 32.0 tC/ha implies **68.1 t d.m
 
 Three numbers are therefore in play for the same quantity:
 
-| source | tCO₂/ha |
-|---|---|
-| this repo (Houghton/BLUE, [emit.py:114](../../jdluc/emit.py:114)) | ~66 |
-| AdAstra climate-zone plan (IPCC Table 6.4 + country woody top-up) | ~86 |
-| the spec's declared difference | 175.7 |
+| source                                                            | tCO₂/ha |
+| ----------------------------------------------------------------- | ------- |
+| this repo (Houghton/BLUE, [emit.py:114](../../jdluc/emit.py:114)) | ~66     |
+| AdAstra climate-zone plan (IPCC Table 6.4 + country woody top-up) | ~86     |
+| the spec's declared difference                                    | 175.7   |
 
 The spec's figure is ~2.7× the repo's, which is what makes the declared difference look large — but it is also ~2× AdAstra's own implementation of the same construction. Someone should establish which is intended before this is read as a settled difference between two methods; on present evidence it is not yet settled *within* one of them.
 
 *(There is a licensing note attached to the country woody top-up in the source work — its terms require written consent for commercial use, unconfirmed as of that document. Worth checking before it enters a published layer.)*
 
----
+______________________________________________________________________
 
 ## 4 · Unbuilt on both sides, and shared blind spots
 
 Neither method has these today. They are roadmap, not disagreement — but the last two are different in kind from the rest: they are not gaps either side has noticed in the other, because both sides inherit them. A three-corner review is the only place they become visible, so they are recorded here rather than dropped.
 
-| item | notes |
-|---|---|
-| **Gas disaggregation** | The spec specifies the mechanism (Fitts et al. regional shares, CH₄ partitioned out of released carbon so the carbon balance closes); the repo has no gas dimension at all. The spec itself marks the peat-pulse gas split as *"a placeholder and needs refinement"* and *"a defensible proxy, not a derivation"*. |
-| **Pasture and forestry SOC factors** | The spec's own OPEN task — *"we need to compute SOC losses specifically towards pastureland but also towards forest conversion"*. On IPCC Tier 1 this task may already be answered: F_LU for grassland/pasture is **1.00 in every zone** (Table 6.2), and forest is the reference state, so **both are zero by construction** — which is exactly what the repo computes today ([emit.py:430](../../jdluc/emit.py:430)). Either the spec wants something beyond Tier 1 here, or the task is closed. Worth resolving before it is scheduled: see §2.5. |
-| **h3 delivery** | The spec wants pixel-or-h3 as a computation format and h3 as an export. The repo is zarr-on-a-GLAD-grid throughout, parquet at rollup. No h3 anywhere. |
-| **Long-form export** | Spec step 6 wants one row per pixel with every pool × gas, every filter flag unapplied, and every input version stamp. Repo exports per-tile zarr and per-(jurisdiction, crop) parquet. |
-| **Per-input version stamps in the export** | Exists at ingest as COG metadata tags; not propagated downstream. See §1.1. |
-| **Amortisation variants** | Spec wants linear / equal / none side by side. Repo has linear only — though per-span bands are undiscounted, so the others are derivable without recomputation (§2.3a). |
+| item                                         | notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Gas disaggregation**                       | The spec specifies the mechanism (Fitts et al. regional shares, CH₄ partitioned out of released carbon so the carbon balance closes); the repo has no gas dimension at all. The spec itself marks the peat-pulse gas split as *"a placeholder and needs refinement"* and *"a defensible proxy, not a derivation"*.                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| **Pasture and forestry SOC factors**         | The spec's own OPEN task — *"we need to compute SOC losses specifically towards pastureland but also towards forest conversion"*. On IPCC Tier 1 this task may already be answered: F_LU for grassland/pasture is **1.00 in every zone** (Table 6.2), and forest is the reference state, so **both are zero by construction** — which is exactly what the repo computes today ([emit.py:430](../../jdluc/emit.py:430)). Either the spec wants something beyond Tier 1 here, or the task is closed. Worth resolving before it is scheduled: see §2.5.                                                                                                                                                                                                                |
+| **h3 delivery**                              | The spec wants pixel-or-h3 as a computation format and h3 as an export. The repo is zarr-on-a-GLAD-grid throughout, parquet at rollup. No h3 anywhere.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| **Long-form export**                         | Spec step 6 wants one row per pixel with every pool × gas, every filter flag unapplied, and every input version stamp. Repo exports per-tile zarr and per-(jurisdiction, crop) parquet.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| **Per-input version stamps in the export**   | Exists at ingest as COG metadata tags; not propagated downstream. See §1.1.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| **Amortisation variants**                    | Spec wants linear / equal / none side by side. Repo has linear only — though per-span bands are undiscounted, so the others are derivable without recomputation (§2.3a).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | 🔍 **Reference vs current-state soil stock** | **Shared flaw, and larger than the variant question.** IPCC Tier 1 is `ΔSOC = SOC_ref × (1 − F_LU)`, where `SOC_ref` is the *native, pre-disturbance* stock. Both methods multiply the factor into **SoilGrids `ocs_mean`**, a present-day observed stock. For a pixel converted in 2000–2020, that stock has already lost some of the carbon the factor is meant to be releasing — so the loss is applied to an already-depleted base. Systematic undercount, same direction on both legs. [`further_research.md`](../further_research.md) flags it and points at Sanderman 2017 NoLU, which runs ~30% above the current-state read across the Plains states. Neither the spec nor its declared differences mention it, because the spec inherits the same choice. |
-| 🔍 **Shrubland carbon treated as grassland** | **Shared flaw.** The spec merges *"the shrubland and rangeland category"* into natural grassland; the repo merges `NATURAL` + `OPEN_SHRUBLAND` into rangeland ([emit.py:328–333](../../jdluc/emit.py:328)). Both then apply one grassland carbon density. The IPCC source behind the climate-zone work warns explicitly that its Table 6.4 values *"represent non-woody grassland after conversion and should not be applied to shrublands or woody savannas"*. GPW now separates the classes, so the merge is a choice rather than a data limitation on either side — see D3. |
+| 🔍 **Shrubland carbon treated as grassland** | **Shared flaw.** The spec merges *"the shrubland and rangeland category"* into natural grassland; the repo merges `NATURAL` + `OPEN_SHRUBLAND` into rangeland ([emit.py:328–333](../../jdluc/emit.py:328)). Both then apply one grassland carbon density. The IPCC source behind the climate-zone work warns explicitly that its Table 6.4 values *"represent non-woody grassland after conversion and should not be applied to shrublands or woody savannas"*. GPW now separates the classes, so the merge is a choice rather than a data limitation on either side — see D3.                                                                                                                                                                                      |
 
----
+______________________________________________________________________
 
 ## 5 · Summary
 
@@ -633,22 +631,22 @@ Neither method has these today. They are roadmap, not disagreement — but the l
 **The thing most worth saying to the spec's authors:** items 1, 2, 4, 5 and 6 largely resolve by the same move. Deferring the destination, publishing the arrays `workflow()` already computes full-grid, and moving the collapse downstream would address the largest disagreement, the occupation gap, the reference-year dependence and — with the same output-contract migration — the intermediate-product principle. It is one change, and it is a publishing change at the emit stage rather than a rewrite of the method. What it costs is the band contract shared with `attribute.py`, `statistical.py` and `jurisdictional_direct.py`. Commit `8130655` is precedent that a migration of that size is tractable in this codebase.
 
 **And the thing most worth saying second:** item 3 does not come with it. Carrying the soil result as a family of crop-group variants needs factors that are not in the repo's value sources at all, so it is an acquisition as much as a migration — and it should be scoped separately rather than folded into the destination discussion, which is where it would naturally but wrongly be filed.
+
 ## 6 · Where the repo's documentation and code disagree
 
 📘 Corner 2 against corner 3. These are not disagreements with the spec — they are places where the repo describes itself inaccurately, which matters here because several are load-bearing for changes the spec asks for. **Reported, not fixed:** each needs the repo owners' view on which side is correct before anything moves.
 
-| # | where | the discrepancy | which side is right | why it matters here |
-|---|---|---|---|---|
-| **D1** | [`methodology.md:165`](../methodology.md:165) | Describes `SPAN_TO_LINEAR_DISCOUNT_WEIGHT` as *"the unbiased mean of that span's candidate conversion years."* The constants are the **continuous interval midpoint** — 0.0875, not the 0.0900 the described method gives | **The code.** The midpoints sum to exactly 1.00 over the window; the per-span means sum to 1.05. Implementing what the doc describes would break mass conservation | Load-bearing. It is the reason the spec's "only ours conserves mass" claim is wrong (§3.1), and it sets the arithmetic for any move to annual banding (§2.4) |
-| **D2** | nowhere — `emit.py` only | The rangeland-vs-pasture rule resolves **by date** (`rangeland_departure_year > pasture_departure_year`, [emit.py:349–350](../../jdluc/emit.py:349)). No repo document states this, and the spec resolves the same question **by materiality** | **Unknown.** This reads as an oversight rather than a decision, but that is a reading, not a finding | A real methodological difference that neither document acknowledges. Until someone says which was intended, it cannot be classified as agreement or disagreement (§1.2) |
-| **D3** | [`further_research.md`](../further_research.md) | §"Short vegetation carbon stock for shrubland" argues from GLAD's undifferentiated short-vegetation class — a constraint that no longer exists | **Neither, cleanly.** The *premise* is stale: GPW does separate `NATURAL` from `OPEN_SHRUBLAND` ([gpw_grassland.py:50](../../jdluc/datasets/gpw_grassland.py:50)). The *problem* is not — `get_conversion_record` merges them back into one rangeland class ([emit.py:328–333](../../jdluc/emit.py:328)) and applies one grassland carbon value | Higher than it looks. The entry should be rewritten rather than deleted: the data limitation became a modelling choice, and the separation is now available for free. See §4 |
-| **D4** | [emit.py:280–283](../../jdluc/emit.py:280) | The comment says the declaration order of `DestinationDataset` *"lets a pixel be tested against the two groups in turn"*. The `assert` it annotates is a declaration-order guard; the actual precedence is the `~to_cropland &` on the following line | **The code.** The comment overstates what the assertion protects | Low, but would mislead anyone adding a third destination group — which is exactly what a destination-override change would do (§2.2) |
-| **D5** | [emit.py:241](../../jdluc/emit.py:241) | `DestinationDataset` docstring: *"Which datasets (the can superpose)…"* | typo, `the` → `they` | None |
+| #      | where                                           | the discrepancy                                                                                                                                                                                                                                       | which side is right                                                                                                                                                                                                                                                                                                                             | why it matters here                                                                                                                                                          |
+| ------ | ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **D1** | [`methodology.md:165`](../methodology.md:165)   | Describes `SPAN_TO_LINEAR_DISCOUNT_WEIGHT` as *"the unbiased mean of that span's candidate conversion years."* The constants are the **continuous interval midpoint** — 0.0875, not the 0.0900 the described method gives                             | **The code.** The midpoints sum to exactly 1.00 over the window; the per-span means sum to 1.05. Implementing what the doc describes would break mass conservation                                                                                                                                                                              | Load-bearing. It is the reason the spec's "only ours conserves mass" claim is wrong (§3.1), and it sets the arithmetic for any move to annual banding (§2.4)                 |
+| **D2** | nowhere — `emit.py` only                        | The rangeland-vs-pasture rule resolves **by date** (`rangeland_departure_year > pasture_departure_year`, [emit.py:349–350](../../jdluc/emit.py:349)). No repo document states this, and the spec resolves the same question **by materiality**        | **Unknown.** This reads as an oversight rather than a decision, but that is a reading, not a finding                                                                                                                                                                                                                                            | A real methodological difference that neither document acknowledges. Until someone says which was intended, it cannot be classified as agreement or disagreement (§1.2)      |
+| **D3** | [`further_research.md`](../further_research.md) | §"Short vegetation carbon stock for shrubland" argues from GLAD's undifferentiated short-vegetation class — a constraint that no longer exists                                                                                                        | **Neither, cleanly.** The *premise* is stale: GPW does separate `NATURAL` from `OPEN_SHRUBLAND` ([gpw_grassland.py:50](../../jdluc/datasets/gpw_grassland.py:50)). The *problem* is not — `get_conversion_record` merges them back into one rangeland class ([emit.py:328–333](../../jdluc/emit.py:328)) and applies one grassland carbon value | Higher than it looks. The entry should be rewritten rather than deleted: the data limitation became a modelling choice, and the separation is now available for free. See §4 |
+| **D4** | [emit.py:280–283](../../jdluc/emit.py:280)      | The comment says the declaration order of `DestinationDataset` *"lets a pixel be tested against the two groups in turn"*. The `assert` it annotates is a declaration-order guard; the actual precedence is the `~to_cropland &` on the following line | **The code.** The comment overstates what the assertion protects                                                                                                                                                                                                                                                                                | Low, but would mislead anyone adding a third destination group — which is exactly what a destination-override change would do (§2.2)                                         |
+| **D5** | [emit.py:241](../../jdluc/emit.py:241)          | `DestinationDataset` docstring: *"Which datasets (the can superpose)…"*                                                                                                                                                                               | typo, `the` → `they`                                                                                                                                                                                                                                                                                                                            | None                                                                                                                                                                         |
 
 **Two items resolved by `8130655`**, noted so they are not re-raised from earlier drafts of this review:
 
 - Biomass is no longer computed as a delta between source and destination states; the full source stock is released.
 - Repeated peatland drainage pulses are structurally impossible (one conversion per pixel ever); the `further_research.md` entry has been removed.
 
----
-
+______________________________________________________________________
