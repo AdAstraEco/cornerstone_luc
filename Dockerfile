@@ -23,8 +23,3 @@ RUN uv sync --frozen --no-dev
 COPY .git .git
 
 ENV PATH="/app/.venv/bin:${PATH}"
-
-# Don't set CPL_VSIL_CURL_ALLOWED_EXTENSIONS here: GDAL then treats any other extension (e.g.
-# the .fgb boundary files) as missing. storage.write_dask_dataset_to_zarr scopes it instead.
-ENV GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR" \
-    GDAL_CACHEMAX="512"
