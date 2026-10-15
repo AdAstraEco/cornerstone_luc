@@ -10,7 +10,7 @@
 follow-up that [`docs/orbae/cornerstone-k8s.md`](cornerstone-k8s.md)
 explicitly deferred: the cornerstone proved the repo runs, is correct, and scales in our GKE
 cluster; this note chooses how to operate that at production scale. Guiding constraint, per the
-repo ethos ([`architecture.md`](architecture.md)): **simplicity over performance**.
+repo ethos ([`architecture.md`](../architecture.md)): **simplicity over performance**.
 
 ## Recommendation (TL;DR)
 
@@ -113,7 +113,8 @@ ingest best-effort / compute strict.
 ## As built
 
 Implemented as above, entirely under `infra/`, with three deliberate deviations. Operational
-detail lives in [`infra/k8s/README.md`](../../infra/k8s/README.md).
+detail lived in `infra/k8s/README.md`, since removed; what is still true of it is in
+[`argo-workflows.md`](argo-workflows.md).
 
 - `infra/run_phase.py` (was `run_tile.py`) — the in-pod entrypoint for every phase: dataset
   selection, the index→tile mapping, `--skip-ingest`, and the in-pod stage chain.
