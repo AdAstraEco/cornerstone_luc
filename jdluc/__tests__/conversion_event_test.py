@@ -6,6 +6,7 @@ from jdluc import conversion_event, derive, emit
 from jdluc.__tests__.emit_test import get_harmonized_dset_for_every_case
 from jdluc.datasets import gnw_tcl, gpw_grassland
 from jdluc.datasets.gpw_grassland import Grassland
+from jdluc.datasets.ipcc_climate_zones import Zone
 from jdluc.emit import ConversionSource, GrasslandTransition
 
 
@@ -43,8 +44,8 @@ def select(
     zero = xarray.zeros_like(dset[gnw_tcl.DATASET.fully_qualified_band_name])
     candidates = emit.get_conversion_candidates(
         dset=dset,
+        climate_zones=zero,
         forest_carbon=zero,
-        grassland_carbon=zero,
         is_peatland=zero == 1,
         soil_organic_carbon=zero,
     )
@@ -103,6 +104,76 @@ def test_the_window_moves_with_the_reference_year() -> None:
         ConversionSource.NONE,
         0,
     )
+
+
+def get_vegetation_emissions(
+    year_to_class: dict[int, Grassland], reference_year: int, rule: str
+) -> tuple[int, float]:
+    """The selected source and its vegetation emissions, for one tropical wet pixel."""
+    dset = get_dset_for_one_pixel(year_to_class, loss_year=None)
+    zero = xarray.zeros_like(dset[gnw_tcl.DATASET.fully_qualified_band_name]).rename(
+        None
+    )
+    climate_zones = zero + Zone.TROPICAL_WET.value
+    candidates = emit.get_dset_for_output(
+        emit.get_conversion_candidates(
+            dset=dset,
+            climate_zones=climate_zones,
+            forest_carbon=zero,
+            is_peatland=zero == 1,
+            soil_organic_carbon=zero,
+        )
+        | {
+            "cie-peat-occupation-emissions:tco2e-per-ha-per-year": zero,
+            "cie-climate-zone": climate_zones,
+            "cie-hectares-per-pixel:ha": zero,
+        }
+    )
+    cie = conversion_event.get_cie(candidates, reference_year=reference_year, rule=rule)
+    return (
+        int(cie["cie-conversion-source"].compute().item()),
+        float(
+            cie["cie-vegetation-emissions-undiscounted:tco2e-per-ha"].compute().item()
+        ),
+    )
+
+
+RANGELAND_TCO2E_PER_HA = (
+    emit.CO2E_PER_CARBON
+    * emit.CLIMATE_ZONE_TO_RANGELAND_TCARBON_PER_HA[Zone.TROPICAL_WET]
+)
+PASTURE_TCO2E_PER_HA = (
+    emit.CO2E_PER_CARBON
+    * emit.CLIMATE_ZONE_TO_PASTURE_TCARBON_PER_HA[Zone.TROPICAL_WET]
+)
+
+
+def test_the_densities_differ_where_the_mismatch_tests_run() -> None:
+    assert abs(RANGELAND_TCO2E_PER_HA - PASTURE_TCO2E_PER_HA) > 1
+
+
+def test_a_rule_picking_rangeland_where_emit_chose_pasture_charges_rangeland() -> None:
+    # emit picks pasture (left in 2015, after natural grassland in 2008); materiality does not
+    year_to_class = {
+        2000: Grassland.NATURAL,
+        2008: Grassland.CULTIVATED,
+        2015: Grassland.OTHER,
+    }
+    source, vegetation = get_vegetation_emissions(
+        year_to_class, reference_year=2020, rule="materiality"
+    )
+    assert source == ConversionSource.NATURAL_GRASSLAND
+    assert vegetation == pytest.approx(RANGELAND_TCO2E_PER_HA, rel=1e-6)
+
+
+def test_a_rule_picking_pasture_where_emit_chose_none_charges_pasture() -> None:
+    # emit's window ends in 2020, so it sees no event; recency at 2024 picks the 2022 departure
+    year_to_class = {2000: Grassland.CULTIVATED, 2022: Grassland.OTHER}
+    source, vegetation = get_vegetation_emissions(
+        year_to_class, reference_year=2024, rule="recency"
+    )
+    assert source == ConversionSource.PASTURE
+    assert vegetation == pytest.approx(PASTURE_TCO2E_PER_HA, rel=1e-6)
 
 
 def test_derive_runs_for_another_reference_year() -> None:

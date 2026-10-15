@@ -719,12 +719,20 @@ def get_grassland_transitions(
 
 def get_conversion_candidates(
     dset: xarray.Dataset,
+    climate_zones: xarray.DataArray,
     forest_carbon: xarray.DataArray,
-    grassland_carbon: xarray.DataArray,
     is_peatland: xarray.DataArray,
     soil_organic_carbon: xarray.DataArray,
 ) -> dict[str, xarray.DataArray]:
     """The `cand-` bands: every candidate event, and the stocks, ungated by any event."""
+    # NB: one band per grassland source, since its density depends on the class it left
+    source_to_grassland_carbon = {
+        source: get_grassland_carbon(
+            climate_zones=climate_zones,
+            from_pasture=xarray.full_like(climate_zones, from_pasture, dtype=bool),
+        )
+        for source, from_pasture in (("rangeland", False), ("pasture", True))
+    }
     year_of_loss = (
         gnw_tcl.LOSS_YEAR_OFFSET + dset[gnw_tcl.DATASET.fully_qualified_band_name]
     )
@@ -738,9 +746,12 @@ def get_conversion_candidates(
             for transition, bitmask in get_grassland_transitions(dset).items()
         },
         "cand-forest-biomass": (CO2E_PER_CARBON * forest_carbon).rename("tco2e-per-ha"),
-        "cand-grassland-biomass": (CO2E_PER_CARBON * grassland_carbon).rename(
-            "tco2e-per-ha"
-        ),
+        **{
+            f"cand-{source:s}-biomass": (CO2E_PER_CARBON * grassland_carbon).rename(
+                "tco2e-per-ha"
+            )
+            for source, grassland_carbon in source_to_grassland_carbon.items()
+        },
         # NB: on peat too: whether peat replaces the mineral term is the selection's call
         "cand-mineral-soil-carbon": (
             CO2E_PER_CARBON * soil_organic_carbon.fillna(0)
@@ -1161,8 +1172,8 @@ def get_output_dset(dset: xarray.Dataset) -> xarray.Dataset:
     logger.info("Recording every conversion candidate, before any reference year")
     candidates = get_conversion_candidates(
         dset=dset,
+        climate_zones=climate_zones,
         forest_carbon=forest_carbon,
-        grassland_carbon=grassland_carbon,
         is_peatland=is_peatland,
         soil_organic_carbon=dset[soilgrids_ocs.DATASET.fully_qualified_band_name],
     )
@@ -1214,7 +1225,8 @@ CONVERSION_CANDIDATES = export.Deliverable(
             "cand-tcl-loss-year",
             *(f"cand-gpw-{transition:s}" for transition in GrasslandTransition),
             "cand-forest-biomass:tco2e-per-ha",
-            "cand-grassland-biomass:tco2e-per-ha",
+            "cand-rangeland-biomass:tco2e-per-ha",
+            "cand-pasture-biomass:tco2e-per-ha",
             "cand-mineral-soil-carbon:tco2e-per-ha",
             "cand-is-peat",
         )

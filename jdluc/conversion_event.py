@@ -38,7 +38,8 @@ class Candidates:
     tcl_loss_year: xarray.DataArray
     transitions: dict[GrasslandTransition, xarray.DataArray]
     forest_biomass: xarray.DataArray
-    grassland_biomass: xarray.DataArray
+    rangeland_biomass: xarray.DataArray
+    pasture_biomass: xarray.DataArray
     mineral_soil_carbon: xarray.DataArray
     is_peat: xarray.DataArray
 
@@ -60,7 +61,8 @@ def read_candidates(dset: xarray.Dataset) -> Candidates:
             for transition in GrasslandTransition
         },
         forest_biomass=dset["cand-forest-biomass:tco2e-per-ha"],
-        grassland_biomass=dset["cand-grassland-biomass:tco2e-per-ha"],
+        rangeland_biomass=dset["cand-rangeland-biomass:tco2e-per-ha"],
+        pasture_biomass=dset["cand-pasture-biomass:tco2e-per-ha"],
         mineral_soil_carbon=dset["cand-mineral-soil-carbon:tco2e-per-ha"],
         # NB: no data reads as no peat, as `emit`'s `== 1` does
         is_peat=dset["cand-is-peat"] == 1,
@@ -97,9 +99,6 @@ def latest_year_in_window(
     return xarray.apply_ufunc(
         latest, *bitmasks, dask="parallelized", output_dtypes=[numpy.float32]
     )
-
-
-GRASSLAND_SOURCES = (ConversionSource.NATURAL_GRASSLAND, ConversionSource.PASTURE)
 
 
 def get_source_to_year(
@@ -245,7 +244,6 @@ def get_cie(
     event = NAME_TO_RULE[rule](candidates, reference_year, lookback_years)
 
     has_source = event.source != ConversionSource.NONE
-    from_grassland = event.source.isin(list(GRASSLAND_SOURCES))
     return xarray.Dataset(
         {
             "cie-conversion-source": event.source,
@@ -254,7 +252,12 @@ def get_cie(
                 candidates.forest_biomass.where(
                     event.source == ConversionSource.FOREST, other=0
                 )
-                + candidates.grassland_biomass.where(from_grassland, other=0)
+                + candidates.rangeland_biomass.where(
+                    event.source == ConversionSource.NATURAL_GRASSLAND, other=0
+                )
+                + candidates.pasture_biomass.where(
+                    event.source == ConversionSource.PASTURE, other=0
+                )
             ),
             "cie-mineral-soil-carbon-at-risk:tco2e-per-ha": (
                 candidates.mineral_soil_carbon.where(
