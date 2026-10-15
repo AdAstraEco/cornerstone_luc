@@ -4,9 +4,12 @@ import itertools
 import re
 import time
 
+import git
 import pytest
 
 from jdluc.utils import (
+    get_git_remote_url,
+    get_git_version,
     iter_sharded,
     threadsafe_cache,
 )
@@ -83,3 +86,36 @@ def test_iter_sharded_raises() -> None:
         AssertionError, match=re.escape("residues=(2,) exceed modulus=2")
     ):
         list(iter_sharded(modulus=2, residues=(2,), values=()))
+
+
+@pytest.fixture
+def without_a_git_repository(
+    monkeypatch: pytest.MonkeyPatch,
+) -> collections.abc.Iterator[None]:
+    def no_repository(*args: object, **kwargs: object) -> git.Repo:
+        raise git.InvalidGitRepositoryError
+
+    monkeypatch.setattr(git, "Repo", no_repository)
+    get_git_version.cache_clear()
+    get_git_remote_url.cache_clear()
+    yield
+    get_git_version.cache_clear()
+    get_git_remote_url.cache_clear()
+
+
+@pytest.mark.usefixtures("without_a_git_repository")
+def test_git_provenance_falls_back_to_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("JDLUC_GIT_VERSION", "main-0123abcd")
+    monkeypatch.setenv("JDLUC_GIT_REMOTE_URL", "https://example.com/luc.git")
+    assert get_git_version() == "main-0123abcd"
+    assert get_git_remote_url() == "https://example.com/luc.git"
+
+
+@pytest.mark.usefixtures("without_a_git_repository")
+def test_git_provenance_falls_back_to_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("JDLUC_GIT_VERSION", raising=False)
+    monkeypatch.delenv("JDLUC_GIT_REMOTE_URL", raising=False)
+    assert get_git_version() == "unknown"
+    assert get_git_remote_url() == "unknown"
