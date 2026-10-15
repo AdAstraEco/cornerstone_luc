@@ -34,6 +34,14 @@ def put_file(local_path: str, uri: str) -> None:
     fs.put_file(local_path, path)
 
 
+def get_file(uri: str, local_path: str) -> None:
+    import fsspec  # type: ignore[import-untyped]
+
+    logger.info(f"Reading file {uri=:s} to {local_path=:s}")
+    fs, path = fsspec.url_to_fs(url=uri)
+    fs.get_file(path, local_path)
+
+
 def to_gdal_path(uri: str) -> str:
     if uri.startswith("gs://"):
         return "/vsigs/" + uri.removeprefix("gs://")
