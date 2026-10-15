@@ -87,6 +87,7 @@ layers = [
 name = "Utilities are foundational"
 type = "forbidden"
 source_modules = [
+    "jdluc.cache_key",
     "jdluc.config",
     "jdluc.geo",
     "jdluc.storage",

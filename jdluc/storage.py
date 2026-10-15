@@ -1,6 +1,5 @@
 import dataclasses
 import functools
-import hashlib
 import inspect
 import logging
 import os
@@ -9,6 +8,8 @@ import typing
 
 import pandas
 import xarray
+
+from jdluc import cache_key
 
 logger = logging.getLogger(__name__)
 
@@ -177,15 +178,6 @@ def get_cache_decorator(
     version: int,
     ignored_args: list[str] | None = None,
 ) -> CacherDecoratorProtocol[typing.Any]:
-    def get_module_for_func(func: typing.Callable[..., object]) -> str:
-        import git
-
-        relative_path = os.path.relpath(
-            path=inspect.getfile(func),
-            start=git.Repo(search_parent_directories=True).working_dir,
-        )
-        return relative_path.removesuffix(".py").replace(os.sep, ".")
-
     def decorator(
         func: typing.Callable[P, R],
     ) -> typing.Callable[P, R]:
@@ -200,18 +192,16 @@ def get_cache_decorator(
             bound = inspect.signature(func).bind(*args, **kwargs)
             bound.apply_defaults()
             ignored = set(ignored_args or ())
-            hash_tokens = (
-                get_module_for_func(func=func),
-                func.__qualname__,
-                version,
-                *(
+            hash_key = cache_key.cache_key(
+                module=func.__module__,
+                qualname=func.__qualname__,
+                version=version,
+                arguments=(
                     (name, value)
                     for name, value in bound.arguments.items()
                     if name not in ignored
                 ),
             )
-            data = "|".join(map(str, hash_tokens)).encode()
-            hash_key = hashlib.sha1(data=data).hexdigest()[:12]
             config = Config.from_dot_env()
             cacher = typing.cast(
                 CacherProtocol[R],
