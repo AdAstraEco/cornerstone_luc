@@ -234,15 +234,25 @@ class ZarrCacher:
     def uri(self) -> str:
         return join_uri(prefix=self.hash_key + ".zarr", root=self.root)
 
+    # NB: not zarr.json, which is written before any chunk, so that a write killed part-way
+    # (out of memory, preempted, or racing another process) is not taken for a complete one.
+    # Beside the zarr rather than in it, where zarr would warn of an unrecognized object.
     @property
     def exists_uri(self) -> str:
-        return f"{self.uri:s}/zarr.json"
+        return f"{self.uri:s}.complete"
 
     def deserialize(self) -> xarray.Dataset:
         return open_zarr_to_dask_dataset(path_to_zarr=self.uri)
 
     def serialize(self, dset: xarray.Dataset) -> None:
+        import fsspec  # type: ignore[import-untyped]
+
+        fs, path = fsspec.url_to_fs(url=self.uri)
+        if fs.exists(path):
+            logger.warning(f"Removing the partial zarr at {self.uri=:s}")
+            fs.rm(path, recursive=True)
         write_dask_dataset_to_zarr(dset=dset, path_to_zarr=self.uri)
+        fs.touch(f"{path:s}.complete")
 
 
 class CacherDecoratorProtocol(typing.Protocol[R]):
