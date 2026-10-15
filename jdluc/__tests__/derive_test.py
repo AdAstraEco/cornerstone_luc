@@ -818,7 +818,7 @@ def test_export_workflow_writes_each_deliverable_in_its_format(
     total = written[derive.get_variable_name("total_emissions_amortized")]
     assert set(total.dims) == {derive.DISCOUNTING, derive.CROP_CLASS, "y", "x"}
     assert list(total[derive.CROP_CLASS].values) == ["perennial"]
-    assert written.attrs["watershed-product-name"] == zarr.name
+    assert written.attrs["cornerstone-product-name"] == zarr.name
 
 
 # ============================================================================================

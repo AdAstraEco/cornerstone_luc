@@ -118,11 +118,11 @@ def test_write_deliverable_writes_the_format_under_the_deliverables_name(
         case export.Format.COG:
             with rasterio.open(uri) as dataset:
                 assert list(dataset.descriptions) == export.get_band_names(DELIVERABLE)
-                assert dataset.tags()["watershed-product-name"] == "example"
+                assert dataset.tags()["cornerstone-product-name"] == "example"
         case export.Format.ZARR:
             written = xarray.open_zarr(uri, consolidated=False)
             assert set(written) == {"total:t", "area:ha"}
-            assert written.attrs["watershed-product-name"] == "example"
+            assert written.attrs["cornerstone-product-name"] == "example"
 
 
 def test_write_deliverable_takes_the_deliverables_format_by_default(tmp_path) -> None:
