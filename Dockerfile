@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.19
 # cornerstone image (docs/orbae/argo-workflows.md): the jdluc pipeline, runnable one-tile-per-pod.
 #
 # The Argo workflow runs the real stages unchanged inside each pod, one pod per tile per
@@ -6,11 +7,11 @@
 # choice the architecture doc makes. The workflow sets each step's command.
 #
 # Build + push (do NOT run without Dan's OK), from a clean commit, tagged with its short SHA.
+# Build from the main checkout, not a git worktree: a worktree's .git is a file pointing outside
+# the build context, so the image would carry no repository.
 # IMAGE is the registry repository, without a tag:
 #   TAG=$(git rev-parse --short HEAD)
-#   docker build --platform=linux/amd64 -t "$IMAGE:$TAG" \
-#     --build-arg JDLUC_GIT_VERSION="$(git rev-parse HEAD)" \
-#     --build-arg JDLUC_GIT_REMOTE_URL="$(git remote get-url origin)" .
+#   docker build --platform=linux/amd64 -t "$IMAGE:$TAG" .
 #   docker push "$IMAGE:$TAG"
 
 FROM ghcr.io/astral-sh/uv:python3.14-bookworm-slim
@@ -18,21 +19,27 @@ FROM ghcr.io/astral-sh/uv:python3.14-bookworm-slim
 WORKDIR /app
 
 # rasterio/GDAL wheels vendor GDAL but still dynamically link a few base libs the slim image
-# omits (libexpat.so.1, used by GDAL's XML parsing). Install them; keep the layer minimal.
+# omits (libexpat.so.1, used by GDAL's XML parsing). git is for GitPython, which reads the
+# copied .git for the provenance tagged on ingested COGs; safe.directory lets it read a repo
+# owned by a different user from the one the pod runs as. Keep the layer minimal.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libexpat1 \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get install -y --no-install-recommends git libexpat1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && git config --system --add safe.directory /app
 
 # Resolve deps first for layer caching; --frozen makes the build fail loudly rather than
 # silently re-resolving if uv.lock is stale, keeping the image pinned to the lockfile.
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-install-project --no-dev
 
-# Then the source (.dockerignore keeps this lean; no .git needed -- the cache key uses
-# func.__module__). jdluc is pure-Python over wheels (rasterio/rioxarray ship GDAL), so no
-# apt GDAL package is needed -- only the base shared lib installed above.
-COPY . .
+# Then the source, without .git (.dockerignore keeps the rest lean). jdluc is pure-Python over
+# wheels (rasterio/rioxarray ship GDAL), so no apt GDAL package is needed -- only the base
+# shared lib installed above.
+COPY --exclude=.git . .
 RUN uv sync --frozen --no-dev
+
+# .git last, so a commit that changes no source rebuilds only this layer.
+COPY .git .git
 
 ENV PATH="/app/.venv/bin:${PATH}"
 
@@ -43,12 +50,5 @@ ENV PATH="/app/.venv/bin:${PATH}"
 # zarr-write via rasterio.Env, which is the correct place for it.
 ENV GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR" \
     GDAL_CACHEMAX="512"
-
-# Provenance baked at build time (the image has no .git). utils.get_git_* read these to tag
-# ingested COGs; the build command passes them from the host repo. Default to "unknown".
-ARG JDLUC_GIT_VERSION=unknown
-ARG JDLUC_GIT_REMOTE_URL=unknown
-ENV JDLUC_GIT_VERSION=${JDLUC_GIT_VERSION} \
-    JDLUC_GIT_REMOTE_URL=${JDLUC_GIT_REMOTE_URL}
 
 # No ENTRYPOINT: each workflow step sets its own command, a CLI from the image.
