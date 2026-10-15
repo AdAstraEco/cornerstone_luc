@@ -27,28 +27,31 @@ The bucket is set **only** in the Secrets. To point a run at a different bucket,
 Each run covers one country (`iso`):
 
 ```
-list-datasets -> ingest-world[dataset] -> list-tiles -> ingest-tiles[dataset] -> compute[tile] -+-> reduce -> export[tile] -> mosaic
-                                                                                                +-> derive[tile]
+list-world-datasets -> ingest-world[dataset] -> list-tiles -+-> ingest-tiles[dataset][tile] ---------------------+-> compute[tile] -+-> reduce -> export[tile] -> mosaic
+list-tile-datasets ----------------------------------------+-> ingest-tiles-allowed-failures[dataset][tile] ----+                  +-> derive[tile]
 ```
 
-| Step            | Pods          | Does                                                                                                 | Secret      |
-| --------------- | ------------- | ---------------------------------------------------------------------------------------------------- | ----------- |
-| `list-datasets` | 1             | Prints the datasets to ingest as two JSON lists, whole-world and per-tile (`infra/list_datasets.py`) | no keys     |
-| `ingest-world`  | 1 per dataset | `jdluc/ingest.py NAME --backfill`: boundaries, climate zones, MAPSPAM, FAOSTAT, NASS                 | with keys   |
-| `ingest-report` | 1             | Lists every tile that failed to ingest, including the allowed failures                               | none        |
-| `list-tiles`    | 1             | Prints the country's sorted 10° tiles as JSON, which the per-tile steps fan out over                 | no keys     |
-| `ingest-tiles`  | 1 per dataset | `jdluc/ingest.py NAME ISO`: that dataset over every tile of the country                              | with keys   |
-| `compute`       | 1 per tile    | harmonize → emit → attribute, with `--skip-ingest`                                                   | no keys     |
-| `reduce`        | 1             | `trace.workflow` over the country: the cross-tile merge                                              | with keys\* |
-| `export`        | 1 per tile    | Writes the CIE emissions COG                                                                         | with keys\* |
-| `mosaic`        | 1             | Writes a VRT over the country's CIE COGs                                                             | with keys\* |
-| `derive`        | 1 per tile    | Writes one crop-class deliverable (`jdluc/derive.py`) from emit's cache                              | no keys     |
+| Step                            | Pods                 | Does                                                                                   | Secret      |
+| ------------------------------- | -------------------- | -------------------------------------------------------------------------------------- | ----------- |
+| `list-world-datasets`           | 1                    | `infra/list_datasets.py --partitioning=whole-world`: the whole-world datasets, as JSON | no keys     |
+| `list-tile-datasets`            | 1                    | `infra/list_datasets.py --partitioning=ten-degree-tile`: the tiled datasets, as JSON   | no keys     |
+| `ingest-world`                  | 1 per dataset        | `jdluc/ingest.py NAME --backfill`: boundaries, climate zones, MAPSPAM, FAOSTAT, NASS   | with keys   |
+| `list-tiles`                    | 1                    | `python -m jdluc.datasets.worldbank_jurisdictions ISO`: the country's tiles, as JSON   | no keys     |
+| `ingest-tiles`                  | 1 per dataset × tile | `jdluc/ingest.py NAME ISO --modulus=N --residues=i`: one dataset on one tile           | with keys   |
+| `ingest-tiles-allowed-failures` | 1 per dataset × tile | The same, for the datasets in `ingest-allow-failures`                                  | with keys   |
+| `compute`                       | 1 per tile           | harmonize → emit → attribute, with `--skip-ingest`                                     | no keys     |
+| `reduce`                        | 1                    | `trace.workflow` over the country: the cross-tile merge                                | with keys\* |
+| `export`                        | 1 per tile           | Writes the CIE emissions COG                                                           | with keys\* |
+| `mosaic`                        | 1                    | Writes a VRT over the country's CIE COGs                                               | with keys\* |
+| `derive`                        | 1 per tile           | Writes one crop-class deliverable (`jdluc/derive.py`) from emit's cache                | no keys     |
 
 \* These don't need the source-API keys. The old driver ran them without keys; tightening this is an open question below.
 
-**Ingest fans out per dataset, and fails loudly by default.** Each pod runs upstream's `jdluc/ingest.py` for one dataset. A dataset with a big global download (Huang BGB, Descals oil palm, GPW livestock, CDL) then fetches it once per run rather than once per tile. Already-ingested tiles are skipped, so a warm rerun is quick. The CLI exits non-zero if any tile fails, and that fails the run: compute's `--ignore-missing-tiles` would otherwise turn a missing tile into an all-nodata band without complaint. The exception is the datasets named in the `ingest-allow-failures` parameter, by default only `DESCALS_OIL_PALM`, which is published only where oil palm was found, so most tiles have none. Their failed tiles don't fail the run. Every failed tile, allowed or not, is listed by the `ingest-report` step. The dataset list is ours, not upstream's: see `infra/list_datasets.py` for why, and add to it when upstream starts reading a new dataset.
+Every step runs a CLI from the image directly, with no shell scripting around it.
 
-**The tile list is derived, never typed in.** `list-tiles` runs `run_phase.get_tile_ids`, the same derivation upstream uses: the tiles a country's boundary touches. It runs after `ingest-world` because that is the step that fetches the boundaries. An earlier version took a hand-typed tile count, and nothing checked it against the country.
+**Ingest runs one pod per dataset and tile, and fails loudly by default.** The tiles of a country run side by side, which a large country or a global run needs. A dataset behind one global download (GPW livestock, Liao) would fetch it once per pod; setting `SOURCE_CACHE_ROOT` in the Secrets shares those downloads between pods. Already-ingested tiles are skipped, so a warm rerun is quick. A failed tile fails its pod, and that fails the run: compute's `--ignore-missing-tiles` would otherwise turn a missing tile into an all-nodata band without complaint. The exception is the datasets in the `ingest-allow-failures` parameter, a JSON list that is by default only `DESCALS_OIL_PALM`, which is published only where oil palm was found, so most tiles have none. They run as `ingest-tiles-allowed-failures`, and compute runs whether or not that step fails; its failed tiles show as failed pods in `argo get`. The dataset list is ours, not upstream's: see `infra/list_datasets.py` for why, and add to it when upstream starts reading a new dataset.
+
+**The tile list is derived, never typed in.** `list-tiles` prints the tiles the country's boundary touches, the same derivation upstream's CLIs use, each with the `--modulus` and `--residues` that select it alone. Each ingest pod passes those to upstream's ingest CLI, so the pods and the CLI can't disagree about which tile is which. It runs after `ingest-world` because that is the step that fetches the boundaries. An earlier version took a hand-typed tile count, and nothing checked it against the country.
 
 **`derive` runs off to the side.** It needs only emit's cached output, so it starts once `compute` finishes and runs alongside `reduce` and `export`. Nothing downstream reads its output.
 
@@ -106,6 +109,8 @@ The Argo UI shows the same information. Ask the platform team for its address.
 ### Parameters
 
 - **`iso`:** one ISO 3166 alpha-3 code. `run_phase.py` accepts several countries, but the workflow passes a single value.
+- **`ingest-allow-failures`:** a JSON list of tiled datasets whose failed tiles don't fail the run, by default `["DESCALS_OIL_PALM"]`.
+- **`methodology`:** `STATISTICAL` (the default) or `JURISDICTIONAL_DIRECT`, which is US-only.
 - **`derive-deliverable`:** one of `crop-class-emissions` (the default), `perennial-discounting-comparison` or `perennial-debug`. One deliverable per run. `perennial-debug` is written as zarr, not COG.
 
 ### Outputs
