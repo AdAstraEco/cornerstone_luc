@@ -1,5 +1,3 @@
-# Keep the build context lean.
-
 # A host venv must not shadow the one built inside the image.
 .venv/
 
