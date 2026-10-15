@@ -44,7 +44,7 @@ def compute(
         attribute.Methodology.JURISDICTIONAL_DIRECT: jurisdictional_direct.workflow,
         attribute.Methodology.STATISTICAL: statistical.workflow,
     }[methodology]
-    # A tile can straddle several of the run's countries; reduce sums exactly these
+    # A tile can straddle several of the run's countries; trace sums exactly these
     # per-(tile, country) partials, so compute has to produce all of them
     for iso_3166 in get_iso_3166s_touching_tile(iso_3166s=iso_3166s, tile_id=tile_id):
         logger.info(f"attribute {methodology.name:s} {tile_id=:s} {iso_3166=:s}")
@@ -68,16 +68,17 @@ def get_iso_3166s_touching_tile(
     )
 
 
-def reduce(iso_3166s: tuple[str, ...], methodology: attribute.Methodology) -> None:
-    """The cross-tile merge. Cheap only if compute ran with the same methodology."""
-    df = trace.workflow(
-        # NB: not a cache-key argument; the tiles are warm, so this only fans out the reads
-        concurrency=1,
+def trace_countries(
+    iso_3166s: tuple[str, ...], methodology: attribute.Methodology
+) -> None:
+    """The cross-tile merge, written as the emissions-factor table. Cheap only if compute ran
+    with the same methodology."""
+    uri = trace.export_workflow(
         commodity_names=attribute.get_commodity_names(methodology=methodology),
         iso_3166s=tuple(sorted(iso_3166s)),
         methodology=methodology,
     )
-    logger.info(f"traced {len(df):d} (jurisdiction, crop) rows")
+    logger.info(f"exported emissions factors to {uri:s}")
 
 
 def export_tile(tile_id: str) -> None:
@@ -151,7 +152,7 @@ def main() -> int:
     add_methodology(subparser)
     add_tile_id(subparser)
 
-    subparser = add_subparser("reduce", reduce)
+    subparser = add_subparser("trace", trace_countries)
     add_iso_3166s(subparser)
     add_methodology(subparser)
 
