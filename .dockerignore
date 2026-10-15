@@ -1,8 +1,3 @@
-# Keep the build context lean.
-
-# Caching and provenance need no .git (see storage.py, utils.get_git_version).
-.git/
-
 # A host venv must not shadow the one built inside the image.
 .venv/
 
