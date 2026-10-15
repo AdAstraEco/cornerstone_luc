@@ -7,6 +7,7 @@ import tempfile
 import threading
 import typing
 
+import fsspec  # type: ignore[import-untyped]
 import numpy
 import pandas
 import xarray
@@ -19,15 +20,11 @@ COMPUTE_LOCK = threading.RLock()
 
 
 def path_exists(uri: str) -> bool:
-    import fsspec  # type: ignore[import-untyped]
-
     fs, path = fsspec.url_to_fs(url=uri)
     return fs.exists(path)
 
 
 def put_file(local_path: str, uri: str) -> None:
-    import fsspec  # type: ignore[import-untyped]
-
     logger.info(f"Writing file {local_path=:s} to {uri=:s}")
     fs, path = fsspec.url_to_fs(url=uri)
     fs.makedirs(os.path.dirname(p=path), exist_ok=True)
@@ -35,8 +32,6 @@ def put_file(local_path: str, uri: str) -> None:
 
 
 def get_file(uri: str, local_path: str) -> None:
-    import fsspec  # type: ignore[import-untyped]
-
     logger.info(f"Reading file {uri=:s} to {local_path=:s}")
     fs, path = fsspec.url_to_fs(url=uri)
     fs.get_file(path, local_path)
@@ -227,6 +222,13 @@ class ParquetCacher:
 
 @dataclasses.dataclass
 class ZarrCacher:
+    """A zarr at `uri`, complete once the `.complete` marker beside it exists.
+
+    The marker is written after the last chunk, so a zarr without one is a write that was
+    killed part-way or is still running. Writing over it could race a live writer, so it is
+    an error left for someone to resolve by hand, usually by deleting the zarr.
+    """
+
     hash_key: str
     root: str
 
@@ -245,14 +247,15 @@ class ZarrCacher:
         return open_zarr_to_dask_dataset(path_to_zarr=self.uri)
 
     def serialize(self, dset: xarray.Dataset) -> None:
-        import fsspec  # type: ignore[import-untyped]
-
-        fs, path = fsspec.url_to_fs(url=self.uri)
-        if fs.exists(path):
-            logger.warning(f"Removing the partial zarr at {self.uri=:s}")
-            fs.rm(path, recursive=True)
+        if path_exists(uri=self.uri):
+            raise FileExistsError(
+                f"{self.uri=:s} exists without {self.exists_uri=:s}: a write was killed "
+                "part-way or is still running. Once no process is writing it, delete the "
+                "zarr to recompute it."
+            )
         write_dask_dataset_to_zarr(dset=dset, path_to_zarr=self.uri)
-        fs.touch(f"{path:s}.complete")
+        fs, path = fsspec.url_to_fs(url=self.exists_uri)
+        fs.touch(path)
 
 
 class CacherDecoratorProtocol(typing.Protocol[R]):
