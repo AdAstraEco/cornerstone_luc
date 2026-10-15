@@ -1,5 +1,8 @@
-# A host venv must not shadow the one built inside the image.
-.venv/
+# Claude worktrees and other local tooling state.
+.claude/
+
+# A host venv, at any depth, must not shadow the one built inside the image.
+**/.venv/
 
 # Exact-patch pin (e.g. 3.14.5) a base image's uv may not fetch; requires-python (>=3.14,<3.15)
 # is satisfied by any 3.14.x, so let uv use the base image's own.
