@@ -1,6 +1,6 @@
-"""Run ONE pod's worth of one phase of an AOI run (docs/orbae/scale-out.md).
+"""Run ONE pod's worth of one phase of an AOI run (docs/orbae/argo-workflows.md).
 
-The phases, in the order the driver (``infra/run_aoi.py``) submits them:
+The Argo workflow runs one pod per phase, or per tile for the per-tile phases, in this order:
 
 ``ingest-world``
     One pod: every whole-world dataset the AOI needs (boundaries, IPCC zones, MAPSPAM,
@@ -18,26 +18,24 @@ The phases, in the order the driver (``infra/run_aoi.py``) submits them:
     cross-tile merge. Every per-tile partial is warm by then, so this is a groupby-sum.
 ``export``
     One pod per tile: ``emit.export_workflow`` serialises ``emit``'s cached scratch output to
-    the CIE emissions COG (docs/rooster-emissions-cog-spike.md). Additive and terminal -- nothing
-    downstream reads it -- so it runs after ``reduce`` and reads ``emit``'s warm cache with no
-    recompute.
+    the CIE emissions COG. Additive and terminal -- nothing downstream reads it -- so it runs
+    after ``reduce`` and reads ``emit``'s warm cache with no recompute.
 ``mosaic``
     One pod: ``export.mosaic_workflow`` stitches the per-tile CIE COGs into one AOI-wide
     read-time VRT. A tiny XML over the tiles (lazy, no materialisation); runs after ``export``.
 
 Chaining inside a pod is safe because every stage is wrapped in ``@storage.cache_to_*``:
 a pod that dies mid-chain resumes from its last completed stage on retry, and rerunning a
-whole phase no-ops over warm tiles. That is the resume mechanism -- there is no scheduler.
+whole phase no-ops over warm tiles. That is the resume mechanism; Argo only reruns the pod.
 
-The per-tile phases take their tile from ``JOB_COMPLETION_INDEX`` (set by the k8s Indexed
-Job) by indexing into the sorted tile list the AOI's countries resolve to. That derivation
-is the same one ``attribute.workflow`` uses, so it is deterministic in-pod and no tile list
-has to be plumbed through a ConfigMap.
+The per-tile phases take their tile from ``--tile-id``. The workflow fans out over the
+AOI's sorted tile list, which ``get_tile_ids`` derives from the countries' boundaries, the
+same derivation ``attribute.workflow`` uses.
 
-Run inside the container (the Job does this for you)::
+Run inside the container (the workflow does this for you)::
 
-    python infra/run_phase.py --phase compute HND              # tile from JOB_COMPLETION_INDEX
-    python infra/run_phase.py --phase compute --tile-id 20N_090W HND
+    python infra/run_phase.py --phase ingest-world HND
+    python infra/run_phase.py --phase compute --skip-ingest --tile-id 20N_090W HND
 """
 
 import argparse
@@ -87,7 +85,7 @@ class Phase(enum.StrEnum):
 
     @property
     def is_per_tile(self) -> bool:
-        """Does the driver fan this phase out over the AOI's tiles (vs one pod for the AOI)?"""
+        """Does the workflow fan this phase out over the AOI's tiles (vs one pod for the AOI)?"""
         return self in (Phase.INGEST_TILES, Phase.COMPUTE, Phase.EXPORT)
 
 
@@ -128,7 +126,7 @@ def get_dataset_names_for_phase(
 
 
 def get_tile_ids(iso_3166s: collections.abc.Iterable[str]) -> list[str]:
-    """The AOI's tiles, sorted -- the index space the Indexed Jobs are sized against."""
+    """The AOI's tiles, sorted -- the list the workflow fans the per-tile phases out over."""
     return sorted(
         worldbank_jurisdictions.get_ten_degree_tile_ids_for_iso_3166s(
             iso_3166s=iso_3166s
@@ -173,7 +171,7 @@ def run_ingest(
     missing tile is often legitimate (an ocean or map-edge tile among the AOI's bounding
     tiles), and abandoning the pod would waste the tiles that did fetch. A phase where
     *nothing* succeeded is a different animal -- bad credentials, no network, wrong root --
-    so that exits non-zero and stops the driver at the barrier.
+    so that exits non-zero, which fails the step and stops the workflow.
     """
     root = config.Config.from_dot_env().ingest_root
     successes: list[tuple[DatasetName, str]] = []
@@ -261,7 +259,7 @@ def run_reduce(
 
     Cheap *only* if the compute phase ran with the same methodology and crop names: those
     are cache-key arguments, so a mismatch silently
-    recomputes every tile here, in one pod. The driver passes identical flags to both.
+    recomputes every tile here, in one pod. The workflow must pass identical flags to both.
     """
     df = trace.workflow(
         # NB: not a cache-key argument; the tiles are warm, so this only fans out the reads
@@ -276,7 +274,7 @@ def run_reduce(
 def run_export(tile_id: str) -> None:
     """Serialise this tile's ``emit`` scratch output to a CIE COG.
 
-    Additive and terminal (docs/rooster-emissions-cog-spike.md): it reads ``emit``'s cached
+    Additive and terminal: it reads ``emit``'s cached
     zarr -- warm after ``compute`` -- and writes one COG, with no recompute and no edits to any
     other stage. Methodology-agnostic, since ``emit`` sits below the attribute legs, so it takes
     only the tile.
