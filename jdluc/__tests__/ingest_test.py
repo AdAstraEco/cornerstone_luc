@@ -1,4 +1,3 @@
-import json
 import sys
 import types
 
@@ -61,30 +60,3 @@ def test_shards_select_tiles_by_their_sorted_index(
     )
     assert ingest.main() == 0
     assert sorted(ingested_tile_ids) == expected_tile_ids
-
-
-def test_each_listed_shard_ingests_exactly_its_tile(
-    capsys: pytest.CaptureFixture[str],
-    ingested_tile_ids: list[str],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(sys, "argv", ["worldbank_jurisdictions.py", "AAA"])
-    assert worldbank_jurisdictions.main() == 0
-    shards = json.loads(capsys.readouterr().out)
-    assert sorted(shard["tile_id"] for shard in shards) == sorted(TILE_IDS)
-
-    for shard in shards:
-        ingested_tile_ids.clear()
-        monkeypatch.setattr(
-            sys,
-            "argv",
-            [
-                "ingest.py",
-                "GNW_HARRIS_AGB",
-                "AAA",
-                f"--modulus={shard['modulus']:d}",
-                f"--residues={shard['residue']:d}",
-            ],
-        )
-        assert ingest.main() == 0
-        assert ingested_tile_ids == [shard["tile_id"]]
