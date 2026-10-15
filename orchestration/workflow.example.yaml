@@ -1,0 +1,279 @@
+# The cornerstone pipeline as an Argo Workflow: an example with placeholder names.
+#
+# The deployed copy is kept outside this public repo, because it names our cluster, node pools
+# and image registry. Replace every UPPER-CASE placeholder below. docs/orbae/argo-workflows.md
+# describes the setup: the image, the two Secrets and the service account.
+#
+#   argo submit workflow.example.yaml -p iso=HND --generate-name cornerstone-hnd-
+#
+# Each task runs one CLI from the image: `python -m orchestration <task>`, or jdluc's own ingest
+# and derive CLIs. `plan` writes the lists every fan-out loops over, so the workflow itself
+# needs no expressions, nested loops or shell scripting.
+#
+#   plan ─┬─ ingest-world ──────────────────┐
+#         ├─ ingest-tiles ──────────────────┼─ compute ─┬─ reduce ── export ── mosaic
+#         └─ ingest-tiles-allowed-failures ─┘           └─ derive
+
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: cornerstone-
+spec:
+  entrypoint: cornerstone
+  serviceAccountName: argo-workflow
+  arguments:
+    parameters:
+      # The run's country: one ISO 3166 alpha-3 code
+      - name: iso
+      # STATISTICAL or JURISDICTIONAL_DIRECT (the latter is US-only)
+      - name: methodology
+        value: STATISTICAL
+      # Ten-degree datasets whose failed tiles must not stop the run, comma-separated. Descals
+      # is published only where there is oil palm, and its ingest fails on tiles without any.
+      - name: allow-failures
+        value: DESCALS_OIL_PALM
+      # crop-class-emissions, perennial-discounting-comparison or perennial-debug
+      - name: derive-deliverable
+        value: crop-class-emissions
+
+  # Every pod runs on the worker pool unless its template says otherwise
+  templateDefaults:
+    nodeSelector:
+      cloud.google.com/gke-nodepool: WORKER-NODE-POOL
+    tolerations:
+      - { key: WORKER-POOL-TAINT, operator: Equal, value: "true", effect: NoSchedule }
+
+  templates:
+    - name: cornerstone
+      dag:
+        # A failed task must not stop the scheduling of tasks that wait on its failure
+        failFast: false
+        tasks:
+          - name: plan
+            template: plan
+
+          - name: ingest-world
+            template: ingest-world
+            depends: plan
+            withParam: "{{tasks.plan.outputs.parameters.ingest-world}}"
+            arguments: { parameters: [{ name: dataset, value: "{{item}}" }] }
+
+          # Ingest exits non-zero if its tile fails, which fails the task, and so the run
+          - name: ingest-tiles
+            template: ingest-tile
+            depends: plan
+            withParam: "{{tasks.plan.outputs.parameters.ingest-tiles}}"
+            arguments: &ingest-tile-arguments
+              parameters:
+                - { name: dataset, value: "{{item.dataset}}" }
+                - { name: modulus, value: "{{item.modulus}}" }
+                - { name: residue, value: "{{item.residue}}" }
+
+          # Failed tiles here stay visible as failed pods, but compute runs regardless
+          - name: ingest-tiles-allowed-failures
+            template: ingest-tile
+            depends: plan
+            withParam: "{{tasks.plan.outputs.parameters.ingest-tiles-allowed-failures}}"
+            arguments: *ingest-tile-arguments
+
+          - name: compute
+            template: compute
+            depends: >-
+              ingest-world && ingest-tiles &&
+              (ingest-tiles-allowed-failures || ingest-tiles-allowed-failures.Failed)
+            withParam: "{{tasks.plan.outputs.parameters.tiles}}"
+            arguments: { parameters: [{ name: tile-id, value: "{{item.tile_id}}" }] }
+
+          - name: reduce
+            template: reduce
+            depends: compute
+
+          - name: export
+            template: export
+            depends: reduce
+            withParam: "{{tasks.plan.outputs.parameters.tiles}}"
+            arguments: { parameters: [{ name: tile-id, value: "{{item.tile_id}}" }] }
+
+          - name: mosaic
+            template: mosaic
+            depends: export
+
+          # Reads only emit's cache, warm after compute, and nothing reads its output
+          - name: derive
+            template: derive
+            depends: compute
+            withParam: "{{tasks.plan.outputs.parameters.tiles}}"
+            arguments: { parameters: [{ name: tile-id, value: "{{item.tile_id}}" }] }
+
+    # Ingests the boundaries if absent, then writes one JSON list per fan-out
+    - name: plan
+      activeDeadlineSeconds: 1800
+      container:
+        image: &image REGION-docker.pkg.dev/PROJECT/REPOSITORY/cornerstone:COMMIT-SHA
+        command: [python, -m, orchestration, plan]
+        args:
+          - "{{workflow.parameters.iso}}"
+          - "--methodology={{workflow.parameters.methodology}}"
+          - --output-dir=/plan
+          - "--allow-failures={{workflow.parameters.allow-failures}}"
+        env: &tmpdir-env
+          # Temp files on the pod's own SSD, not the node's boot disk (docs/orbae/gke-disk-io-findings.md)
+          - { name: TMPDIR, value: /localtmp }
+          - { name: CPL_TMPDIR, value: /localtmp }
+        resources: &light-resources
+          requests: { cpu: "2", memory: 24Gi, ephemeral-storage: 2Gi }
+          limits: { cpu: "4", memory: 24Gi, ephemeral-storage: 8Gi }
+        volumeMounts: &mounts
+          - { name: cloud-env, mountPath: /app/.env, subPath: .env }
+          - { name: localtmp, mountPath: /localtmp }
+      volumes:
+        - { name: cloud-env, secret: { secretName: cornerstone-env-nokeys } }
+        - &localtmp-20
+          name: localtmp
+          ephemeral:
+            volumeClaimTemplate:
+              spec:
+                accessModes: [ReadWriteOnce]
+                storageClassName: premium-rwo
+                resources: { requests: { storage: 20Gi } }
+      outputs:
+        parameters:
+          - { name: ingest-world, valueFrom: { path: /plan/ingest-world.json } }
+          - { name: ingest-tiles, valueFrom: { path: /plan/ingest-tiles.json } }
+          - name: ingest-tiles-allowed-failures
+            valueFrom: { path: /plan/ingest-tiles-allowed-failures.json }
+          - { name: tiles, valueFrom: { path: /plan/tiles.json } }
+
+    - name: ingest-world
+      inputs: { parameters: [{ name: dataset }] }
+      activeDeadlineSeconds: 5400
+      container:
+        image: *image
+        command: [python, jdluc/ingest.py]
+        args: ["{{inputs.parameters.dataset}}", --backfill]
+        env: *tmpdir-env
+        resources: *light-resources
+        volumeMounts: *mounts
+      volumes:
+        - &keys { name: cloud-env, secret: { secretName: cornerstone-env } }
+        - &localtmp-100
+          name: localtmp
+          ephemeral:
+            volumeClaimTemplate:
+              spec:
+                accessModes: [ReadWriteOnce]
+                storageClassName: premium-rwo
+                resources: { requests: { storage: 100Gi } }
+
+    # One dataset on one tile. Room for a global source download (GPW livestock, ~5 GB) plus
+    # one tile staged uncompressed for its COG (Liao, ~55 GB)
+    - name: ingest-tile
+      inputs: { parameters: [{ name: dataset }, { name: modulus }, { name: residue }] }
+      activeDeadlineSeconds: 10800
+      container:
+        image: *image
+        command: [python, jdluc/ingest.py]
+        args:
+          - "{{inputs.parameters.dataset}}"
+          - "{{workflow.parameters.iso}}"
+          - "--modulus={{inputs.parameters.modulus}}"
+          - "--residues={{inputs.parameters.residue}}"
+        env: *tmpdir-env
+        resources: *light-resources
+        volumeMounts: *mounts
+      volumes:
+        - *keys
+        - name: localtmp
+          ephemeral:
+            volumeClaimTemplate:
+              spec:
+                accessModes: [ReadWriteOnce]
+                storageClassName: premium-rwo
+                resources: { requests: { storage: 150Gi } }
+
+    # harmonize -> emit -> attribute for one tile, from the warm ingest cache, without keys
+    - name: compute
+      inputs: { parameters: [{ name: tile-id }] }
+      activeDeadlineSeconds: 14400
+      nodeSelector:
+        cloud.google.com/gke-nodepool: POWER-NODE-POOL
+      container:
+        image: *image
+        command: [python, -m, orchestration, compute]
+        args:
+          - "{{workflow.parameters.iso}}"
+          - "--methodology={{workflow.parameters.methodology}}"
+          - "--tile-id={{inputs.parameters.tile-id}}"
+        env: *tmpdir-env
+        resources:
+          requests: { cpu: "6", memory: 56Gi, ephemeral-storage: 2Gi }
+          limits: { cpu: "8", memory: 56Gi, ephemeral-storage: 8Gi }
+        volumeMounts: *mounts
+      volumes:
+        - &nokeys { name: cloud-env, secret: { secretName: cornerstone-env-nokeys } }
+        - *localtmp-20
+
+    # The cross-tile merge over the country
+    - name: reduce
+      activeDeadlineSeconds: 3600
+      container:
+        image: *image
+        command: [python, -m, orchestration, reduce]
+        args:
+          - "{{workflow.parameters.iso}}"
+          - "--methodology={{workflow.parameters.methodology}}"
+        env: *tmpdir-env
+        resources: *light-resources
+        volumeMounts: *mounts
+      volumes: [*nokeys, *localtmp-20]
+
+    # Writes cie-emissions/{tile}.tif, staging ~70 GB uncompressed for the COG
+    - name: export
+      inputs: { parameters: [{ name: tile-id }] }
+      activeDeadlineSeconds: 10800
+      container:
+        image: *image
+        command: [python, -m, orchestration, export]
+        args: ["--tile-id={{inputs.parameters.tile-id}}"]
+        env: *tmpdir-env
+        resources: *light-resources
+        volumeMounts: *mounts
+      volumes:
+        - *nokeys
+        - &localtmp-200
+          name: localtmp
+          ephemeral:
+            volumeClaimTemplate:
+              spec:
+                accessModes: [ReadWriteOnce]
+                storageClassName: premium-rwo
+                resources: { requests: { storage: 200Gi } }
+
+    # Writes mosaics/cie-emissions-{iso}.vrt over the country's COGs
+    - name: mosaic
+      activeDeadlineSeconds: 3600
+      container:
+        image: *image
+        command: [python, -m, orchestration, mosaic]
+        args: ["{{workflow.parameters.iso}}"]
+        env: *tmpdir-env
+        resources:
+          requests: { cpu: "1", memory: 8Gi, ephemeral-storage: 2Gi }
+          limits: { cpu: "2", memory: 8Gi, ephemeral-storage: 8Gi }
+        volumeMounts: *mounts
+      volumes: [*nokeys, *localtmp-20]
+
+    # Writes {derive-deliverable}/{tile}.tif from emit's cache
+    - name: derive
+      inputs: { parameters: [{ name: tile-id }] }
+      activeDeadlineSeconds: 10800
+      container:
+        image: *image
+        command: [python, jdluc/derive.py]
+        args:
+          - "{{inputs.parameters.tile-id}}"
+          - "--deliverable={{workflow.parameters.derive-deliverable}}"
+        env: *tmpdir-env
+        resources: *light-resources
+        volumeMounts: *mounts
+      volumes: [*nokeys, *localtmp-200]

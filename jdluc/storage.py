@@ -1,15 +1,18 @@
 import dataclasses
 import functools
-import hashlib
 import inspect
 import logging
 import os
+import tempfile
 import threading
 import typing
 
 import fsspec  # type: ignore[import-untyped]
+import numpy
 import pandas
 import xarray
+
+from jdluc import cache_key
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +31,12 @@ def put_file(local_path: str, uri: str) -> None:
     fs.put_file(local_path, path)
 
 
+def get_file(uri: str, local_path: str) -> None:
+    logger.info(f"Reading file {uri=:s} to {local_path=:s}")
+    fs, path = fsspec.url_to_fs(url=uri)
+    fs.get_file(path, local_path)
+
+
 def to_gdal_path(uri: str) -> str:
     if uri.startswith("gs://"):
         return "/vsigs/" + uri.removeprefix("gs://")
@@ -39,7 +48,9 @@ def join_uri(root: str, prefix: str) -> str:
     return f"{root.rstrip('/'):s}/{prefix:s}"
 
 
-def write_dask_dataset_to_zarr(dset: xarray.Dataset, path_to_zarr: str) -> None:
+def write_dask_dataset_to_zarr(
+    dset: xarray.Dataset, path_to_zarr: str, mode: typing.Literal["w", "w-"] = "w-"
+) -> None:
     assert dset.chunks is not None, f"{dset=:} is not a chunked dask array"
 
     import dask.config
@@ -90,7 +101,11 @@ def write_dask_dataset_to_zarr(dset: xarray.Dataset, path_to_zarr: str) -> None:
         for variable in to_write.variables.values():
             variable.encoding.pop("chunks", None)
         delayed = to_write.to_zarr(
-            compute=False, consolidated=False, group=None, store=path_to_zarr
+            compute=False,
+            consolidated=False,
+            group=None,
+            mode=mode,
+            store=path_to_zarr,
         )
         logger.info("Submitting task graph to dask scheduler")
         future = client.compute(delayed, retries=5)
@@ -109,6 +124,66 @@ def open_zarr_to_dask_dataset(path_to_zarr: str) -> xarray.Dataset:
     assert isinstance(dset, xarray.Dataset)
     assert dset.encoding["source"] == path_to_zarr
     return dset.rio.write_crs(4326)
+
+
+COG_NO_DATA = float("nan")
+
+
+def stack_bands(dset: xarray.Dataset) -> xarray.DataArray:
+    """`dset`'s variables as one float32 array along `band`, in the dataset's order."""
+    import rioxarray  # noqa: F401
+
+    band_names = list(map(str, dset.data_vars))
+    stacked = xarray.concat([dset[name] for name in band_names], dim="band").astype(
+        numpy.float32
+    )
+    stacked = stacked.assign_coords(band=("band", band_names))
+    crs = dset.rio.crs or "EPSG:4326"
+    return stacked.rio.write_crs(crs).rio.write_nodata(COG_NO_DATA)
+
+
+def write_dask_dataset_to_cog(
+    dset: xarray.Dataset, metadata: dict[str, str], uri: str
+) -> None:
+    """Materialise `dset` as a Cloud-Optimised GeoTIFF: one band per variable, named after it.
+
+    EPSG:4326, float32, NaN no-data. Computes the (lazy) dataset as it writes. Stages as
+    `datasets.base` ingest does: a local GeoTIFF, band names, validation, COG, upload.
+    """
+    import dask.diagnostics
+
+    from jdluc import geo
+
+    stacked = stack_bands(dset=dset)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path_to_geotiff = os.path.join(tmpdir, "geotiff.tif")
+        with dask.diagnostics.ProgressBar(dt=5, minimum=1):
+            logger.info(f"Writing staged GeoTIFF to {path_to_geotiff=:s}")
+            stacked.rio.to_raster(
+                path_to_geotiff,
+                blockxsize=512,
+                blockysize=512,
+                compress="ZSTD",
+                driver="GTiff",
+                dtype="float32",
+                lock=True,
+                num_threads="all_cpus",
+                tiled=True,
+                BIGTIFF="IF_SAFER",
+            )
+        geo.set_band_names_for_geotiff(
+            band_names=list(map(str, stacked.band.values)),
+            path_to_geotiff=path_to_geotiff,
+        )
+        geo.validate_geotiff(dtype="float32", path_to_geotiff=path_to_geotiff)
+        path_to_cog = os.path.join(tmpdir, "cog.tif")
+        geo.convert_geotiff_to_cog(
+            metadata=metadata,
+            no_data=COG_NO_DATA,
+            path_to_cog=path_to_cog,
+            path_to_geotiff=path_to_geotiff,
+        )
+        put_file(local_path=path_to_cog, uri=uri)
 
 
 P = typing.ParamSpec("P")
@@ -161,6 +236,9 @@ class ZarrCacher:
     def uri(self) -> str:
         return join_uri(prefix=self.hash_key + ".zarr", root=self.root)
 
+    # NB: not zarr.json, which is written before any chunk, so that a write killed part-way
+    # (out of memory, preempted, or racing another process) is not taken for a complete one.
+    # Beside the zarr rather than in it, where zarr would warn of an unrecognized object.
     @property
     def exists_uri(self) -> str:
         return f"{self.uri:s}.complete"
@@ -185,19 +263,10 @@ class CacherDecoratorProtocol(typing.Protocol[R]):
 
 
 def get_cache_decorator(
-    cacher_cls: type[ParquetCacher] | type[ZarrCacher],
+    cacher_cls: type[ParquetCacher | ZarrCacher],
     version: int,
     ignored_args: list[str] | None = None,
 ) -> CacherDecoratorProtocol[typing.Any]:
-    def get_module_for_func(func: typing.Callable[..., object]) -> str:
-        import git
-
-        relative_path = os.path.relpath(
-            path=inspect.getfile(func),
-            start=git.Repo(search_parent_directories=True).working_dir,
-        )
-        return relative_path.removesuffix(".py").replace(os.sep, ".")
-
     def decorator(
         func: typing.Callable[P, R],
     ) -> typing.Callable[P, R]:
@@ -212,18 +281,19 @@ def get_cache_decorator(
             bound = inspect.signature(func).bind(*args, **kwargs)
             bound.apply_defaults()
             ignored = set(ignored_args or ())
-            hash_tokens = (
-                get_module_for_func(func=func),
-                func.__qualname__,
-                version,
-                *(
+            # func.__module__ (e.g. "jdluc.emit") replaces a former git.Repo()-relative
+            # file path: identical string for in-package modules, but needs no .git, so
+            # caching works from an installed copy of the package too.
+            hash_key = cache_key.cache_key(
+                module=func.__module__,
+                qualname=func.__qualname__,
+                version=version,
+                arguments=(
                     (name, value)
                     for name, value in bound.arguments.items()
                     if name not in ignored
                 ),
             )
-            data = "|".join(map(str, hash_tokens)).encode()
-            hash_key = hashlib.sha1(data=data).hexdigest()[:12]
             config = Config.from_dot_env()
             cacher = typing.cast(
                 CacherProtocol[R],

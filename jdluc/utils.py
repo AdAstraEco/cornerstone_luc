@@ -3,14 +3,16 @@ import datetime
 import enum
 import functools
 import logging
+import os
 import threading
 import time
 import typing
 
-import git
 import requests
 import requests.adapters
 import xarray
+
+from jdluc import config, storage
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +44,23 @@ def save_remote_url_to_local_path(
     # is the failure mode, and without this the read blocks forever
     read_timeout_seconds: int = 120,
     body_retries: int = 3,
+    cache_key: str | None = None,
 ) -> None:
+    """Stream ``remote_url`` to ``local_path``.
+
+    With a ``cache_key``, and SOURCE_CACHE_ROOT set, the download is shared through
+    ``{SOURCE_CACHE_ROOT}/{cache_key}``: a process that finds it there copies it rather than
+    asking the publisher, and one that does not downloads as usual and leaves a copy for the next.
+    Pass a key only for a URL whose content never changes, since nothing ever refreshes the copy.
+    """
+    cache_uri: str | None = None
+    if cache_key is not None:
+        source_cache_root = config.Config.from_dot_env().source_cache_root
+        if source_cache_root:
+            cache_uri = storage.join_uri(source_cache_root, cache_key)
+            if storage.path_exists(uri=cache_uri):
+                storage.get_file(uri=cache_uri, local_path=local_path)
+                return
     for attempt in range(body_retries):
         logger.info(f"GET'ing from {remote_url=:s} with {params=:}")
         try:
@@ -69,25 +87,40 @@ def save_remote_url_to_local_path(
                 raise
             time.sleep(2**attempt)
         else:
+            if cache_uri is not None:
+                storage.put_file(local_path=local_path, uri=cache_uri)
             return
 
 
+# These stamp provenance into ingested COG metadata. An installed copy of the package may have
+# no .git and no git binary, so import git lazily and fall back to the environment
+# (JDLUC_GIT_*) then a sentinel on ANY failure -- never crash ingest over a provenance tag.
+# (GitPython's top-level import itself raises when the git executable is missing, so the
+# import must live inside the try.)
 @functools.cache
 def get_git_version(default_branch_name: str = "main") -> str:
-    repo = git.Repo(__file__, search_parent_directories=True)
-    if (branch_name := repo.active_branch.name) == default_branch_name:
-        return f"{branch_name:s}-{repo.head.commit.hexsha[:8]:s}"
-    else:
+    try:
+        import git
+
+        repo = git.Repo(__file__, search_parent_directories=True)
+        branch_name = repo.active_branch.name
+        if branch_name == default_branch_name:
+            return f"{branch_name:s}-{repo.head.commit.hexsha[:8]:s}"
         return branch_name
+    except Exception:
+        return os.environ.get("JDLUC_GIT_VERSION", "unknown")
 
 
 @functools.cache
 def get_git_remote_url(default_remote_name: str = "origin") -> str:
-    repo = git.Repo(__file__, search_parent_directories=True)
-    (remote,) = (
-        remote for remote in repo.remotes if remote.name == default_remote_name
-    )
-    return next(iter(remote.urls))
+    try:
+        import git
+
+        repo = git.Repo(__file__, search_parent_directories=True)
+        (remote,) = (r for r in repo.remotes if r.name == default_remote_name)
+        return next(iter(remote.urls))
+    except Exception:
+        return os.environ.get("JDLUC_GIT_REMOTE_URL", "unknown")
 
 
 def get_utc_timestamp() -> str:
