@@ -1,8 +1,8 @@
 from jdluc import cache_key
 
 
-def test_cache_key_matches_a_key_that_exists_in_the_bucket() -> None:
-    # emit.workflow(tile_id="20N_090W") at version=2: the scratch store the 2 Oct 2026 run wrote.
+def test_cache_key_is_stable() -> None:
+    # emit.workflow(tile_id="20N_090W") at version=2, as existing scratch roots hold it.
     assert (
         cache_key.cache_key(
             module="jdluc.emit",

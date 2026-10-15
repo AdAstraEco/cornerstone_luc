@@ -7,7 +7,7 @@ from jdluc.config import Config
 
 
 def get_unit_test_config() -> Config:
-    """Every field empty, so a unit test that reaches for a root fails rather than touching a bucket."""
+    """Every field empty, so a unit test that reaches for a root fails rather than touching real storage."""
     types = typing.get_type_hints(Config)
     empty = {field.name: types[field.name]() for field in dataclasses.fields(Config)}
     return Config(**{**empty, "number_of_dask_workers": 2})

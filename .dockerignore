@@ -1,20 +1,17 @@
-# Keep the build context lean. See spike/Dockerfile.
+# Keep the build context lean.
 
-# No git history in the runtime image: storage.py's cache key now uses func.__module__,
-# not a git.Repo() lookup, so .git is no longer needed at runtime.
+# Caching and provenance need no .git (see storage.py, utils.get_git_version).
 .git/
 
-# The host venv must not shadow the image's uv-synced /app/.venv.
+# A host venv must not shadow the one built inside the image.
 .venv/
 
-# Exact-patch pin (e.g. 3.14.5) the base image's uv can't fetch; requires-python (>=3.14,<3.15)
-# is satisfied by the base image's own 3.14.x, so let uv use that.
+# Exact-patch pin (e.g. 3.14.5) a base image's uv may not fetch; requires-python (>=3.14,<3.15)
+# is satisfied by any 3.14.x, so let uv use the base image's own.
 .python-version
 
-# Local secrets: pods get their .env from a mounted k8s Secret at runtime, never baked in.
-# This MUST also cover infra/cloud.env (API keys) and infra/cluster.env (cluster identifiers),
-# or `COPY . .` would bake them into the shared image. `*.env` matches those but not the
-# `*.env.example` templates, which stay.
+# Secrets: supply .env at runtime, never bake it into the image. `*.env` matches any env file
+# but not the `*.env.example` templates, which stay.
 .env
 **/*.env
 

@@ -13,7 +13,7 @@ __pycache__/
 
 # Env
 .env
-# Cloud/infra config with real values; the infra/*.env.example templates stay tracked.
+# Env files with real values; the *.env.example templates stay tracked.
 infra/*.env
 
 .cache/

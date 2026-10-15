@@ -72,8 +72,8 @@ def save_remote_url_to_local_path(
             return
 
 
-# These stamp provenance into ingested COG metadata. In a container the source tree has no
-# .git and the git binary may be absent, so import git lazily and fall back to build-time env
+# These stamp provenance into ingested COG metadata. An installed copy of the package may have
+# no .git and no git binary, so import git lazily and fall back to the environment
 # (JDLUC_GIT_*) then a sentinel on ANY failure -- never crash ingest over a provenance tag.
 # (GitPython's top-level import itself raises when the git executable is missing, so the
 # import must live inside the try.)

@@ -266,8 +266,8 @@ def main(
 # --- AOI mosaic (read-time VRT over the per-tile COGs) -----------------------------------------
 # The per-tile COGs share the GLAD 10-degree grid, so an AOI-wide view is a *virtual* mosaic: a tiny
 # VRT that references the tiles by GDAL path and is read lazily. We build the VRT XML by hand (pure
-# rasterio + stdlib) because the image ships GDAL only as the rasterio/rioxarray wheels -- no
-# `gdalbuildvrt` CLI, no `osgeo` -- and materialising a full mosaic would blow the pod's memory.
+# rasterio + stdlib) so the GDAL inside the rasterio/rioxarray wheels suffices -- no
+# `gdalbuildvrt` CLI, no `osgeo` -- and because materialising a full mosaic would not fit in memory.
 
 _NUMPY_TO_GDAL_DTYPE = {"float32": "Float32"}
 

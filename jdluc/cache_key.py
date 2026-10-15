@@ -1,9 +1,8 @@
 """The scratch-cache key: the recipe ``storage`` hashes an artifact's identity with.
 
 A pure function with no third-party imports, kept out of ``storage`` (which pulls in pandas and
-xarray) so it stays cheap to import and easy to test. ``cache_key_test.py`` pins a key that
-exists in the bucket: changing this recipe changes every key and so orphans every cached
-artifact.
+xarray) so it stays cheap to import and easy to test. ``cache_key_test.py`` pins one key:
+changing this recipe changes every key and so orphans every already-cached artifact.
 """
 
 import collections.abc

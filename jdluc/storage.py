@@ -261,8 +261,8 @@ def get_cache_decorator(
             bound.apply_defaults()
             ignored = set(ignored_args or ())
             # func.__module__ (e.g. "jdluc.emit") replaces a former git.Repo()-relative
-            # file path: identical string for in-package modules, but no .git needed at
-            # runtime (so the image can drop it).
+            # file path: identical string for in-package modules, but needs no .git, so
+            # caching works from an installed copy of the package too.
             hash_key = cache_key.cache_key(
                 module=func.__module__,
                 qualname=func.__qualname__,
