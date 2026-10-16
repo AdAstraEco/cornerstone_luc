@@ -49,12 +49,14 @@ spec:
       - name: derive-deliverables
         value: crop-class-emissions
 
-  # Every pod runs on the worker pool unless its template says otherwise
+  # Every pod runs on the worker spot pool unless its template says otherwise. Spot nodes can be
+  # reclaimed mid-task, failing the pod; `argo retry` resumes from the cache.
   templateDefaults:
     nodeSelector:
-      cloud.google.com/gke-nodepool: WORKER-NODE-POOL
+      cloud.google.com/gke-nodepool: WORKER-SPOT-NODE-POOL
     tolerations:
       - { key: WORKER-POOL-TAINT, operator: Equal, value: "true", effect: NoSchedule }
+      - { key: cloud.google.com/gke-spot, operator: Equal, value: "true", effect: NoSchedule }
 
   templates:
     - name: cornerstone
@@ -221,7 +223,7 @@ spec:
       inputs: { parameters: [{ name: tile-id }] }
       activeDeadlineSeconds: 14400
       nodeSelector:
-        cloud.google.com/gke-nodepool: POWER-NODE-POOL
+        cloud.google.com/gke-nodepool: POWER-SPOT-NODE-POOL
       container:
         image: *image
         command: [python, -m, orchestration, compute]
