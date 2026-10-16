@@ -384,6 +384,11 @@ def build_vrt_xml(
     return ElementTree.tostring(root, encoding="unicode")
 
 
+# Far above float64 rounding (~1e-16), far below any real difference in resolution: across a
+# 40,000-pixel tile, pixel sizes this close drift apart by under a thousandth of a pixel
+PIXEL_SIZE_REL_TOL = 1e-9
+
+
 def mosaic(source_uris: collections.abc.Sequence[str], output_uri: str) -> str:
     """Write a read-time VRT over the per-tile emission COGs in ``source_uris`` to ``output_uri``.
 
@@ -413,18 +418,17 @@ def mosaic(source_uris: collections.abc.Sequence[str], output_uri: str) -> str:
                 dataset.nodata,
             )
             names = tuple(name or "" for name in dataset.descriptions)
-            signature = (
-                pixel_x,
-                pixel_y,
-                crs_wkt,
-                dtype,
-                _nodata_token(no_data),
-                names,
-            )
-            if baseline is None:
+            signature = (crs_wkt, dtype, _nodata_token(no_data), names)
+            if meta is None:
                 baseline = signature
                 meta = (pixel_x, pixel_y, crs_wkt, dtype, no_data, names)
-            elif signature != baseline:
+            elif signature != baseline or not (
+                # NB: pixel sizes are compared to within float rounding, not exactly. A tile's
+                # transform is derived from its coordinates, so the same 0.00025 degree pixel
+                # comes out as 0.00025 for one tile and 0.00025000000000000006 for the next
+                math.isclose(pixel_x, meta[0], rel_tol=PIXEL_SIZE_REL_TOL)
+                and math.isclose(pixel_y, meta[1], rel_tol=PIXEL_SIZE_REL_TOL)
+            ):
                 raise ValueError(
                     f"mosaic: {uri} does not share the grid/schema of {present[0]}"
                 )
