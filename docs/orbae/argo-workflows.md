@@ -51,7 +51,7 @@ The bucket is set **only** in the Secrets. To point a run at a different bucket,
 
 ## The DAG
 
-Each run covers one country (`iso`):
+Each run covers its `scope`: one country, or `world` for every country (see *Running every country*):
 
 ```
 plan -+-> ingest-world[dataset] -------------------------+-> compute[tile] -+-> trace
@@ -63,7 +63,7 @@ plan -+-> ingest-world[dataset] -------------------------+-> compute[tile] -+-> 
 | ------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------- | --------- |
 | `plan`                          | 1                        | `python -m orchestration plan ISO`: ingests the boundaries if absent, then writes the JSON lists every fan-out loops over       | no keys   |
 | `ingest-world`                  | 1 per dataset            | `jdluc/ingest.py NAME --backfill`: climate zones, plus MAPSPAM and FAOSTAT (statistical) or NASS (jurisdictional direct)        | with keys |
-| `ingest-tiles`                  | 1 per dataset × tile     | `jdluc/ingest.py NAME ISO --modulus=N --residues=i`: one dataset on one tile                                                    | with keys |
+| `ingest-tiles`                  | 1 per dataset × tile     | `python -m orchestration ingest-tile --dataset=NAME --tile-id=T`: one dataset on one tile                                       | with keys |
 | `ingest-tiles-allowed-failures` | 1 per dataset × tile     | The same, for the datasets in `allow-failures`                                                                                  | with keys |
 | `compute`                       | 1 per tile               | `python -m orchestration compute`: harmonize (from the warm cache) → emit → attribute, for each country the tile touches        | no keys   |
 | `trace`                         | 1                        | `python -m orchestration trace`: `trace.workflow` over the country, the cross-tile merge, written as the emissions-factor table | no keys   |
@@ -75,7 +75,7 @@ Every step runs a CLI from the image directly, with no shell scripting around it
 
 **Ingest runs one pod per dataset and tile, and fails loudly by default.** The tiles of a country run side by side, which a large country or a global run needs. A dataset behind one global download (GPW livestock, Liao) would fetch it once per pod; setting `SOURCE_CACHE_ROOT` in the Secrets shares those downloads between pods. Already-ingested tiles are skipped, so a warm rerun is quick. A failed tile fails its pod, and that fails the run: compute's `--ignore-missing-tiles` would otherwise turn a missing tile into an all-nodata band without complaint. The exception is the datasets in the `allow-failures` parameter, by default only `DESCALS_OIL_PALM`, which is published only where oil palm was found, so most tiles have none. They run as `ingest-tiles-allowed-failures`, and compute runs whether or not that step fails; its failed tiles show as failed pods in `argo get`. The dataset list is ours, not upstream's: see `orchestration/plan.py` for why, and add to it when upstream starts reading a new dataset.
 
-**The tile list is derived, never typed in.** `plan` ingests the World Bank boundaries itself (a no-op once present), because the tiles are read off them. It then lists the tiles the country's boundary touches, the same derivation upstream's CLIs use, each with the `--modulus` and `--residues` that select it alone. Each ingest pod passes those to upstream's ingest CLI, so the pods and the CLI can't disagree about which tile is which. An earlier version took a hand-typed tile count, and nothing checked it against the country.
+**The tile list is derived, never typed in.** `plan` ingests the World Bank boundaries itself (a no-op once present), because the tiles are read off them. It then lists the tiles the country's boundary touches, the same derivation upstream's CLIs use, and each ingest pod is given its tile by id. An earlier version took a hand-typed tile count, and nothing checked it against the country.
 
 **`trace` was called `reduce`** until it was renamed after the upstream stage it runs. Images from then on have no `reduce` subcommand, so the workflow must name the task `trace`.
 
@@ -118,7 +118,7 @@ You need the `argo` and `kubectl` CLIs, a kube context for the cluster (through 
 
 ```bash
 argo --context "$KUBE_CONTEXT" -n argo submit cornerstone-workflow.yaml \
-  -p iso=CIV -p derive-export=cog -p derive-deliverables=crop-class-emissions \
+  -p scope=CIV -p derive-export=cog -p derive-deliverables=crop-class-emissions \
   --generate-name cornerstone-civ-
 ```
 
@@ -137,7 +137,7 @@ The Argo UI shows the same information. Ask the platform team for its address.
 
 ### Parameters
 
-- **`iso`:** one ISO 3166 alpha-3 code. `orchestration` accepts several countries, but the workflow passes a single value.
+- **`scope`:** one ISO 3166 alpha-3 code, or `world` for every country. `orchestration` accepts several countries, but the workflow passes a single value.
 - **`allow-failures`:** a comma-separated list of tiled datasets whose failed tiles don't fail the run, by default `DESCALS_OIL_PALM`.
 - **`methodology`:** `STATISTICAL` (the default) or `JURISDICTIONAL_DIRECT`, which is US-only.
 - **`emit-export`:** `cog` (the default), `zarr` or `none`: how to write emit's `cie-emissions`.
@@ -150,14 +150,25 @@ Paths are relative to `EXPORT_ROOT`:
 
 | Step                | Writes                                                      |
 | ------------------- | ----------------------------------------------------------- |
-| `trace`             | `emissions-factors/{iso}-{methodology}.parquet`             |
+| `trace`             | `emissions-factors/{scope}-{methodology}.parquet`           |
 | `export-tiles-cog`  | `{deliverable}/{tile}.tif`, e.g. `cie-emissions/{tile}.tif` |
 | `export-tiles-zarr` | `{deliverable}/{tile}.zarr`                                 |
-| `mosaic`            | `mosaics/{deliverable}-{iso}.vrt`                           |
+| `mosaic`            | `mosaics/{deliverable}-{scope}.vrt`                         |
 
 Each deliverable has its own folder. Files at the top level of `EXPORT_ROOT`, or a `mosaics/{iso}.vrt`, come from images older than `91efe40` and are superseded.
 
 Intermediate results (the ingest cache and scratch zarrs) stay under `INGEST_ROOT` and `SCRATCH_ROOT`.
+
+## Running every country
+
+`-p scope=world` runs every country the pipeline produces factors for, over every GNW tile, as `--backfill` does locally:
+
+```bash
+argo --context "$KUBE_CONTEXT" -n argo submit cornerstone-workflow.yaml \
+  -p scope=world --generate-name cornerstone-world-
+```
+
+The workflow's `parallelism` and `activeDeadlineSeconds` are sized for one country. Raise them in the copy you submit this from.
 
 ## What to expect
 
@@ -228,6 +239,6 @@ The highmem pool the compute pods use carries a `NoSchedule` taint, shared with 
 - **Deadlines.** A cold `ingest-tiles` needed more than 3h without pd-ssd, and the `cie-emissions` COG export came within 6 minutes of its 3h. Re-measure with pd-ssd before choosing new limits.
 - **Sizes.** The workflow's sizes (*Pod sizing* above) have not been measured at scale, and the per-tile ingest pods have not been timed.
 - **Output versioning.** Every deliverable is written at a fixed path, so a rerun overwrites the last. The emissions-factor table especially wants a version (data version, commit or run) in its path before results are shared.
-- **Several countries per run.**
+- **Several countries per run.** Either one country or `world`, for now.
 - **Ingest versioning.** `INGEST_ROOT` isn't keyed by source-dataset version, and mutable sources (Dataverse, GFW) aren't pinned, so a re-ingest isn't guaranteed to reproduce an earlier one.
 - **Storage retention.** No lifecycle rules are set on `SCRATCH_ROOT` yet (see *Design choices*).

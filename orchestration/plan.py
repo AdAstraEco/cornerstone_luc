@@ -8,7 +8,6 @@ and ``usda_nass_quickstats.load`` read the ingest root directly and never ingest
 tables appear here by name. When upstream starts reading a new dataset, add it here.
 """
 
-import dataclasses
 import enum
 import json
 import logging
@@ -50,20 +49,16 @@ METHODOLOGY_TO_HARMONIZED_DATASET_NAMES = {
 }
 
 
+# The scope of a run over every country and GNW tile, as jdluc's `--backfill`; also what its
+# run-wide outputs are named, in place of every country's code joined
+WORLD = "world"
+
+
 class Step(enum.StrEnum):
     """A step whose per-tile output can be exported as deliverables."""
 
     EMIT = "emit"
     DERIVE = "derive"
-
-
-@dataclasses.dataclass(frozen=True)
-class TileShard:
-    """A tile, with the ``--modulus``/``--residues`` pair that selects it alone in jdluc's CLIs."""
-
-    modulus: int
-    residue: int
-    tile_id: str
 
 
 def get_dataset_names(
@@ -86,17 +81,44 @@ def get_dataset_names(
     )
 
 
-def get_tile_shards(iso_3166s: tuple[str, ...]) -> list[TileShard]:
-    # Sorted, as `utils.iter_sharded` sorts, so that residue i selects exactly the i-th tile
-    tile_ids = sorted(
-        worldbank_jurisdictions.get_ten_degree_tile_ids_for_iso_3166s(
-            iso_3166s=iso_3166s
+def scope_str(s: str) -> str:
+    """One element of a run's scope: an ISO 3166 alpha-3 code, or ``world``."""
+    return s if s == WORLD else worldbank_jurisdictions.iso_3166_str(s=s)
+
+
+def is_world(scope: tuple[str, ...]) -> bool:
+    assert scope, "the scope names no country"
+    assert scope == (WORLD,) or WORLD not in scope, (
+        f"{scope=} mixes {WORLD} with countries"
+    )
+    return scope == (WORLD,)
+
+
+def get_iso_3166s(scope: tuple[str, ...]) -> tuple[str, ...]:
+    """The scope's countries: those named, or for ``world`` every country, as jdluc's
+    ``--backfill`` reads them."""
+    return tuple(
+        sorted(
+            worldbank_jurisdictions.get_all_iso_3166s() if is_world(scope) else scope
         )
     )
-    return [
-        TileShard(modulus=len(tile_ids), residue=residue, tile_id=tile_id)
-        for residue, tile_id in enumerate(tile_ids)
-    ]
+
+
+def get_name(scope: tuple[str, ...]) -> str:
+    """What the run's run-wide outputs (its mosaics and emissions-factor table) are named."""
+    return WORLD if is_world(scope) else "-".join(sorted(scope))
+
+
+def get_tile_ids(scope: tuple[str, ...]) -> list[str]:
+    """The tiles the scope's countries touch, or for ``world`` every GNW tile, as jdluc's
+    ``--backfill`` reads them: tiles no country touches included."""
+    return sorted(
+        tiling.GLOBAL_NATURE_WATCH_TILE_IDS
+        if is_world(scope)
+        else worldbank_jurisdictions.get_ten_degree_tile_ids_for_iso_3166s(
+            iso_3166s=get_iso_3166s(scope=scope)
+        )
+    )
 
 
 def get_exports(
@@ -148,11 +170,14 @@ def write_plan(
     derive_deliverables: tuple[str, ...],
     derive_export: export.Format | None,
     emit_export: export.Format | None,
-    iso_3166s: tuple[str, ...],
     methodology: attribute.Methodology,
     output_dir: str,
+    scope: tuple[str, ...],
 ) -> None:
     """Write each list the workflow loops over to ``output_dir``, as ``<task>.json``.
+
+    The run covers ``scope``: one or more countries, or ``world`` for every country and GNW
+    tile.
 
     ``allow_failures`` names ten-degree datasets whose failed tiles must not stop the run.
     Their units go to their own list, so that the workflow can run them as a task that
@@ -175,12 +200,12 @@ def write_plan(
     )
 
     ingest_boundaries()
-    shards = get_tile_shards(iso_3166s=iso_3166s)
+    tile_ids = get_tile_ids(scope=scope)
     # One flat list of (dataset, tile), so that the workflow needs no nested loop
     ingest_units = [
-        {"dataset": name.name, **dataclasses.asdict(shard)}
+        {"dataset": name.name, "tile_id": tile_id}
         for name in tiled
-        for shard in shards
+        for tile_id in tile_ids
     ]
     task_to_items: dict[str, list[object]] = {
         "ingest-world": [
@@ -194,18 +219,18 @@ def write_plan(
         "ingest-tiles-allowed-failures": [
             u for u in ingest_units if u["dataset"] in allow_failures
         ],
-        "tiles": [dataclasses.asdict(shard) for shard in shards],
+        "tiles": [{"tile_id": tile_id} for tile_id in tile_ids],
         **{
             f"export-tiles-{format!s}": [
                 {
                     "deliverable": name,
                     "format": str(format),
                     "step": str(step),
-                    "tile_id": shard.tile_id,
+                    "tile_id": tile_id,
                 }
                 for step, name, step_format in exports
                 if step_format == format
-                for shard in shards
+                for tile_id in tile_ids
             ]
             for format in export.Format
         },

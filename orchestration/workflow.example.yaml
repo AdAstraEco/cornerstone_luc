@@ -4,10 +4,11 @@
 # and image registry. Replace every UPPER-CASE placeholder below. docs/orbae/argo-workflows.md
 # describes the setup: the image, the two Secrets and the service account.
 #
-#   argo submit workflow.example.yaml -p iso=HND --generate-name cornerstone-hnd-
+#   argo submit workflow.example.yaml -p scope=HND --generate-name cornerstone-hnd-
+#   argo submit workflow.example.yaml -p scope=world --generate-name cornerstone-world-
 #
-# Each task runs one CLI from the image: `python -m orchestration <task>`, or jdluc's own ingest
-# CLI. `plan` writes the lists every fan-out loops over, so the workflow itself needs no
+# Each task runs one CLI from the image: `python -m orchestration <task>`, or for ingest-world
+# jdluc's own ingest CLI. `plan` writes the lists every fan-out loops over, so the workflow itself needs no
 # expressions, nested loops or shell scripting. A step that exports nothing gets empty lists,
 # and Argo skips a task with nothing to loop over.
 #
@@ -22,13 +23,14 @@ metadata:
 spec:
   entrypoint: cornerstone
   serviceAccountName: argo-workflow
-  # Backstops against a runaway fan-out: at most 25 pods at once, and 6 hours for the whole run
+  # Backstops against a runaway fan-out: at most 25 pods at once, and 6 hours for the whole run.
+  # Sized for one country: raise both in the copy a scope=world run is submitted from
   parallelism: 25
   activeDeadlineSeconds: 21600
   arguments:
     parameters:
-      # The run's country: one ISO 3166 alpha-3 code
-      - name: iso
+      # The run's country, as one ISO 3166 alpha-3 code, or world for every country and GNW tile
+      - name: scope
       # STATISTICAL or JURISDICTIONAL_DIRECT (the latter is US-only)
       - name: methodology
         value: STATISTICAL
@@ -77,8 +79,7 @@ spec:
             arguments: &ingest-tile-arguments
               parameters:
                 - { name: dataset, value: "{{item.dataset}}" }
-                - { name: modulus, value: "{{item.modulus}}" }
-                - { name: residue, value: "{{item.residue}}" }
+                - { name: tile-id, value: "{{item.tile_id}}" }
 
           # Failed tiles here stay visible as failed pods, but compute runs regardless
           - name: ingest-tiles-allowed-failures
@@ -132,7 +133,7 @@ spec:
         image: &image REGION-docker.pkg.dev/PROJECT/REPOSITORY/cornerstone:COMMIT-SHA
         command: [python, -m, orchestration, plan]
         args:
-          - "{{workflow.parameters.iso}}"
+          - "{{workflow.parameters.scope}}"
           - "--methodology={{workflow.parameters.methodology}}"
           - --output-dir=/plan
           - "--allow-failures={{workflow.parameters.allow-failures}}"
@@ -194,16 +195,14 @@ spec:
     # One dataset on one tile. Room for a global source download (GPW livestock, ~5 GB) plus
     # one tile staged uncompressed for its COG (Liao, ~55 GB)
     - name: ingest-tile
-      inputs: { parameters: [{ name: dataset }, { name: modulus }, { name: residue }] }
+      inputs: { parameters: [{ name: dataset }, { name: tile-id }] }
       activeDeadlineSeconds: 10800
       container:
         image: *image
-        command: [python, jdluc/ingest.py]
+        command: [python, -m, orchestration, ingest-tile]
         args:
-          - "{{inputs.parameters.dataset}}"
-          - "{{workflow.parameters.iso}}"
-          - "--modulus={{inputs.parameters.modulus}}"
-          - "--residues={{inputs.parameters.residue}}"
+          - "--dataset={{inputs.parameters.dataset}}"
+          - "--tile-id={{inputs.parameters.tile-id}}"
         env: *tmpdir-env
         resources: *light-resources
         volumeMounts: *mounts
@@ -227,7 +226,7 @@ spec:
         image: *image
         command: [python, -m, orchestration, compute]
         args:
-          - "{{workflow.parameters.iso}}"
+          - "{{workflow.parameters.scope}}"
           - "--methodology={{workflow.parameters.methodology}}"
           - "--tile-id={{inputs.parameters.tile-id}}"
         env: *tmpdir-env
@@ -239,14 +238,14 @@ spec:
         - &nokeys { name: cloud-env, secret: { secretName: cornerstone-env-nokeys } }
         - *localtmp-20
 
-    # The cross-tile merge over the country; writes emissions-factors/{iso}-{methodology}.parquet
+    # The cross-tile merge over the scope; writes emissions-factors/{scope}-{methodology}.parquet
     - name: trace
       activeDeadlineSeconds: 3600
       container:
         image: *image
         command: [python, -m, orchestration, trace]
         args:
-          - "{{workflow.parameters.iso}}"
+          - "{{workflow.parameters.scope}}"
           - "--methodology={{workflow.parameters.methodology}}"
         env: *tmpdir-env
         resources: *light-resources
@@ -293,7 +292,7 @@ spec:
         volumeMounts: *mounts
       volumes: [*nokeys, *localtmp-20]
 
-    # Writes mosaics/{deliverable}-{iso}.vrt over the country's COGs of one deliverable
+    # Writes mosaics/{deliverable}-{scope}.vrt over the scope's COGs of one deliverable
     - name: mosaic
       inputs: { parameters: [{ name: deliverable }] }
       activeDeadlineSeconds: 3600
@@ -301,7 +300,7 @@ spec:
         image: *image
         command: [python, -m, orchestration, mosaic]
         args:
-          - "{{workflow.parameters.iso}}"
+          - "{{workflow.parameters.scope}}"
           - "--deliverable={{inputs.parameters.deliverable}}"
         env: *tmpdir-env
         resources:
