@@ -113,7 +113,7 @@ assert set(POOLED_COMPONENTS) == set(emit.EmissionComponent) - {
 }
 
 
-@storage.cache_to_zarr(version=0)
+@storage.cache_to_zarr(version=2)
 def get_downscaled_luc_emissions(tile_id: str) -> xarray.Dataset:
     logger.info("Computing emissions on the GLAD grid")
     luc_and_emissions = geo.exact_merge(
@@ -125,8 +125,8 @@ def get_downscaled_luc_emissions(tile_id: str) -> xarray.Dataset:
             tile_resolution=tiling.TileResolution.GLAD,
         ),
         # NB: this should call the harmonize workflow with identical args and hit
-        # the cache from the preceding call
-        emit.workflow(tile_id=tile_id),
+        # the cache from the preceding call; only the `cie-` bands are read
+        emit.derive_from_cie(dset=emit.workflow(tile_id=tile_id)),
     )
 
     logger.info("Splitting emissions by component per span")
