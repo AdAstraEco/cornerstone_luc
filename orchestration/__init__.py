@@ -11,6 +11,9 @@ cache key is passed straight through to jdluc, with jdluc's own defaults.
       --tile-id=10N_090W
   python -m orchestration mosaic HND --deliverable=cie-emissions
 
+Each subcommand that takes countries takes `--backfill` in their place, for every country and
+GNW tile, as jdluc's CLIs do.
+
 Ingest needs no wrapper: the workflow runs jdluc's own CLI for it.
 `workflow.example.yaml` shows how the workflow calls each subcommand; the deployed copy,
 which names our cluster, is kept outside the repo. See docs/orbae/argo-workflows.md.

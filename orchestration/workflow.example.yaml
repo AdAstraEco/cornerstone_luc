@@ -5,6 +5,7 @@
 # describes the setup: the image, the two Secrets and the service account.
 #
 #   argo submit workflow.example.yaml -p iso=HND --generate-name cornerstone-hnd-
+#   argo submit workflow.example.yaml -p iso=--backfill --generate-name cornerstone-world-
 #
 # Each task runs one CLI from the image: `python -m orchestration <task>`, or jdluc's own ingest
 # CLI. `plan` writes the lists every fan-out loops over, so the workflow itself needs no
@@ -22,12 +23,16 @@ metadata:
 spec:
   entrypoint: cornerstone
   serviceAccountName: argo-workflow
-  # Backstops against a runaway fan-out: at most 25 pods at once, and 6 hours for the whole run
+  # Backstops against a runaway fan-out: at most 25 pods at once, and 6 hours for the whole run.
+  # A backfill needs far longer: raise the deadline in the copy it is submitted from
+  # (docs/orbae/argo-workflows.md, "Running a global backfill")
   parallelism: 25
   activeDeadlineSeconds: 21600
   arguments:
     parameters:
-      # The run's country: one ISO 3166 alpha-3 code
+      # The run's country: one ISO 3166 alpha-3 code, or --backfill for every country and GNW
+      # tile. Each CLI takes it as its positional argument, where argparse reads --backfill as
+      # the flag of that name
       - name: iso
       # STATISTICAL or JURISDICTIONAL_DIRECT (the latter is US-only)
       - name: methodology
@@ -239,7 +244,8 @@ spec:
         - &nokeys { name: cloud-env, secret: { secretName: cornerstone-env-nokeys } }
         - *localtmp-20
 
-    # The cross-tile merge over the country; writes emissions-factors/{iso}-{methodology}.parquet
+    # The cross-tile merge over the country; writes emissions-factors/{iso}-{methodology}.parquet,
+    # or world-{methodology}.parquet for a backfill
     - name: trace
       activeDeadlineSeconds: 3600
       container:
@@ -293,7 +299,8 @@ spec:
         volumeMounts: *mounts
       volumes: [*nokeys, *localtmp-20]
 
-    # Writes mosaics/{deliverable}-{iso}.vrt over the country's COGs of one deliverable
+    # Writes mosaics/{deliverable}-{iso}.vrt over the country's COGs of one deliverable, or
+    # mosaics/{deliverable}-world.vrt for a backfill
     - name: mosaic
       inputs: { parameters: [{ name: deliverable }] }
       activeDeadlineSeconds: 3600

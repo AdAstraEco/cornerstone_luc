@@ -24,7 +24,10 @@ NO_EXPORT = "none"
 
 
 def compute(
-    iso_3166s: tuple[str, ...], methodology: attribute.Methodology, tile_id: str
+    backfill: bool,
+    iso_3166s: tuple[str, ...],
+    methodology: attribute.Methodology,
+    tile_id: str,
 ) -> None:
     """harmonize -> emit -> attribute for one tile, in one process.
 
@@ -50,7 +53,10 @@ def compute(
     }[methodology]
     # A tile can straddle several of the run's countries; trace sums exactly these
     # per-(tile, country) partials, so compute has to produce all of them
-    for iso_3166 in get_iso_3166s_touching_tile(iso_3166s=iso_3166s, tile_id=tile_id):
+    for iso_3166 in get_iso_3166s_touching_tile(
+        iso_3166s=plan.get_iso_3166s(backfill=backfill, iso_3166s=iso_3166s),
+        tile_id=tile_id,
+    ):
         logger.info(f"attribute {methodology.name:s} {tile_id=:s} {iso_3166=:s}")
         workflow_for_tile(
             commodity_names=attribute.get_commodity_names(methodology=methodology),
@@ -73,14 +79,15 @@ def get_iso_3166s_touching_tile(
 
 
 def trace_countries(
-    iso_3166s: tuple[str, ...], methodology: attribute.Methodology
+    backfill: bool, iso_3166s: tuple[str, ...], methodology: attribute.Methodology
 ) -> None:
     """The cross-tile merge, written as the emissions-factor table. Cheap only if compute ran
     with the same methodology."""
     uri = trace.export_workflow(
         commodity_names=attribute.get_commodity_names(methodology=methodology),
-        iso_3166s=tuple(sorted(iso_3166s)),
+        iso_3166s=plan.get_iso_3166s(backfill=backfill, iso_3166s=iso_3166s),
         methodology=methodology,
+        name=plan.get_name(backfill=backfill, iso_3166s=iso_3166s),
     )
     logger.info(f"exported emissions factors to {uri:s}")
 
@@ -101,12 +108,15 @@ def export_tile(
     logger.info(f"exported {step!s} {deliverable=:s} to {uri:s}")
 
 
-def mosaic(deliverable: str, iso_3166s: tuple[str, ...]) -> None:
+def mosaic(backfill: bool, deliverable: str, iso_3166s: tuple[str, ...]) -> None:
     """One VRT over the run's COGs of one deliverable."""
     uri = export.mosaic_workflow(
         deliverable_name=deliverable,
-        name="-".join(sorted(iso_3166s)),
-        tile_ids=[s.tile_id for s in plan.get_tile_shards(iso_3166s=iso_3166s)],
+        name=plan.get_name(backfill=backfill, iso_3166s=iso_3166s),
+        tile_ids=[
+            s.tile_id
+            for s in plan.get_tile_shards(backfill=backfill, iso_3166s=iso_3166s)
+        ],
     )
     logger.info(f"mosaicked {deliverable=:s} to {uri:s}")
 
@@ -131,11 +141,17 @@ def main() -> int:
         subparser.set_defaults(func=func)
         return subparser
 
+    # As in jdluc's CLIs: one or more countries, or --backfill for every country
     def add_iso_3166s(subparser: argparse.ArgumentParser) -> None:
         subparser.add_argument(
             "iso_3166s",
-            nargs=argparse.ONE_OR_MORE,
+            nargs=argparse.ZERO_OR_MORE,
             type=worldbank_jurisdictions.iso_3166_str,
+        )
+        subparser.add_argument(
+            "--backfill",
+            action="store_true",
+            help="every country, and every GNW tile",
         )
 
     def add_methodology(subparser: argparse.ArgumentParser) -> None:

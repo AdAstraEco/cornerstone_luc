@@ -178,13 +178,15 @@ def export_workflow(
     commodity_names: tuple[str, ...],
     iso_3166s: tuple[str, ...],
     methodology: attribute.Methodology,
+    name: str | None = None,
     output_root: str | None = None,
 ) -> str:
     """Write the countries' table from the cached `workflow` to
-    `{EXPORT_ROOT}/emissions-factors/{iso[-iso...]}-{METHODOLOGY}.parquet`; return the URI.
+    `{EXPORT_ROOT}/emissions-factors/{name}-{METHODOLOGY}.parquet`; return the URI.
 
-    The methodology is in the name so the two legs over one set of countries don't overwrite
-    each other.
+    `name` defaults to the countries' codes joined, `iso[-iso...]`; pass one for a set too large
+    to spell out. The methodology is in the name so the two legs over one set of countries don't
+    overwrite each other.
     """
     df = workflow(
         # NB: not a cache-key argument; with the attribute partials warm, this only reads them
@@ -196,7 +198,7 @@ def export_workflow(
     return export.write_table(
         df=df,
         deliverable_name=EMISSIONS_FACTORS,
-        name=f"{'-'.join(iso_3166s):s}-{methodology.name:s}",
+        name=f"{name or '-'.join(iso_3166s):s}-{methodology.name:s}",
         output_root=output_root,
         source_name="jdluc-trace",
     )

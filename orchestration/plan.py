@@ -50,6 +50,11 @@ METHODOLOGY_TO_HARMONIZED_DATASET_NAMES = {
 }
 
 
+# What a backfill's run-wide outputs (its mosaics and emissions-factor table) are named, in
+# place of every country's code joined
+BACKFILL_NAME = "world"
+
+
 class Step(enum.StrEnum):
     """A step whose per-tile output can be exported as deliverables."""
 
@@ -86,10 +91,29 @@ def get_dataset_names(
     )
 
 
-def get_tile_shards(iso_3166s: tuple[str, ...]) -> list[TileShard]:
+def get_iso_3166s(backfill: bool, iso_3166s: tuple[str, ...]) -> tuple[str, ...]:
+    """The run's countries: those named, or with ``backfill`` every country, as jdluc's
+    ``--backfill`` reads it."""
+    assert bool(iso_3166s) ^ backfill, "pass either one-or-more iso_3166s or --backfill"
+    return tuple(
+        sorted(worldbank_jurisdictions.get_all_iso_3166s() if backfill else iso_3166s)
+    )
+
+
+def get_name(backfill: bool, iso_3166s: tuple[str, ...]) -> str:
+    """What the run's run-wide outputs are named."""
+    return BACKFILL_NAME if backfill else "-".join(sorted(iso_3166s))
+
+
+def get_tile_shards(backfill: bool, iso_3166s: tuple[str, ...]) -> list[TileShard]:
+    """The run's tiles. With ``backfill``, every GNW tile, as jdluc's ``--backfill`` reads it,
+    so that ingest's ``--backfill --modulus --residues`` selects the same tile as the plan."""
+    iso_3166s = get_iso_3166s(backfill=backfill, iso_3166s=iso_3166s)
     # Sorted, as `utils.iter_sharded` sorts, so that residue i selects exactly the i-th tile
     tile_ids = sorted(
-        worldbank_jurisdictions.get_ten_degree_tile_ids_for_iso_3166s(
+        tiling.GLOBAL_NATURE_WATCH_TILE_IDS
+        if backfill
+        else worldbank_jurisdictions.get_ten_degree_tile_ids_for_iso_3166s(
             iso_3166s=iso_3166s
         )
     )
@@ -145,6 +169,7 @@ def ingest_boundaries() -> None:
 
 def write_plan(
     allow_failures: tuple[str, ...],
+    backfill: bool,
     derive_deliverables: tuple[str, ...],
     derive_export: export.Format | None,
     emit_export: export.Format | None,
@@ -153,6 +178,8 @@ def write_plan(
     output_dir: str,
 ) -> None:
     """Write each list the workflow loops over to ``output_dir``, as ``<task>.json``.
+
+    The run covers ``iso_3166s``, or with ``backfill`` every country and GNW tile.
 
     ``allow_failures`` names ten-degree datasets whose failed tiles must not stop the run.
     Their units go to their own list, so that the workflow can run them as a task that
@@ -175,7 +202,7 @@ def write_plan(
     )
 
     ingest_boundaries()
-    shards = get_tile_shards(iso_3166s=iso_3166s)
+    shards = get_tile_shards(backfill=backfill, iso_3166s=iso_3166s)
     # One flat list of (dataset, tile), so that the workflow needs no nested loop
     ingest_units = [
         {"dataset": name.name, **dataclasses.asdict(shard)}

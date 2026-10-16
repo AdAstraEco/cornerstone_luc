@@ -51,7 +51,7 @@ The bucket is set **only** in the Secrets. To point a run at a different bucket,
 
 ## The DAG
 
-Each run covers one country (`iso`):
+Each run covers one country (`iso`), or every country (`iso=--backfill`; see *Running a global backfill*):
 
 ```
 plan -+-> ingest-world[dataset] -------------------------+-> compute[tile] -+-> trace
@@ -137,7 +137,7 @@ The Argo UI shows the same information. Ask the platform team for its address.
 
 ### Parameters
 
-- **`iso`:** one ISO 3166 alpha-3 code. `orchestration` accepts several countries, but the workflow passes a single value.
+- **`iso`:** one ISO 3166 alpha-3 code, or `--backfill` for every country. `orchestration` accepts several countries, but the workflow passes a single value. Each CLI takes `iso` as its positional argument, and argparse reads the value `--backfill` there as the flag of that name, so the workflow needs no condition to switch between the two.
 - **`allow-failures`:** a comma-separated list of tiled datasets whose failed tiles don't fail the run, by default `DESCALS_OIL_PALM`.
 - **`methodology`:** `STATISTICAL` (the default) or `JURISDICTIONAL_DIRECT`, which is US-only.
 - **`emit-export`:** `cog` (the default), `zarr` or `none`: how to write emit's `cie-emissions`.
@@ -155,9 +155,26 @@ Paths are relative to `EXPORT_ROOT`:
 | `export-tiles-zarr` | `{deliverable}/{tile}.zarr`                                 |
 | `mosaic`            | `mosaics/{deliverable}-{iso}.vrt`                           |
 
-Each deliverable has its own folder. Files at the top level of `EXPORT_ROOT`, or a `mosaics/{iso}.vrt`, come from images older than `91efe40` and are superseded.
+For a backfill, `{iso}` is `world`. Each deliverable has its own folder. Files at the top level of `EXPORT_ROOT`, or a `mosaics/{iso}.vrt`, come from images older than `91efe40` and are superseded.
 
 Intermediate results (the ingest cache and scratch zarrs) stay under `INGEST_ROOT` and `SCRATCH_ROOT`.
+
+## Running a global backfill
+
+`-p iso=--backfill` runs every country, as the local `--backfill` does: the countries are `worldbank_jurisdictions.get_all_iso_3166s()` and the tiles are all 280 of `tiling.GLOBAL_NATURE_WATCH_TILE_IDS`. That tile list is the one jdluc's `--backfill` reads, not the union of the countries' tiles, so that each ingest pod's `--backfill --modulus=280 --residues=i` selects the same tile as the plan. A tile no country touches still runs harmonize and emit, as it does locally, and attributes nothing.
+
+```bash
+argo --context "$KUBE_CONTEXT" -n argo submit cornerstone-workflow-backfill.yaml \
+  -p iso=--backfill --generate-name cornerstone-world-
+```
+
+**Not yet run.** Nothing below has been measured at this scale. Before submitting:
+
+- **Raise the run's deadline.** The workflow's `activeDeadlineSeconds` of 6 hours is a backstop sized for one country. A backfill is about 2,500 ingest pods (9 tiled datasets × 280 tiles), 280 `compute` pods and 280 export pods per exported deliverable, at most 25 at once (`parallelism`). At about an hour per `compute` pod, compute alone is at least 12 waves. Neither field takes a workflow parameter, and `argo submit` has no flag for them, so keep a backfill copy of the deployed workflow with a deadline of several days. Raise `parallelism` there too, if the node pools' quota allows.
+- **Watch the Workflow's size.** Argo keeps every pod's status, and `plan`'s output lists, in the Workflow object, which etcd caps at about 1 MB. About 3,000 nodes may pass that. If the controller reports the object too large, it needs node-status offloading (a persistence database, set up by the platform team), or the run split into regions submitted one after another.
+- **`trace` is one pod over every country**, one at a time, within its 1h deadline. Raise it in the backfill copy if it runs out.
+- **Run nothing else on the bucket at the same time.** A backfill shares every tile with every country run, and two pods writing one cache entry at once can interfere (see *Reruns are cheap*).
+- **Decide storage retention first.** The local global benchmark left about 1.2 TiB of harmonize zarrs alone (`docs/architecture.md`).
 
 ## What to expect
 
@@ -228,6 +245,6 @@ The highmem pool the compute pods use carries a `NoSchedule` taint, shared with 
 - **Deadlines.** A cold `ingest-tiles` needed more than 3h without pd-ssd, and the `cie-emissions` COG export came within 6 minutes of its 3h. Re-measure with pd-ssd before choosing new limits.
 - **Sizes.** The workflow's sizes (*Pod sizing* above) have not been measured at scale, and the per-tile ingest pods have not been timed.
 - **Output versioning.** Every deliverable is written at a fixed path, so a rerun overwrites the last. The emissions-factor table especially wants a version (data version, commit or run) in its path before results are shared.
-- **Several countries per run.**
+- **Several countries per run.** Either one country or all of them, for now.
 - **Ingest versioning.** `INGEST_ROOT` isn't keyed by source-dataset version, and mutable sources (Dataverse, GFW) aren't pinned, so a re-ingest isn't guaranteed to reproduce an earlier one.
 - **Storage retention.** No lifecycle rules are set on `SCRATCH_ROOT` yet (see *Design choices*).
