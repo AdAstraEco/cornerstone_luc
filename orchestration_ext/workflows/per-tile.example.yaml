@@ -11,6 +11,14 @@
 # and image registry. Replace every UPPER-CASE placeholder below. docs/orbae/argo-workflows.md
 # describes the setup: the image, the two Secrets and the service account.
 #
+# Only plan, the exports and mosaic are defined here, run by `python -m orchestration_ext`.
+# ingest-world, ingest-tile, compute and trace are upstream's, called by `templateRef` from
+# the `cornerstone` WorkflowTemplate (orchestration/workflows/cornerstone.example.yaml), so
+# they follow upstream with no copy to keep in step. Install that template first, from the
+# same image, with compute's nodeSelector set to the power pool:
+#
+#   kubectl -n argo apply -f cornerstone.yaml
+#
 #   argo submit per-tile.example.yaml -p scope=HND --generate-name cornerstone-hnd-
 #   argo submit per-tile.example.yaml -p scope=world --generate-name cornerstone-world-
 #
@@ -77,7 +85,7 @@ spec:
             template: plan
 
           - name: ingest-world
-            template: ingest-world
+            templateRef: { name: cornerstone, template: ingest-world }
             depends: plan
             withParam: "{{tasks.plan.outputs.parameters.ingest-world}}"
             arguments: { parameters: [{ name: dataset, value: "{{item}}" }] }
@@ -98,7 +106,7 @@ spec:
           # Both run only if every tile succeeded: a table or a mosaic missing tiles would
           # pass for a whole one
           - name: trace
-            template: trace
+            templateRef: { name: cornerstone, template: trace }
             depends: tile
 
           # One VRT per COG deliverable
@@ -123,7 +131,7 @@ spec:
         tasks:
           # Ingest exits non-zero if its tile fails, which fails the task, and so the tile
           - name: ingest
-            template: ingest-tile
+            templateRef: { name: cornerstone, template: ingest-tile }
             withParam: "{{inputs.parameters.ingests}}"
             arguments: &ingest-tile-arguments
               parameters:
@@ -132,12 +140,12 @@ spec:
 
           # Failed tiles here stay visible as failed pods, but compute runs regardless
           - name: ingest-allowed-failures
-            template: ingest-tile
+            templateRef: { name: cornerstone, template: ingest-tile }
             withParam: "{{inputs.parameters.ingests-allowed-failures}}"
             arguments: *ingest-tile-arguments
 
           - name: compute
-            template: compute
+            templateRef: { name: cornerstone, template: compute }
             depends: ingest && (ingest-allowed-failures || ingest-allowed-failures.Failed)
             arguments: { parameters: [{ name: tile-id, value: "{{inputs.parameters.tile-id}}" }] }
 
@@ -165,7 +173,7 @@ spec:
       activeDeadlineSeconds: 1800
       container:
         image: &image REGION-docker.pkg.dev/PROJECT/REPOSITORY/cornerstone:COMMIT-SHA
-        command: [python, -m, orchestration, plan]
+        command: [python, -m, orchestration_ext, plan]
         args:
           - "{{workflow.parameters.scope}}"
           - "--methodology={{workflow.parameters.methodology}}"
@@ -185,7 +193,7 @@ spec:
           - { name: cloud-env, mountPath: /app/.env, subPath: .env }
           - { name: localtmp, mountPath: /localtmp }
       volumes:
-        - { name: cloud-env, secret: { secretName: cornerstone-env-nokeys } }
+        - &nokeys { name: cloud-env, secret: { secretName: cornerstone-env-nokeys } }
         - &localtmp-20
           name: localtmp
           ephemeral:
@@ -200,90 +208,6 @@ spec:
           - { name: tile-units, valueFrom: { path: /plan/tile-units.json } }
           - { name: mosaics, valueFrom: { path: /plan/mosaics.json } }
 
-    - name: ingest-world
-      inputs: { parameters: [{ name: dataset }] }
-      activeDeadlineSeconds: 5400
-      container:
-        image: *image
-        command: [python, jdluc/ingest.py]
-        args: ["{{inputs.parameters.dataset}}", --backfill]
-        env: *tmpdir-env
-        resources: *light-resources
-        volumeMounts: *mounts
-      volumes:
-        - &keys { name: cloud-env, secret: { secretName: cornerstone-env } }
-        - &localtmp-100
-          name: localtmp
-          ephemeral:
-            volumeClaimTemplate:
-              spec:
-                accessModes: [ReadWriteOnce]
-                storageClassName: premium-rwo
-                resources: { requests: { storage: 100Gi } }
-
-    # One dataset on one tile. Room for a global source download (GPW livestock, ~5 GB) plus
-    # one tile staged uncompressed for its COG (Liao, ~55 GB)
-    - name: ingest-tile
-      inputs: { parameters: [{ name: dataset }, { name: tile-id }] }
-      activeDeadlineSeconds: 10800
-      container:
-        image: *image
-        command: [python, -m, orchestration, ingest-tile]
-        args:
-          - "--dataset={{inputs.parameters.dataset}}"
-          - "--tile-id={{inputs.parameters.tile-id}}"
-        env: *tmpdir-env
-        resources: *light-resources
-        volumeMounts: *mounts
-      volumes:
-        - *keys
-        - name: localtmp
-          ephemeral:
-            volumeClaimTemplate:
-              spec:
-                accessModes: [ReadWriteOnce]
-                storageClassName: premium-rwo
-                resources: { requests: { storage: 150Gi } }
-
-    # harmonize -> emit -> attribute for one tile, from the warm ingest cache, without keys
-    - name: compute
-      inputs: { parameters: [{ name: tile-id }] }
-      activeDeadlineSeconds: 14400
-      nodeSelector:
-        cloud.google.com/gke-nodepool: POWER-SPOT-NODE-POOL
-      container:
-        image: *image
-        command: [python, -m, orchestration, compute]
-        args:
-          - "{{workflow.parameters.scope}}"
-          - "--methodology={{workflow.parameters.methodology}}"
-          - "--tile-id={{inputs.parameters.tile-id}}"
-          # A second line of defence: harmonize would read a missing ingest as nodata
-          - --check-ingests
-          - "--allow-failures={{workflow.parameters.allow-failures}}"
-        env: *tmpdir-env
-        resources:
-          requests: { cpu: "6", memory: 56Gi, ephemeral-storage: 2Gi }
-          limits: { cpu: "8", memory: 56Gi, ephemeral-storage: 8Gi }
-        volumeMounts: *mounts
-      volumes:
-        - &nokeys { name: cloud-env, secret: { secretName: cornerstone-env-nokeys } }
-        - *localtmp-20
-
-    # The cross-tile merge over the scope; writes emissions-factors/{scope}-{methodology}.parquet
-    - name: trace
-      activeDeadlineSeconds: 3600
-      container:
-        image: *image
-        command: [python, -m, orchestration, trace]
-        args:
-          - "{{workflow.parameters.scope}}"
-          - "--methodology={{workflow.parameters.methodology}}"
-        env: *tmpdir-env
-        resources: *light-resources
-        volumeMounts: *mounts
-      volumes: [*nokeys, *localtmp-20]
-
     # Writes {deliverable}/{tile}.tif, staging the bands uncompressed for the COG: ~70 GB for
     # cie-emissions
     - name: export-tile-cog
@@ -292,7 +216,7 @@ spec:
       activeDeadlineSeconds: 10800
       container:
         image: *image
-        command: &export-tile-command [python, -m, orchestration, export-tile]
+        command: &export-tile-command [python, -m, orchestration_ext, export-tile]
         args: &export-tile-args
           - "--step={{inputs.parameters.step}}"
           - "--deliverable={{inputs.parameters.deliverable}}"
@@ -330,7 +254,7 @@ spec:
       activeDeadlineSeconds: 3600
       container:
         image: *image
-        command: [python, -m, orchestration, mosaic]
+        command: [python, -m, orchestration_ext, mosaic]
         args:
           - "{{workflow.parameters.scope}}"
           - "--deliverable={{inputs.parameters.deliverable}}"
