@@ -1,0 +1,266 @@
+# The cornerstone pipeline as an Argo Workflow, one DAG per tile: an example with placeholder
+# names.
+#
+# Per-tile: each tile runs its own ingest -> compute -> exports, so a failed (dataset, tile)
+# ingest stops only its own tile, and every other tile goes on to compute. Use it to backfill
+# while some tiles are broken. trace and mosaic still need every tile, so with any tile
+# failed they don't run, and the run ends Failed. flat.example.yaml runs each stage as one
+# fan-out over every tile instead. docs/orbae/argo-workflows.md compares the two.
+#
+# The deployed copy is kept outside this public repo, because it names our cluster, node pools
+# and image registry. Replace every UPPER-CASE placeholder below. docs/orbae/argo-workflows.md
+# describes the setup: the image, the two Secrets and the service account.
+#
+# Only plan, the exports and mosaic are defined here, run by `python -m orchestration_ext`.
+# ingest-world, ingest-tile, compute and trace are upstream's, called by `templateRef` from
+# the `cornerstone` WorkflowTemplate (orchestration/workflows/cornerstone.example.yaml), so
+# they follow upstream with no copy to keep in step. Install that template first, from the
+# same image, with compute's nodeSelector set to the power pool:
+#
+#   kubectl -n argo apply -f cornerstone.yaml
+#
+#   argo submit per-tile.example.yaml -p scope=HND --generate-name cornerstone-hnd-
+#   argo submit per-tile.example.yaml -p scope=world --generate-name cornerstone-world-
+#
+# `plan` writes, as `tile-units`, one item per tile listing its ingests and exports, which
+# the tile's own DAG loops over. A tile's tasks start once the whole-world datasets are in.
+#
+#   plan ─┬─ ingest-world ─┐
+#         └────────────────┴─ tile[tile] ─┬─ trace
+#                                         └─ mosaic
+#
+#   tile:  ingest ──────────────────┐           ┌─ export-cog
+#          ingest-allowed-failures ─┴─ compute ─┴─ export-zarr
+
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: cornerstone-
+spec:
+  entrypoint: cornerstone
+  serviceAccountName: argo-workflow
+  # Backstops against a runaway fan-out: at most 25 pods at once, and 6 hours for the whole run.
+  # Sized for one country: raise both in the copy a scope=world run is submitted from
+  parallelism: 25
+  activeDeadlineSeconds: 21600
+  arguments:
+    parameters:
+      # The run's country, as one ISO 3166 alpha-3 code, or world for every country and GNW tile
+      - name: scope
+      # STATISTICAL or JURISDICTIONAL_DIRECT (the latter is US-only)
+      - name: methodology
+        value: STATISTICAL
+      # Ten-degree datasets whose failed tiles must not stop the run, comma-separated. Descals
+      # is published only where there is oil palm, and its ingest fails on tiles without any.
+      - name: allow-failures
+        value: DESCALS_OIL_PALM
+      # Each step's export: cog, zarr or none. emit exports cie-emissions; derive exports the
+      # derive-deliverables. Without an export derive does not run, as nothing else reads it.
+      - name: emit-export
+        value: cog
+      - name: derive-export
+        value: none
+      # Comma-separated, of crop-class-emissions, perennial-discounting-comparison and
+      # perennial-debug
+      - name: derive-deliverables
+        value: crop-class-emissions
+
+  # Every pod runs on the worker spot pool unless its template says otherwise. Spot nodes can be
+  # reclaimed mid-task, failing the pod; `argo retry` resumes from the cache.
+  templateDefaults:
+    nodeSelector:
+      cloud.google.com/gke-nodepool: WORKER-SPOT-NODE-POOL
+    tolerations:
+      - { key: WORKER-POOL-TAINT, operator: Equal, value: "true", effect: NoSchedule }
+      - { key: cloud.google.com/gke-spot, operator: Equal, value: "true", effect: NoSchedule }
+
+  templates:
+    - name: cornerstone
+      dag:
+        # A failed task must not stop the scheduling of tasks that wait on its failure, nor a
+        # failed tile the other tiles
+        failFast: false
+        tasks:
+          - name: plan
+            template: plan
+
+          - name: ingest-world
+            templateRef: { name: cornerstone, template: ingest-world }
+            depends: plan
+            withParam: "{{tasks.plan.outputs.parameters.ingest-world}}"
+            arguments: { parameters: [{ name: dataset, value: "{{item}}" }] }
+
+          # Each list in an item reaches the tile's DAG as a JSON string, for it to loop over
+          - name: tile
+            template: tile
+            depends: plan && ingest-world
+            withParam: "{{tasks.plan.outputs.parameters.tile-units}}"
+            arguments:
+              parameters:
+                - { name: tile-id, value: "{{item.tile_id}}" }
+                - { name: ingests, value: "{{item.ingests}}" }
+                - { name: ingests-allowed-failures, value: "{{item.ingests_allowed_failures}}" }
+                - { name: exports-cog, value: "{{item.exports_cog}}" }
+                - { name: exports-zarr, value: "{{item.exports_zarr}}" }
+
+          # Both run only if every tile succeeded: a table or a mosaic missing tiles would
+          # pass for a whole one
+          - name: trace
+            templateRef: { name: cornerstone, template: trace }
+            depends: tile
+
+          # One VRT per COG deliverable
+          - name: mosaic
+            template: mosaic
+            depends: tile
+            withParam: "{{tasks.plan.outputs.parameters.mosaics}}"
+            arguments: { parameters: [{ name: deliverable, value: "{{item}}" }] }
+
+    # One tile's ingest -> compute -> exports. A failed required ingest leaves compute
+    # unscheduled, which fails this tile alone
+    - name: tile
+      inputs:
+        parameters:
+          - name: tile-id
+          - name: ingests
+          - name: ingests-allowed-failures
+          - name: exports-cog
+          - name: exports-zarr
+      dag:
+        failFast: false
+        tasks:
+          # Ingest exits non-zero if its tile fails, which fails the task, and so the tile
+          - name: ingest
+            templateRef: { name: cornerstone, template: ingest-tile }
+            withParam: "{{inputs.parameters.ingests}}"
+            arguments: &ingest-tile-arguments
+              parameters:
+                - { name: dataset, value: "{{item}}" }
+                - { name: tile-id, value: "{{inputs.parameters.tile-id}}" }
+
+          # Failed tiles here stay visible as failed pods, but compute runs regardless
+          - name: ingest-allowed-failures
+            templateRef: { name: cornerstone, template: ingest-tile }
+            withParam: "{{inputs.parameters.ingests-allowed-failures}}"
+            arguments: *ingest-tile-arguments
+
+          - name: compute
+            templateRef: { name: cornerstone, template: compute }
+            depends: ingest && (ingest-allowed-failures || ingest-allowed-failures.Failed)
+            arguments: { parameters: [{ name: tile-id, value: "{{inputs.parameters.tile-id}}" }] }
+
+          # One deliverable of emit or derive on this tile. Both read only emit's cache, warm
+          # after compute
+          - name: export-cog
+            template: export-tile-cog
+            depends: compute
+            withParam: "{{inputs.parameters.exports-cog}}"
+            arguments: &export-tile-arguments
+              parameters:
+                - { name: step, value: "{{item.step}}" }
+                - { name: deliverable, value: "{{item.deliverable}}" }
+                - { name: format, value: "{{item.format}}" }
+                - { name: tile-id, value: "{{inputs.parameters.tile-id}}" }
+
+          - name: export-zarr
+            template: export-tile-zarr
+            depends: compute
+            withParam: "{{inputs.parameters.exports-zarr}}"
+            arguments: *export-tile-arguments
+
+    # Ingests the boundaries if absent, then writes one JSON list per fan-out, and the per-tile list
+    - name: plan
+      activeDeadlineSeconds: 1800
+      container:
+        image: &image REGION-docker.pkg.dev/PROJECT/REPOSITORY/cornerstone:COMMIT-SHA
+        command: [python, -m, orchestration_ext, plan]
+        args:
+          - "{{workflow.parameters.scope}}"
+          - "--methodology={{workflow.parameters.methodology}}"
+          - --output-dir=/plan
+          - "--allow-failures={{workflow.parameters.allow-failures}}"
+          - "--emit-export={{workflow.parameters.emit-export}}"
+          - "--derive-export={{workflow.parameters.derive-export}}"
+          - "--derive-deliverables={{workflow.parameters.derive-deliverables}}"
+        env: &tmpdir-env
+          # Temp files on the pod's own SSD, not the node's boot disk (docs/orbae/gke-disk-io-findings.md)
+          - { name: TMPDIR, value: /localtmp }
+          - { name: CPL_TMPDIR, value: /localtmp }
+        resources: &light-resources
+          requests: { cpu: "2", memory: 24Gi, ephemeral-storage: 2Gi }
+          limits: { cpu: "4", memory: 24Gi, ephemeral-storage: 8Gi }
+        volumeMounts: &mounts
+          - { name: cloud-env, mountPath: /app/.env, subPath: .env }
+          - { name: localtmp, mountPath: /localtmp }
+      volumes:
+        - &nokeys { name: cloud-env, secret: { secretName: cornerstone-env-nokeys } }
+        - &localtmp-20
+          name: localtmp
+          ephemeral:
+            volumeClaimTemplate:
+              spec:
+                accessModes: [ReadWriteOnce]
+                storageClassName: premium-rwo
+                resources: { requests: { storage: 20Gi } }
+      outputs:
+        parameters:
+          - { name: ingest-world, valueFrom: { path: /plan/ingest-world.json } }
+          - { name: tile-units, valueFrom: { path: /plan/tile-units.json } }
+          - { name: mosaics, valueFrom: { path: /plan/mosaics.json } }
+
+    # Writes {deliverable}/{tile}.tif, staging the bands uncompressed for the COG: ~70 GB for
+    # cie-emissions
+    - name: export-tile-cog
+      inputs: &export-tile-inputs
+        parameters: [{ name: step }, { name: deliverable }, { name: format }, { name: tile-id }]
+      activeDeadlineSeconds: 10800
+      container:
+        image: *image
+        command: &export-tile-command [python, -m, orchestration_ext, export-tile]
+        args: &export-tile-args
+          - "--step={{inputs.parameters.step}}"
+          - "--deliverable={{inputs.parameters.deliverable}}"
+          - "--format={{inputs.parameters.format}}"
+          - "--tile-id={{inputs.parameters.tile-id}}"
+        env: *tmpdir-env
+        resources: *light-resources
+        volumeMounts: *mounts
+      volumes:
+        - *nokeys
+        - name: localtmp
+          ephemeral:
+            volumeClaimTemplate:
+              spec:
+                accessModes: [ReadWriteOnce]
+                storageClassName: premium-rwo
+                resources: { requests: { storage: 200Gi } }
+
+    # Writes {deliverable}/{tile}.zarr, streaming chunks to the bucket with no local staging
+    - name: export-tile-zarr
+      inputs: *export-tile-inputs
+      activeDeadlineSeconds: 10800
+      container:
+        image: *image
+        command: *export-tile-command
+        args: *export-tile-args
+        env: *tmpdir-env
+        resources: *light-resources
+        volumeMounts: *mounts
+      volumes: [*nokeys, *localtmp-20]
+
+    # Writes mosaics/{deliverable}-{scope}.vrt over the scope's COGs of one deliverable
+    - name: mosaic
+      inputs: { parameters: [{ name: deliverable }] }
+      activeDeadlineSeconds: 3600
+      container:
+        image: *image
+        command: [python, -m, orchestration_ext, mosaic]
+        args:
+          - "{{workflow.parameters.scope}}"
+          - "--deliverable={{inputs.parameters.deliverable}}"
+        env: *tmpdir-env
+        resources:
+          requests: { cpu: "1", memory: 8Gi, ephemeral-storage: 2Gi }
+          limits: { cpu: "2", memory: 8Gi, ephemeral-storage: 8Gi }
+        volumeMounts: *mounts
+      volumes: [*nokeys, *localtmp-20]

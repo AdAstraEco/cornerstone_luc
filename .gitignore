@@ -13,5 +13,7 @@ __pycache__/
 
 # Env
 .env
+# Env files with real values; the *.env.example templates stay tracked.
+infra/*.env
 
 .cache/
