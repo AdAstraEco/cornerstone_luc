@@ -69,6 +69,39 @@ def test_get_tile_output_uri_defaults_to_the_export_root(
     assert uri == str(tmp_path / "example" / f"{TILE_ID:s}.zarr")
 
 
+def test_get_tile_output_uri_puts_a_version_above_the_name(
+    tmp_path: pathlib.Path,
+) -> None:
+    uri = export.get_tile_output_uri(
+        format=export.Format.COG,
+        name="example",
+        output_root=str(tmp_path),
+        tile_id=TILE_ID,
+        version="run-1",
+    )
+    assert uri == str(tmp_path / "run-1" / "example" / f"{TILE_ID:s}.tif")
+
+
+def test_get_table_output_uri_puts_a_version_above_the_deliverable(
+    tmp_path: pathlib.Path,
+) -> None:
+    uri = export.get_table_output_uri(
+        deliverable_name="factors",
+        name="BRA",
+        output_root=str(tmp_path),
+        version="run-1",
+    )
+    assert uri == str(tmp_path / "run-1" / "factors" / "BRA.parquet")
+
+
+@pytest.mark.parametrize("version", ["a/b", ".", ".."])
+def test_get_export_root_rejects_a_version_that_is_not_one_segment(
+    version: str, tmp_path: pathlib.Path
+) -> None:
+    with pytest.raises(ValueError, match="one path segment"):
+        export.get_export_root(output_root=str(tmp_path), version=version)
+
+
 def test_iter_bands_flattens_extra_dims_in_coord_order() -> None:
     names = [name for name, _ in export.iter_bands(darray=get_dset()["total:t"])]
     assert names == ["total:t:c", "total:t:a", "total:t:b"]
@@ -80,6 +113,12 @@ def test_write_tile_rejects_a_missing_variable_before_writing(
 ) -> None:
     with pytest.raises(ValueError, match="missing"):
         write_tile(format=format, tmp_path=tmp_path, variables=["count", "missing"])
+    assert not list(tmp_path.iterdir())
+
+
+def test_write_tile_rejects_one_name_as_variables(tmp_path: pathlib.Path) -> None:
+    with pytest.raises(TypeError, match="sequence of names"):
+        write_tile(format=export.Format.ZARR, tmp_path=tmp_path, variables="count")
     assert not list(tmp_path.iterdir())
 
 
@@ -103,6 +142,14 @@ def test_write_tile_as_cog_writes_every_variable_by_default(
     assert tags["cornerstone-product-name"] == "example"
     assert tags["cornerstone-source-name"] == "example"
     assert "cornerstone-processing-version" in tags
+    assert "cornerstone-export-version" not in tags
+
+
+def test_write_tile_with_a_version_stamps_it(tmp_path: pathlib.Path) -> None:
+    uri = write_tile(format=export.Format.COG, tmp_path=tmp_path, version="run-1")
+    assert uri == str(tmp_path / "run-1" / "example" / f"{TILE_ID:s}.tif")
+    with rasterio.open(uri) as dataset:
+        assert dataset.tags()["cornerstone-export-version"] == "run-1"
 
 
 def test_write_tile_as_cog_writes_a_subset_in_the_given_order(
