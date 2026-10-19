@@ -131,8 +131,9 @@ def get_iso_3166s_touching_tile(
 
 
 def trace_countries(methodology: attribute.Methodology, scope: tuple[str, ...]) -> None:
-    """The cross-tile merge, written as the emissions-factor table. Cheap only if compute ran
-    with the same methodology."""
+    """The cross-tile merge, written as the emissions-factor table.
+
+    Cheap only if compute ran with the same methodology."""
     uri = trace.export_workflow(
         commodity_names=attribute.get_commodity_names(methodology=methodology),
         iso_3166s=plan.get_iso_3166s(scope=scope),

@@ -96,7 +96,7 @@ def get_iso_3166s(scope: tuple[str, ...]) -> tuple[str, ...]:
 
 
 def get_name(scope: tuple[str, ...]) -> str:
-    """What the run's run-wide outputs (its mosaics and emissions-factor table) are named."""
+    """What the run's run-wide outputs, such as its emissions-factor table, are named."""
     return WORLD if is_world(scope) else "-".join(sorted(scope))
 
 
@@ -145,9 +145,9 @@ def get_task_to_items(
 
     Reads the boundaries for the tile list: `ingest_boundaries` first, on a fresh ingest root.
 
-    The flat workflow loops over each stage's list across every tile. ``tile-units`` holds
-    the same units grouped by tile, for the per-tile workflow, which runs each tile's ingest
-    and compute as a DAG of its own.
+    ``tile-units`` groups the units by tile, for the example workflow, which runs each tile's
+    ingest and compute as a DAG of its own. The other lists hold the same units flat, one per
+    stage across every tile, for a workflow that fans out stage by stage instead.
     """
     check_allow_failures(allow_failures=allow_failures, methodology=methodology)
     tiled = get_dataset_names(
