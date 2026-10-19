@@ -27,7 +27,7 @@ This makes the `cie-` bands a common input from which any destination- or crop-s
 
 ## Deriving the existing bands from CIE
 
-Every existing band can be computed from the `cie-` bands. `emit.derive_from_cie` does so, though `jurisdictional_direct` and `statistical` still read the existing bands directly. The only extra inputs are two lookup tables already in `emit`: the soil loss fraction and the discount weights. Below, `ConversionSource` and `Conversion` refer to the band values in the table above.
+Every existing band can be computed from the `cie-` bands. `emit.derive_from_cie` does so, and `jurisdictional_direct` and `statistical` read their emit inputs through it rather than from the existing bands. The only extra inputs are two lookup tables already in `emit`: the soil loss fraction and the discount weights. Below, `ConversionSource` and `Conversion` refer to the band values in the table above.
 
 **Destination.** Cropland outranks pasture:
 

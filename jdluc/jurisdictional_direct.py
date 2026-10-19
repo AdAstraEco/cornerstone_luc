@@ -137,7 +137,7 @@ SCHEMA = {
 }
 
 
-@storage.cache_to_parquet(version=0)
+@storage.cache_to_parquet(version=1)
 def workflow(
     commodity_names: tuple[str, ...],
     iso_3166: str,
@@ -156,8 +156,8 @@ def workflow(
             tile_resolution=tiling.TileResolution.GLAD,
         ),
         # NB: this should call the harmonize workflow with identical args and hit
-        # the cache from the preceding call
-        emit.workflow(tile_id=tile_id),
+        # the cache from the preceding call; only the `cie-` bands are read
+        emit.derive_from_cie(dset=emit.workflow(tile_id=tile_id)),
         # CDL
         harmonize.workflow(
             dataset_names=DATASET_NAMES,
