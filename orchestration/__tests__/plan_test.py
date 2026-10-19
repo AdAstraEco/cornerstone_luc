@@ -1,5 +1,6 @@
 import json
 import pathlib
+import re
 import sys
 import types
 
@@ -40,7 +41,9 @@ def ingested(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
             datasets.NAME_TO_CLS,
             name,
             types.SimpleNamespace(
-                ingest_a_tile=ingest_a_tile, partitioning=cls.partitioning
+                get_prefix=lambda tile_id, name=name.name: f"{name:s}/{tile_id:s}",
+                ingest_a_tile=ingest_a_tile,
+                partitioning=cls.partitioning,
             ),
         )
     return calls
@@ -257,3 +260,113 @@ def test_world_names_its_run_wide_outputs_world(
 
 def test_a_country_run_names_its_outputs_by_its_countries() -> None:
     assert plan.get_name(scope=("HND", "GTM")) == "GTM-HND"
+
+
+@pytest.mark.parametrize("scope", [("AAA",), (plan.WORLD,)])
+def test_tile_units_hold_the_flat_lists_by_tile(
+    ingested: list[tuple[str, str]], scope: tuple[str, ...], tmp_path: pathlib.Path
+) -> None:
+    task_to_items = write_plan(
+        tmp_path=tmp_path,
+        allow_failures=("DESCALS_OIL_PALM",),
+        derive_deliverables=("crop-class-emissions",),
+        derive_export=export.Format.ZARR,
+        emit_export=export.Format.COG,
+        scope=scope,
+    )
+    tile_units = task_to_items["tile-units"]
+    assert [u["tile_id"] for u in tile_units] == [
+        u["tile_id"] for u in task_to_items["tiles"]
+    ]
+    for key, task in (
+        ("ingests", "ingest-tiles"),
+        ("ingests_allowed_failures", "ingest-tiles-allowed-failures"),
+    ):
+        assert sorted(
+            (dataset, u["tile_id"]) for u in tile_units for dataset in u[key]
+        ) == sorted((u["dataset"], u["tile_id"]) for u in task_to_items[task])
+    for format in export.Format:
+        assert [
+            {**unit, "tile_id": u["tile_id"]}
+            for u in tile_units
+            for unit in u[f"exports_{format!s}"]
+        ] == sorted(
+            task_to_items[f"export-tiles-{format!s}"], key=lambda u: u["tile_id"]
+        )
+
+
+def test_each_tile_lists_each_tiled_dataset_once(
+    ingested: list[tuple[str, str]], tmp_path: pathlib.Path
+) -> None:
+    task_to_items = write_plan(tmp_path=tmp_path, allow_failures=("DESCALS_OIL_PALM",))
+    tiled = {
+        name.name
+        for name in plan.get_dataset_names(
+            methodology=attribute.Methodology.STATISTICAL,
+            partitioning=tiling.Partitioning.TEN_DEGREE_TILE,
+        )
+    }
+    for u in task_to_items["tile-units"]:
+        assert u["ingests_allowed_failures"] == ["DESCALS_OIL_PALM"]
+        assert sorted([*u["ingests"], *u["ingests_allowed_failures"]]) == sorted(tiled)
+
+
+@pytest.fixture
+def present_uris(
+    ingested: list[tuple[str, str]], monkeypatch: pytest.MonkeyPatch
+) -> set[str]:
+    """Every input of tile 10N_010W, as the ingest root would hold them; remove some to
+    make them missing."""
+    root = cli.config.Config.from_dot_env().ingest_root
+    uris = {
+        cli.storage.join_uri(prefix=f"{name.name:s}/{tile_id:s}", root=root)
+        for partitioning, tile_id in (
+            (tiling.Partitioning.TEN_DEGREE_TILE, "10N_010W"),
+            (tiling.Partitioning.WHOLE_WORLD, tiling.WHOLE_WORLD_TILE_ID),
+        )
+        for name in plan.get_dataset_names(
+            methodology=attribute.Methodology.STATISTICAL, partitioning=partitioning
+        )
+    }
+    monkeypatch.setattr(cli.storage, "path_exists", lambda uri: uri in uris)
+    return uris
+
+
+def test_compute_checks_ingests_before_harmonize(
+    monkeypatch: pytest.MonkeyPatch, present_uris: set[str]
+) -> None:
+    (missing,) = [uri for uri in present_uris if "GPW_GRASSLAND/" in uri]
+    present_uris.remove(missing)
+
+    def harmonize(**kwargs: object) -> None:
+        raise AssertionError("harmonize ran on a tile missing an ingest")
+
+    monkeypatch.setattr(cli.harmonize, "workflow", harmonize)
+    with pytest.raises(FileNotFoundError, match=re.escape(missing)):
+        cli.compute(
+            allow_failures=("DESCALS_OIL_PALM",),
+            check_ingests=True,
+            methodology=attribute.Methodology.STATISTICAL,
+            scope=("AAA",),
+            tile_id="10N_010W",
+        )
+
+
+def test_an_allowed_failure_is_not_missing(present_uris: set[str]) -> None:
+    present_uris -= {uri for uri in present_uris if "DESCALS_OIL_PALM/" in uri}
+    assert (
+        cli.get_missing_ingests(
+            allow_failures=("DESCALS_OIL_PALM",),
+            methodology=attribute.Methodology.STATISTICAL,
+            tile_id="10N_010W",
+        )
+        == []
+    )
+    assert (
+        cli.get_missing_ingests(
+            allow_failures=(),
+            methodology=attribute.Methodology.STATISTICAL,
+            tile_id="10N_010W",
+        )
+        != []
+    )

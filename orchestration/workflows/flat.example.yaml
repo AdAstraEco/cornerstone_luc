@@ -1,11 +1,15 @@
 # The cornerstone pipeline as an Argo Workflow: an example with placeholder names.
 #
+# Flat: each stage is one fan-out over every tile, so compute waits on every tile's ingest,
+# and one failed (dataset, tile) ingest stops compute on every tile. per-tile.example.yaml
+# runs each tile's ingest -> compute on its own, so a failed tile stops only itself.
+#
 # The deployed copy is kept outside this public repo, because it names our cluster, node pools
 # and image registry. Replace every UPPER-CASE placeholder below. docs/orbae/argo-workflows.md
 # describes the setup: the image, the two Secrets and the service account.
 #
-#   argo submit workflow.example.yaml -p scope=HND --generate-name cornerstone-hnd-
-#   argo submit workflow.example.yaml -p scope=world --generate-name cornerstone-world-
+#   argo submit flat.example.yaml -p scope=HND --generate-name cornerstone-hnd-
+#   argo submit flat.example.yaml -p scope=world --generate-name cornerstone-world-
 #
 # Each task runs one CLI from the image: `python -m orchestration <task>`, or for ingest-world
 # jdluc's own ingest CLI. `plan` writes the lists every fan-out loops over, so the workflow itself needs no
