@@ -72,6 +72,20 @@ The crop-agnostic, per-pixel, per-span LUC emissions produced by the `emit` stag
 | `emissions-per-hectare:tco2e-per-ha`                 | float32 | t CO₂e/ha       | 20-year linearly-discounted LUC emissions + peatland occupation — the headline per-hectare layer         |
 | `hectares-per-pixel:ha`                              | float32 | ha              | Pixel area (varies with latitude)                                                                        |
 
+Beside these, the `cie-` bands carry Crop-Independent Emissions: the same conversions and pools, stopped before anything that depends on what the land became (no destination gate, no destination-specific soil factor, no discount). Every band above can be derived from them; see [`crop_independent_emissions.md`](crop_independent_emissions.md).
+
+| Variable                                                      | Type    | Units           | Description                                                                                                      |
+| ------------------------------------------------------------- | ------- | --------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `cie-conversion-source`                                       | float32 | Source code     | The class the pixel left inside the window, whatever it became: 0 none, 1 forest, 2 natural grassland, 3 pasture |
+| `cie-conversion-year`                                         | float32 | year            | As `conversion-year`                                                                                             |
+| `cie-vegetation-emissions-undiscounted:tco2e-per-ha`          | float32 | t CO₂e/ha       | Vegetation carbon lost with the source class, undiscounted and not gated on a destination                        |
+| `cie-mineral-soil-carbon-at-risk:tco2e-per-ha`                | float32 | t CO₂e/ha       | The full mineral soil-carbon stock under a converted pixel off peat, before any land-use factor                  |
+| `cie-peat-transformation-emissions-undiscounted:tco2e-per-ha` | float32 | t CO₂e/ha       | The peatland drainage pulse under a converted pixel on peat, undiscounted                                        |
+| `cie-peat-occupation-emissions:tco2e-per-ha-per-year`         | float32 | t CO₂e/ha/yr    | Annual peatland-occupation emissions on all peat, whatever occupies it                                           |
+| `cie-climate-zone`                                            | float32 | Zone code       | IPCC climate zone, for looking up destination-specific soil factors                                              |
+| `cie-destination-dataset`                                     | float32 | Dataset bitmask | As `destination-dataset`                                                                                         |
+| `cie-hectares-per-pixel:ha`                                   | float32 | ha              | As `hectares-per-pixel:ha`                                                                                       |
+
 ```python
 import xarray
 
