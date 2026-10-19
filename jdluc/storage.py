@@ -4,10 +4,12 @@ import hashlib
 import inspect
 import logging
 import os
+import tempfile
 import threading
 import typing
 
 import fsspec  # type: ignore[import-untyped]
+import numpy
 import pandas
 import xarray
 
@@ -28,6 +30,18 @@ def put_file(local_path: str, uri: str) -> None:
     fs.put_file(local_path, path)
 
 
+def touch_file(uri: str) -> None:
+    fs, path = fsspec.url_to_fs(url=uri)
+    fs.touch(path)
+
+
+def remove_file(uri: str) -> None:
+    """Remove the file at `uri`, if there is one."""
+    fs, path = fsspec.url_to_fs(url=uri)
+    if fs.exists(path):
+        fs.rm_file(path)
+
+
 def to_gdal_path(uri: str) -> str:
     if uri.startswith("gs://"):
         return "/vsigs/" + uri.removeprefix("gs://")
@@ -39,7 +53,14 @@ def join_uri(root: str, prefix: str) -> str:
     return f"{root.rstrip('/'):s}/{prefix:s}"
 
 
-def write_dask_dataset_to_zarr(dset: xarray.Dataset, path_to_zarr: str) -> None:
+def get_zarr_complete_uri(path_to_zarr: str) -> str:
+    """The marker beside a zarr, written once its last chunk is."""
+    return f"{path_to_zarr:s}.complete"
+
+
+def write_dask_dataset_to_zarr(
+    dset: xarray.Dataset, path_to_zarr: str, mode: typing.Literal["w", "w-"] = "w-"
+) -> None:
     assert dset.chunks is not None, f"{dset=:} is not a chunked dask array"
 
     import dask.config
@@ -90,7 +111,11 @@ def write_dask_dataset_to_zarr(dset: xarray.Dataset, path_to_zarr: str) -> None:
         for variable in to_write.variables.values():
             variable.encoding.pop("chunks", None)
         delayed = to_write.to_zarr(
-            compute=False, consolidated=False, group=None, store=path_to_zarr
+            compute=False,
+            consolidated=False,
+            group=None,
+            mode=mode,
+            store=path_to_zarr,
         )
         logger.info("Submitting task graph to dask scheduler")
         future = client.compute(delayed, retries=5)
@@ -109,6 +134,67 @@ def open_zarr_to_dask_dataset(path_to_zarr: str) -> xarray.Dataset:
     assert isinstance(dset, xarray.Dataset)
     assert dset.encoding["source"] == path_to_zarr
     return dset.rio.write_crs(4326)
+
+
+COG_NO_DATA = float("nan")
+
+
+def stack_bands(dset: xarray.Dataset) -> xarray.DataArray:
+    """`dset`'s variables as one float32 array along `band`, in the dataset's order."""
+    import rioxarray  # noqa: F401
+
+    band_names = list(map(str, dset.data_vars))
+    stacked = xarray.concat([dset[name] for name in band_names], dim="band").astype(
+        numpy.float32
+    )
+    stacked = stacked.assign_coords(band=("band", band_names))
+    crs = dset.rio.crs or "EPSG:4326"
+    return stacked.rio.write_crs(crs).rio.write_nodata(COG_NO_DATA)
+
+
+def write_dask_dataset_to_cog(
+    dset: xarray.Dataset, metadata: dict[str, str], uri: str
+) -> None:
+    """Write `dset` as a Cloud-Optimised GeoTIFF: one band per variable, named after it.
+
+    EPSG:4326, float32, NaN no-data. Computes the (lazy) dataset as it writes. Stages as
+    `datasets.base` ingest does: a local GeoTIFF, band names, validation, COG, then one
+    upload of the whole file.
+    """
+    import dask.diagnostics
+
+    from jdluc import geo
+
+    stacked = stack_bands(dset=dset)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path_to_geotiff = os.path.join(tmpdir, "geotiff.tif")
+        with dask.diagnostics.ProgressBar(dt=5, minimum=1):
+            logger.info(f"Writing staged GeoTIFF to {path_to_geotiff=:s}")
+            stacked.rio.to_raster(
+                path_to_geotiff,
+                blockxsize=512,
+                blockysize=512,
+                compress="ZSTD",
+                driver="GTiff",
+                dtype="float32",
+                lock=True,
+                num_threads="all_cpus",
+                tiled=True,
+                BIGTIFF="IF_SAFER",
+            )
+        geo.set_band_names_for_geotiff(
+            band_names=list(map(str, stacked.band.values)),
+            path_to_geotiff=path_to_geotiff,
+        )
+        geo.validate_geotiff(dtype="float32", path_to_geotiff=path_to_geotiff)
+        path_to_cog = os.path.join(tmpdir, "cog.tif")
+        geo.convert_geotiff_to_cog(
+            metadata=metadata,
+            no_data=COG_NO_DATA,
+            path_to_cog=path_to_cog,
+            path_to_geotiff=path_to_geotiff,
+        )
+        put_file(local_path=path_to_cog, uri=uri)
 
 
 P = typing.ParamSpec("P")
@@ -163,7 +249,7 @@ class ZarrCacher:
 
     @property
     def exists_uri(self) -> str:
-        return f"{self.uri:s}.complete"
+        return get_zarr_complete_uri(path_to_zarr=self.uri)
 
     def deserialize(self) -> xarray.Dataset:
         return open_zarr_to_dask_dataset(path_to_zarr=self.uri)
@@ -176,8 +262,7 @@ class ZarrCacher:
                 "zarr to recompute it."
             )
         write_dask_dataset_to_zarr(dset=dset, path_to_zarr=self.uri)
-        fs, path = fsspec.url_to_fs(url=self.exists_uri)
-        fs.touch(path)
+        touch_file(uri=self.exists_uri)
 
 
 class CacherDecoratorProtocol(typing.Protocol[R]):
