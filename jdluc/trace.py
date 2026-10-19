@@ -9,7 +9,7 @@ each commodity's total production — the only step that depends on methodology:
 It then derives, identically for both, each commodity's yield (kg per hectare) and emissions
 factor (kgCO2e per kg), and rolls the provincials up to national totals. Returns a cached
 pandas.DataFrame indexed by (admin_level, admin_id, commodity_name, methodology).
-`export_workflow` writes that table as the `emissions-factors` deliverable under EXPORT_ROOT.
+`export_workflow` writes that table as the `emissions-factors` product under EXPORT_ROOT.
 
 The countries come from the positional ISO 3166 alpha-3 codes, or -- with `--backfill` --
 from every country in the World Bank admin-0 layer.
@@ -197,9 +197,9 @@ def export_workflow(
     )
     return export.write_table(
         df=df,
-        deliverable_name=EMISSIONS_FACTORS,
         name=f"{name or '-'.join(iso_3166s):s}-{methodology.name:s}",
         output_root=output_root,
+        product_name=EMISSIONS_FACTORS,
         source_name="jdluc-trace",
     )
 
