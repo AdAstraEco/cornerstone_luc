@@ -1,0 +1,64 @@
+name: Build and deploy
+
+# On every push to main: build the image, push it to jester's Artifact Registry tagged
+# with the commit SHA, then notify jester's CI (repository_dispatch) to submit the
+# cornerstone-pipeline Argo WorkflowTemplate with that tag. The WorkflowTemplate itself
+# lives in jester (private repo, real cluster/registry values) — see
+# orchestration/workflow.example.yaml in this repo for the placeholder-laden template it
+# was derived from, and jester's docs/ARCHITECTURE.md for the full end-to-end design.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.tag.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history, not a shallow/worktree clone -- the image's own git provenance
+          # (utils.get_git_version, baked in via the Dockerfile's final `COPY .git .git`
+          # layer) needs a real .git directory with history, not a worktree pointer file.
+          fetch-depth: 0
+
+      - id: tag
+        run: echo "sha=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+
+      - id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_CORNERSTONE_CI_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "${{ secrets.GCP_ARTIFACT_REGISTRY_HOST }}" --quiet
+
+      - name: Build and push
+        env:
+          IMAGE: ${{ secrets.GCP_ARTIFACT_REGISTRY_HOST }}/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.GCP_ARTIFACT_REGISTRY_REPOSITORY }}/cornerstone
+          TAG: ${{ steps.tag.outputs.sha }}
+        run: |
+          docker build -t "$IMAGE:$TAG" -t "$IMAGE:latest" .
+          docker push "$IMAGE:$TAG"
+          docker push "$IMAGE:latest"
+
+  notify-jester:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch cornerstone-image-built to jester
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.JESTER_DISPATCH_TOKEN }}
+          repository: AdAstraEco/jester
+          event-type: cornerstone-image-built
+          client-payload: '{"image_tag": "${{ needs.build-and-push.outputs.image_tag }}"}'
