@@ -29,6 +29,10 @@ For example:
 A tabular deliverable (see `trace.export_workflow`) is one parquet per set of countries,
 written by `write_table` to `{EXPORT_ROOT}/{deliverable}/{name}.parquet`.
 
+Either may be given a `version`, such as a run id or a release label, which puts the whole
+export under `{EXPORT_ROOT}/{version}/` and stamps it in the metadata. The default, blank,
+writes directly under EXPORT_ROOT, and a rerun writes over the last one.
+
 Either way, provenance is stamped in the output's metadata. Unlike SCRATCH_ROOT, EXPORT_ROOT
 is not a cache that the pipeline reads back: what lands there is a terminal output.
 """
@@ -59,25 +63,41 @@ class Format(enum.StrEnum):
 FORMAT_TO_EXTENSION = {Format.COG: ".tif", Format.ZARR: ".zarr"}
 
 
-def get_metadata(product_name: str, source_name: str) -> dict[str, str]:
-    """Provenance, as `datasets.base` stamps on ingested COGs."""
+def get_metadata(
+    product_name: str, source_name: str, version: str = ""
+) -> dict[str, str]:
+    """Provenance, as `datasets.base` stamps on ingested COGs, and the export's version."""
     return {
         "cornerstone-processing-time": utils.get_utc_timestamp(),
         "cornerstone-processing-version": utils.get_git_version(),
         "cornerstone-product-name": product_name,
         "cornerstone-remote-url": utils.get_git_remote_url(),
         "cornerstone-source-name": source_name,
-    }
+    } | ({"cornerstone-export-version": version} if version else {})
+
+
+def get_export_root(output_root: str | None = None, version: str = "") -> str:
+    """`{output_root}/{version}`, or `output_root` itself for a blank version;
+    `output_root` defaults to EXPORT_ROOT."""
+    if output_root is None:
+        output_root = config.Config.from_dot_env().export_root
+    if not version:
+        return output_root
+    if "/" in version or version in (".", ".."):
+        raise ValueError(f"{version=:s} is not one path segment")
+    return storage.join_uri(root=output_root, prefix=version)
 
 
 def get_tile_output_uri(
-    format: Format, name: str, tile_id: str, output_root: str | None = None
+    format: Format,
+    name: str,
+    tile_id: str,
+    output_root: str | None = None,
+    version: str = "",
 ) -> str:
-    """`{output_root}/{name}/{tile_id}.{tif|zarr}`; `output_root` defaults to EXPORT_ROOT."""
-    if output_root is None:
-        output_root = config.Config.from_dot_env().export_root
+    """`{output_root}[/{version}]/{name}/{tile_id}.{tif|zarr}`; see `get_export_root`."""
     return storage.join_uri(
-        root=output_root,
+        root=get_export_root(output_root=output_root, version=version),
         prefix=f"{name:s}/{tile_id:s}{FORMAT_TO_EXTENSION[format]:s}",
     )
 
@@ -86,7 +106,10 @@ def iter_bands(
     darray: xarray.DataArray,
 ) -> collections.abc.Iterator[tuple[str, xarray.DataArray]]:
     """Each 2-D band of a variable and its name: one per combination of values on its dims
-    beyond the pixel grid, taken in the variable's dim order and each dim's coord order."""
+    beyond the pixel grid, taken in the variable's dim order and each dim's coord order.
+
+    A value is named by `str`, so it reads well for string or integer coords; a datetime or
+    float coord gives a name like `variable:2020-01-01T00:00:00.000000000`."""
     dims = [dim for dim in map(str, darray.dims) if dim not in PIXEL_DIMS]
     for indexes in itertools.product(*(range(darray.sizes[dim]) for dim in dims)):
         point = dict(zip(dims, indexes, strict=True))
@@ -119,7 +142,9 @@ def to_cog_dataset(dset: xarray.Dataset) -> xarray.Dataset:
 
 
 def to_zarr_dataset(dset: xarray.Dataset) -> xarray.Dataset:
-    # NB: zarr v3 specifies variable-length strings, not numpy's fixed-length ones
+    # NB: zarr v3 specifies variable-length strings, not numpy's fixed-length ones. Only
+    # coords are converted: they are in memory, whereas an `object` dask variable is loaded
+    # whole to infer its dtype, so a string data variable is left fixed-length
     return dset.assign_coords(
         {
             name: coord.astype(object)
@@ -145,11 +170,15 @@ def write_tile(
     output_root: str | None = None,
     source_name: str | None = None,
     variables: collections.abc.Sequence[str] | None = None,
+    version: str = "",
 ) -> str:
     """Write `variables` of the (lazy) `dset` for one tile; return the URI.
 
     `variables` defaults to every data variable, in order. Computes only those, as it writes.
+    A `version` puts the tile under `{output_root}/{version}/` (see `get_export_root`).
     """
+    if isinstance(variables, str):
+        raise TypeError(f"{variables=:s} is one name; pass a sequence of names")
     if variables is None:
         variables = list(map(str, dset.data_vars))
     if missing := [
@@ -157,9 +186,15 @@ def write_tile(
     ]:
         raise ValueError(f"{name=:s} has no variables {missing}")
     uri = get_tile_output_uri(
-        format=format, name=name, output_root=output_root, tile_id=tile_id
+        format=format,
+        name=name,
+        output_root=output_root,
+        tile_id=tile_id,
+        version=version,
     )
-    metadata = get_metadata(product_name=name, source_name=source_name or name)
+    metadata = get_metadata(
+        product_name=name, source_name=source_name or name, version=version
+    )
     selected = dset[list(variables)]
     logger.info(f"Writing {name=:s} for {tile_id=:s} as {format!s}")
     match format:
@@ -176,13 +211,15 @@ def write_tile(
 
 
 def get_table_output_uri(
-    deliverable_name: str, name: str, output_root: str | None = None
+    deliverable_name: str,
+    name: str,
+    output_root: str | None = None,
+    version: str = "",
 ) -> str:
-    """`{output_root}/{deliverable}/{name}.parquet`; `output_root` defaults to EXPORT_ROOT."""
-    if output_root is None:
-        output_root = config.Config.from_dot_env().export_root
+    """`{output_root}[/{version}]/{deliverable}/{name}.parquet`; see `get_export_root`."""
     return storage.join_uri(
-        root=output_root, prefix=f"{deliverable_name:s}/{name:s}.parquet"
+        root=get_export_root(output_root=output_root, version=version),
+        prefix=f"{deliverable_name:s}/{name:s}.parquet",
     )
 
 
@@ -192,13 +229,19 @@ def write_table(
     name: str,
     source_name: str,
     output_root: str | None = None,
+    version: str = "",
 ) -> str:
     """Write a tabular deliverable as one parquet, provenance in its `attrs`; return the URI."""
     uri = get_table_output_uri(
-        deliverable_name=deliverable_name, name=name, output_root=output_root
+        deliverable_name=deliverable_name,
+        name=name,
+        output_root=output_root,
+        version=version,
     )
     df = df.copy()
-    df.attrs |= get_metadata(product_name=deliverable_name, source_name=source_name)
+    df.attrs |= get_metadata(
+        product_name=deliverable_name, source_name=source_name, version=version
+    )
     with tempfile.TemporaryDirectory() as tmpdir:
         local_path = os.path.join(tmpdir, os.path.basename(uri))
         df.to_parquet(path=local_path)

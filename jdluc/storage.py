@@ -157,9 +157,9 @@ def write_dask_dataset_to_cog(
 ) -> None:
     """Write `dset` as a Cloud-Optimised GeoTIFF: one band per variable, named after it.
 
-    EPSG:4326, float32, NaN no-data. Computes the (lazy) dataset as it writes. Stages as
-    `datasets.base` ingest does: a local GeoTIFF, band names, validation, COG, then one
-    upload of the whole file.
+    EPSG:4326, float32, NaN no-data. Computes the (lazy) dataset as it writes, under
+    COMPUTE_LOCK as `write_dask_dataset_to_zarr` does. Stages as `datasets.base` ingest
+    does: a local GeoTIFF, band names, validation, COG, then one upload of the whole file.
     """
     import dask.diagnostics
 
@@ -168,7 +168,7 @@ def write_dask_dataset_to_cog(
     stacked = stack_bands(dset=dset)
     with tempfile.TemporaryDirectory() as tmpdir:
         path_to_geotiff = os.path.join(tmpdir, "geotiff.tif")
-        with dask.diagnostics.ProgressBar(dt=5, minimum=1):
+        with COMPUTE_LOCK, dask.diagnostics.ProgressBar(dt=5, minimum=1):
             logger.info(f"Writing staged GeoTIFF to {path_to_geotiff=:s}")
             stacked.rio.to_raster(
                 path_to_geotiff,
