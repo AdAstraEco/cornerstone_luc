@@ -33,7 +33,7 @@ import numpy
 import numpy.typing
 import xarray
 
-from jdluc import emit, export
+from jdluc import conversion_event, emit, export
 from jdluc.datasets.ipcc_climate_zones import Zone
 
 logger = logging.getLogger(__name__)
@@ -658,14 +658,24 @@ def lookup_factors(
 
 def get_discount_weights_by_scheme(
     discountings: collections.abc.Sequence[str],
+    reference_year: int = REFERENCE_YEAR,
 ) -> xarray.DataArray:
-    """The named schemes side by side: (conversion_year: 20, discounting)."""
+    """The named schemes side by side: (conversion_year: 20, discounting).
+
+    Each scheme is a weight per position in the window, so another reference year only moves
+    the window: the weights stay, their `conversion_year` labels shift.
+    """
     return (
         xarray.concat(
             [DISCOUNTING_TO_WEIGHTS[discounting] for discounting in discountings],
             dim=DISCOUNTING,
         )
-        .assign_coords({DISCOUNTING: list(discountings)})
+        .assign_coords(
+            {
+                DISCOUNTING: list(discountings),
+                CONVERSION_YEAR: ASSESSMENT_WINDOW + (reference_year - REFERENCE_YEAR),
+            }
+        )
         .transpose(CONVERSION_YEAR, ...)
     )
 
@@ -681,13 +691,23 @@ def get_layer(
     dset: xarray.Dataset,
     crop_classes: collections.abc.Sequence[CropClass] = tuple(CropClass),
     discountings: collections.abc.Sequence[str] = (DEFAULT_DISCOUNTING,),
+    reference_year: int | None = None,
 ) -> CropClassLayer:
-    """Layer 2 for `crop_classes` and `discountings`, from an `emit` output dataset."""
-    cie = read_cie(dset)
+    """Layer 2 for `crop_classes` and `discountings`, from an `emit` output dataset.
+
+    With no `reference_year`, the conversion event is `emit`'s own, for REFERENCE_YEAR. With
+    one, the event is selected afresh from `emit`'s `cand-` bands (see `conversion_event`).
+    """
+    if reference_year is None:
+        cie = read_cie(dset)
+    else:
+        cie = read_cie(conversion_event.get_cie(dset, reference_year=reference_year))
     layer = crop_class_layer(
         cie=cie,
         factors=lookup_factors(cie.climate_zone, crop_classes),
-        discount_weights=get_discount_weights_by_scheme(discountings),
+        discount_weights=get_discount_weights_by_scheme(
+            discountings, reference_year=reference_year or REFERENCE_YEAR
+        ),
     )
     log_layer_shapes(layer=layer)
     return layer
@@ -711,13 +731,16 @@ def derive(
     dset: xarray.Dataset,
     crop_classes: collections.abc.Sequence[CropClass] = tuple(CropClass),
     discountings: collections.abc.Sequence[str] = (DEFAULT_DISCOUNTING,),
+    reference_year: int | None = None,
 ) -> xarray.Dataset:
     """All of layer 2 for `crop_classes` and `discountings`, as a lazy dataset."""
-    return to_dataset(get_layer(dset, crop_classes, discountings))
+    return to_dataset(get_layer(dset, crop_classes, discountings, reference_year))
 
 
 def derive_for_deliverable(
-    dset: xarray.Dataset, deliverable: export.Deliverable
+    dset: xarray.Dataset,
+    deliverable: export.Deliverable,
+    reference_year: int | None = None,
 ) -> xarray.Dataset:
     """Layer 2 for just the crop classes and discountings `deliverable` names, so only they
     are computed."""
@@ -727,6 +750,7 @@ def derive_for_deliverable(
         crop_classes=[CropClass(c) for c in selections.get(CROP_CLASS, ())]
         or tuple(CropClass),
         discountings=selections.get(DISCOUNTING) or (DEFAULT_DISCOUNTING,),
+        reference_year=reference_year,
     )
 
 
@@ -752,13 +776,23 @@ def export_workflow(
     deliverable_names: collections.abc.Sequence[str],
     format: export.Format | None = None,
     output_root: str | None = None,
+    reference_year: int | None = None,
 ) -> list[str]:
-    """Write each named deliverable for one tile, from `emit`'s cached output; return the URIs."""
+    """Write each named deliverable for one tile, from `emit`'s cached output; return the URIs.
+
+    With a `reference_year`, the event is selected for it, and the deliverable's name says so.
+    """
     dset = emit.workflow(tile_id=tile_id)
     return [
         export.write_deliverable(
-            dset=derive_for_deliverable(dset, deliverable),
-            deliverable=deliverable,
+            dset=derive_for_deliverable(dset, deliverable, reference_year),
+            deliverable=(
+                deliverable
+                if reference_year is None
+                else dataclasses.replace(
+                    deliverable, name=f"{deliverable.name:s}-{reference_year:d}"
+                )
+            ),
             format=format,
             output_root=output_root,
             source_name="jdluc-derive",
@@ -774,5 +808,11 @@ if __name__ == "__main__":
             description=__doc__,
             export_workflow=export_workflow,
             name_to_deliverable=NAME_TO_DELIVERABLE,
+            add_arguments=lambda parser: parser.add_argument(
+                "--reference-year",
+                type=int,
+                help="select the conversion event for this year from emit's cand- bands;"
+                f" by default, emit's own event for {REFERENCE_YEAR:d}",
+            ),
         )
     )

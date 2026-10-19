@@ -262,6 +262,8 @@ def main(
     description: str | None,
     export_workflow: collections.abc.Callable[..., list[str]],
     name_to_deliverable: collections.abc.Mapping[str, Deliverable],
+    add_arguments: collections.abc.Callable[[argparse.ArgumentParser], object]
+    | None = None,
 ) -> int:
     """A step's export CLI: `<tile_id> --deliverable NAME [...] [--format] [--output-root]`."""
     logging.basicConfig(
@@ -287,13 +289,10 @@ def main(
     parser.add_argument(
         "--output-root", help="defaults to the export root; local paths ok"
     )
-    args = parser.parse_args()
-    for uri in export_workflow(
-        deliverable_names=args.deliverable_names,
-        format=args.format,
-        output_root=args.output_root,
-        tile_id=args.tile_id,
-    ):
+    if add_arguments is not None:
+        # NB: each extra argument is passed on to `export_workflow` under its own name
+        add_arguments(parser)
+    for uri in export_workflow(**vars(parser.parse_args())):
         print(uri)
     return 0
 
