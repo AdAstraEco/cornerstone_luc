@@ -1,0 +1,211 @@
+# The cornerstone pipeline plus the fork's per-tile exports as an Argo Workflow, one fan-out
+# per stage: an example with placeholder names. Replace every UPPER-CASE placeholder.
+# docs/orchestration.md describes the setup: the image, the two Secrets and the service account.
+#
+# Flat: each stage is one fan-out over every tile, so compute waits on every tile's ingest,
+# and one failed (dataset, tile) ingest stops compute on every tile. per-tile.example.yaml
+# runs each tile's ingest -> compute -> exports on its own, so a failed tile stops only itself.
+#
+# Only plan and the exports are defined here, run by `python -m orchestration_ext`.
+# ingest-world, ingest-tile, compute and trace are upstream's, called by `templateRef` from the
+# `cornerstone` WorkflowTemplate (orchestration/workflows/cornerstone.example.yaml), so they
+# follow upstream with no copy to keep in step. Install that template first, from the same
+# image:
+#
+#   argo template create cornerstone.example.yaml
+#   argo submit flat.example.yaml -p scope=HND --generate-name cornerstone-hnd-
+#   argo submit flat.example.yaml -p scope=world --generate-name cornerstone-world-
+#
+# `plan` writes the lists every fan-out loops over, so the workflow itself needs no
+# expressions, nested loops or shell scripting. A step that exports nothing gets empty lists,
+# and Argo skips a task with nothing to loop over.
+#
+#   plan ─┬─ ingest-world ──────────────────┐           ┌─ trace
+#         ├─ ingest-tiles ──────────────────┼─ compute ─┼─ export-tiles-cog
+#         └─ ingest-tiles-allowed-failures ─┘           └─ export-tiles-zarr
+
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: cornerstone-
+spec:
+  entrypoint: cornerstone
+  # Needs read/write access to INGEST_ROOT, SCRATCH_ROOT and EXPORT_ROOT, as the template's
+  serviceAccountName: SERVICE-ACCOUNT
+  # Backstops against a runaway fan-out: at most 25 pods at once, and 6 hours for the whole run.
+  # Sized for one country: raise both for a scope=world run
+  parallelism: 25
+  activeDeadlineSeconds: 21600
+  arguments:
+    parameters:
+      # The run's country, as one ISO 3166 alpha-3 code, or world for every country and GNW tile
+      - name: scope
+      # STATISTICAL or JURISDICTIONAL_DIRECT (the latter is US-only)
+      - name: methodology
+        value: STATISTICAL
+      # Ten-degree datasets whose failed tiles must not stop the run, comma-separated. Descals
+      # is published only where there is oil palm, and its ingest fails on tiles without any.
+      - name: allow-failures
+        value: DESCALS_OIL_PALM
+      # Each step's export: cog, zarr or none. emit exports cie-emissions; derive exports the
+      # derive-products
+      - name: emit-export
+        value: cog
+      - name: derive-export
+        value: none
+      # Comma-separated, of crop-class-emissions, perennial-debug and
+      # perennial-discounting-comparison
+      - name: derive-products
+        value: crop-class-emissions
+
+  # To run on preemptible (spot) nodes, add a nodeSelector and tolerations here. A reclaimed
+  # node fails its pod; `argo retry` resumes from the cache, as a zarr counts only once written.
+  # templateDefaults:
+  #   nodeSelector: { NODE-POOL-LABEL: NODE-POOL }
+  #   tolerations: [{ key: NODE-POOL-TAINT, operator: Equal, value: "true", effect: NoSchedule }]
+
+  templates:
+    - name: cornerstone
+      dag:
+        # A failed task must not stop the scheduling of tasks that wait on its failure
+        failFast: false
+        tasks:
+          - name: plan
+            template: plan
+
+          - name: ingest-world
+            templateRef: { name: cornerstone, template: ingest-world }
+            depends: plan
+            withParam: "{{tasks.plan.outputs.parameters.ingest-world}}"
+            arguments: { parameters: [{ name: dataset, value: "{{item}}" }] }
+
+          # Ingest exits non-zero if its tile fails, which fails the task, and so the run
+          - name: ingest-tiles
+            templateRef: { name: cornerstone, template: ingest-tile }
+            depends: plan
+            withParam: "{{tasks.plan.outputs.parameters.ingest-tiles}}"
+            arguments: &ingest-tile-arguments
+              parameters:
+                - { name: dataset, value: "{{item.dataset}}" }
+                - { name: tile-id, value: "{{item.tile_id}}" }
+
+          # Failed tiles here stay visible as failed pods, but compute runs regardless
+          - name: ingest-tiles-allowed-failures
+            templateRef: { name: cornerstone, template: ingest-tile }
+            depends: plan
+            withParam: "{{tasks.plan.outputs.parameters.ingest-tiles-allowed-failures}}"
+            arguments: *ingest-tile-arguments
+
+          - name: compute
+            templateRef: { name: cornerstone, template: compute }
+            depends: >-
+              ingest-world && ingest-tiles &&
+              (ingest-tiles-allowed-failures || ingest-tiles-allowed-failures.Failed)
+            withParam: "{{tasks.plan.outputs.parameters.tiles}}"
+            arguments: { parameters: [{ name: tile-id, value: "{{item.tile_id}}" }] }
+
+          - name: trace
+            templateRef: { name: cornerstone, template: trace }
+            depends: compute
+
+          # One product of emit or derive on one tile. Both read only emit's cache, warm after
+          # compute
+          - name: export-tiles-cog
+            template: export-tile-cog
+            depends: compute
+            withParam: "{{tasks.plan.outputs.parameters.export-tiles-cog}}"
+            arguments: &export-tile-arguments
+              parameters:
+                - { name: step, value: "{{item.step}}" }
+                - { name: product, value: "{{item.product}}" }
+                - { name: format, value: "{{item.format}}" }
+                - { name: tile-id, value: "{{item.tile_id}}" }
+
+          - name: export-tiles-zarr
+            template: export-tile-zarr
+            depends: compute
+            withParam: "{{tasks.plan.outputs.parameters.export-tiles-zarr}}"
+            arguments: *export-tile-arguments
+
+    # Ingests the boundaries if absent, then writes one JSON list per fan-out
+    - name: plan
+      activeDeadlineSeconds: 1800
+      container:
+        image: &image IMAGE-REGISTRY/cornerstone:COMMIT-SHA
+        command: [python, -m, orchestration_ext, plan]
+        args:
+          - "{{workflow.parameters.scope}}"
+          - "--methodology={{workflow.parameters.methodology}}"
+          - --output-dir=/plan
+          - "--allow-failures={{workflow.parameters.allow-failures}}"
+          - "--emit-export={{workflow.parameters.emit-export}}"
+          - "--derive-export={{workflow.parameters.derive-export}}"
+          - "--derive-products={{workflow.parameters.derive-products}}"
+        env: &tmpdir-env
+          - { name: TMPDIR, value: /localtmp }
+          - { name: CPL_TMPDIR, value: /localtmp }
+        resources: &light-resources
+          requests: { cpu: "2", memory: 24Gi, ephemeral-storage: 2Gi }
+          limits: { cpu: "4", memory: 24Gi, ephemeral-storage: 8Gi }
+        volumeMounts: &mounts
+          - { name: cloud-env, mountPath: /app/.env, subPath: .env }
+          - { name: localtmp, mountPath: /localtmp }
+      volumes:
+        - &nokeys { name: cloud-env, secret: { secretName: cornerstone-env-nokeys } }
+        - &localtmp-20
+          name: localtmp
+          ephemeral:
+            volumeClaimTemplate:
+              spec:
+                accessModes: [ReadWriteOnce]
+                # An SSD-backed class: throughput scales with size, so don't shrink these
+                storageClassName: SSD-STORAGE-CLASS
+                resources: { requests: { storage: 20Gi } }
+      outputs:
+        parameters:
+          - { name: ingest-world, valueFrom: { path: /plan/ingest-world.json } }
+          - { name: ingest-tiles, valueFrom: { path: /plan/ingest-tiles.json } }
+          - name: ingest-tiles-allowed-failures
+            valueFrom: { path: /plan/ingest-tiles-allowed-failures.json }
+          - { name: tiles, valueFrom: { path: /plan/tiles.json } }
+          - { name: export-tiles-cog, valueFrom: { path: /plan/export-tiles-cog.json } }
+          - { name: export-tiles-zarr, valueFrom: { path: /plan/export-tiles-zarr.json } }
+
+    # Writes {product}/{tile}.tif, staging the bands uncompressed for the COG
+    - name: export-tile-cog
+      inputs: &export-tile-inputs
+        parameters: [{ name: step }, { name: product }, { name: format }, { name: tile-id }]
+      activeDeadlineSeconds: 10800
+      container:
+        image: *image
+        command: &export-tile-command [python, -m, orchestration_ext, export-tile]
+        args: &export-tile-args
+          - "--step={{inputs.parameters.step}}"
+          - "--product={{inputs.parameters.product}}"
+          - "--format={{inputs.parameters.format}}"
+          - "--tile-id={{inputs.parameters.tile-id}}"
+        env: *tmpdir-env
+        resources: *light-resources
+        volumeMounts: *mounts
+      volumes:
+        - *nokeys
+        - name: localtmp
+          ephemeral:
+            volumeClaimTemplate:
+              spec:
+                accessModes: [ReadWriteOnce]
+                storageClassName: SSD-STORAGE-CLASS
+                resources: { requests: { storage: 200Gi } }
+
+    # Writes {product}/{tile}.zarr, streaming chunks to EXPORT_ROOT with no local staging
+    - name: export-tile-zarr
+      inputs: *export-tile-inputs
+      activeDeadlineSeconds: 10800
+      container:
+        image: *image
+        command: *export-tile-command
+        args: *export-tile-args
+        env: *tmpdir-env
+        resources: *light-resources
+        volumeMounts: *mounts
+      volumes: [*nokeys, *localtmp-20]

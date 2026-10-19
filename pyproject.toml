@@ -59,7 +59,7 @@ follow_imports = "skip"
 implicit_reexport = true
 
 [tool.importlinter]
-root_packages = ["jdluc", "orchestration", "validation"]
+root_packages = ["jdluc", "orchestration", "orchestration_ext", "validation"]
 
 [[tool.importlinter.contracts]]
 name = "The pipeline never imports the validator"
@@ -79,6 +79,17 @@ source_modules = [
 ]
 forbidden_modules = [
     "orchestration",
+]
+
+[[tool.importlinter.contracts]]
+name = "Upstream's packages never import the fork's orchestration"
+type = "forbidden"
+source_modules = [
+    "jdluc",
+    "orchestration",
+]
+forbidden_modules = [
+    "orchestration_ext",
 ]
 
 [[tool.importlinter.contracts]]
