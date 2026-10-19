@@ -6,9 +6,7 @@ import orchestration
 from jdluc import (
     attribute,
     config,
-    derive,
     emit,
-    export,
     harmonize,
     ingest,
     jurisdictional_direct,
@@ -21,9 +19,6 @@ from jdluc.datasets import NAME_TO_CLS, DatasetName, worldbank_jurisdictions
 from orchestration import plan
 
 logger = logging.getLogger(__name__)
-
-# A step's export format when it exports nothing
-NO_EXPORT = "none"
 
 
 def ingest_tile(dataset: DatasetName, tile_id: str) -> None:
@@ -147,104 +142,67 @@ def trace_countries(methodology: attribute.Methodology, scope: tuple[str, ...]) 
     logger.info(f"exported emissions factors to {uri:s}")
 
 
-STEP_TO_EXPORT_WORKFLOW: dict[plan.Step, collections.abc.Callable[..., list[str]]] = {
-    plan.Step.EMIT: emit.export_workflow,
-    plan.Step.DERIVE: derive.export_workflow,
-}
+def add_subparser(
+    subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
+    name: str,
+    func: collections.abc.Callable[..., None],
+) -> argparse.ArgumentParser:
+    """A subcommand that calls ``func`` with its flags, which must be exactly ``func``'s
+    parameters."""
+    subparser = subparsers.add_parser(name, help=(func.__doc__ or "").split("\n")[0])
+    subparser.set_defaults(func=func)
+    return subparser
 
 
-def export_tile(
-    deliverable: str, format: export.Format, step: plan.Step, tile_id: str
-) -> None:
-    """One deliverable of one step for one tile, from emit's cached output."""
-    (uri,) = STEP_TO_EXPORT_WORKFLOW[step](
-        deliverable_names=(deliverable,), format=format, tile_id=tile_id
+def add_scope(subparser: argparse.ArgumentParser) -> None:
+    subparser.add_argument(
+        "scope",
+        help=f"ISO 3166 alpha-3 codes, or {plan.WORLD:s} for every country and GNW tile",
+        nargs=argparse.ONE_OR_MORE,
+        type=plan.scope_str,
     )
-    logger.info(f"exported {step!s} {deliverable=:s} to {uri:s}")
 
 
-def mosaic(deliverable: str, scope: tuple[str, ...]) -> None:
-    """One VRT over the run's COGs of one deliverable."""
-    uri = export.mosaic_workflow(
-        deliverable_name=deliverable,
-        name=plan.get_name(scope=scope),
-        tile_ids=plan.get_tile_ids(scope=scope),
+def add_methodology(subparser: argparse.ArgumentParser) -> None:
+    subparser.add_argument(
+        "--methodology",
+        choices=list(attribute.Methodology),
+        metavar="{" + ",".join(m.name for m in attribute.Methodology) + "}",
+        required=True,
+        type=attribute.Methodology.__getitem__,
     )
-    logger.info(f"mosaicked {deliverable=:s} to {uri:s}")
 
 
-def main() -> int:
-    logging.basicConfig(
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        level=logging.INFO,
+def add_tile_id(subparser: argparse.ArgumentParser) -> None:
+    subparser.add_argument("--tile-id", required=True)
+
+
+def add_allow_failures(subparser: argparse.ArgumentParser) -> None:
+    subparser.add_argument(
+        "--allow-failures",
+        default=(),
+        help="comma-separated ten-degree datasets whose failed tiles must not stop the run",
+        type=lambda s: tuple(name for name in s.split(",") if name),
     )
+
+
+def build_parser() -> tuple[
+    argparse.ArgumentParser, argparse._SubParsersAction[argparse.ArgumentParser]
+]:
+    """The CLI, and its subparsers for a wrapper to add subcommands to before `run`."""
     parser = argparse.ArgumentParser(
         description=orchestration.__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     subparsers = parser.add_subparsers(required=True)
 
-    def add_subparser(
-        name: str, func: collections.abc.Callable[..., None]
-    ) -> argparse.ArgumentParser:
-        subparser = subparsers.add_parser(
-            name, help=(func.__doc__ or "").split("\n")[0]
-        )
-        subparser.set_defaults(func=func)
-        return subparser
-
-    def add_scope(subparser: argparse.ArgumentParser) -> None:
-        subparser.add_argument(
-            "scope",
-            help=f"ISO 3166 alpha-3 codes, or {plan.WORLD:s} for every country and GNW tile",
-            nargs=argparse.ONE_OR_MORE,
-            type=plan.scope_str,
-        )
-
-    def add_methodology(subparser: argparse.ArgumentParser) -> None:
-        subparser.add_argument(
-            "--methodology",
-            choices=list(attribute.Methodology),
-            metavar="{" + ",".join(m.name for m in attribute.Methodology) + "}",
-            required=True,
-            type=attribute.Methodology.__getitem__,
-        )
-
-    def add_export_format(subparser: argparse.ArgumentParser, flag: str) -> None:
-        subparser.add_argument(
-            flag,
-            choices=[*export.Format, None],
-            metavar="{" + ",".join([*export.Format, NO_EXPORT]) + "}",
-            required=True,
-            type=lambda s: None if s == NO_EXPORT else export.Format(s),
-        )
-
-    def add_tile_id(subparser: argparse.ArgumentParser) -> None:
-        subparser.add_argument("--tile-id", required=True)
-
-    def add_allow_failures(subparser: argparse.ArgumentParser) -> None:
-        subparser.add_argument(
-            "--allow-failures",
-            default=(),
-            help="comma-separated ten-degree datasets whose failed tiles must not stop the run",
-            type=lambda s: tuple(name for name in s.split(",") if name),
-        )
-
-    subparser = add_subparser("plan", plan.write_plan)
+    subparser = add_subparser(subparsers, "plan", plan.write_plan)
     add_scope(subparser)
     add_methodology(subparser)
     add_allow_failures(subparser)
-    subparser.add_argument(
-        "--derive-deliverables",
-        default=(),
-        help="comma-separated derive deliverables to export",
-        type=lambda s: tuple(name for name in s.split(",") if name),
-    )
-    add_export_format(subparser, "--derive-export")
-    add_export_format(subparser, "--emit-export")
     subparser.add_argument("--output-dir", required=True)
 
-    subparser = add_subparser("ingest-tile", ingest_tile)
+    subparser = add_subparser(subparsers, "ingest-tile", ingest_tile)
     subparser.add_argument(
         "--dataset",
         choices=list(DatasetName),
@@ -255,7 +213,7 @@ def main() -> int:
     )
     add_tile_id(subparser)
 
-    subparser = add_subparser("compute", compute)
+    subparser = add_subparser(subparsers, "compute", compute)
     add_scope(subparser)
     add_methodology(subparser)
     add_tile_id(subparser)
@@ -266,29 +224,31 @@ def main() -> int:
         help="fail if an input other than --allow-failures is missing from the ingest root",
     )
 
-    subparser = add_subparser("trace", trace_countries)
+    subparser = add_subparser(subparsers, "trace", trace_countries)
     add_scope(subparser)
     add_methodology(subparser)
 
-    subparser = add_subparser("export-tile", export_tile)
-    subparser.add_argument("--deliverable", required=True)
-    subparser.add_argument(
-        "--format", choices=list(export.Format), required=True, type=export.Format
-    )
-    subparser.add_argument(
-        "--step", choices=list(plan.Step), required=True, type=plan.Step
-    )
-    add_tile_id(subparser)
+    return parser, subparsers
 
-    subparser = add_subparser("mosaic", mosaic)
-    add_scope(subparser)
-    subparser.add_argument("--deliverable", required=True)
 
+def run(
+    parser: argparse.ArgumentParser, args: collections.abc.Sequence[str] | None = None
+) -> int:
+    """Parse ``args`` (by default the command line) and call the chosen subcommand."""
+    logging.basicConfig(
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        level=logging.INFO,
+    )
     # Each subcommand's flags are exactly its function's parameters
-    kwargs = vars(parser.parse_args())
+    kwargs = vars(parser.parse_args(args))
     func = kwargs.pop("func")
     func(**{k: tuple(v) if isinstance(v, list) else v for k, v in kwargs.items()})
     return 0
+
+
+def main() -> int:
+    parser, _ = build_parser()
+    return run(parser)
 
 
 if __name__ == "__main__":

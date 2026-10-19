@@ -2,7 +2,7 @@
 
 **Status:** our preferred way to run the pipeline in the cloud, as of 2026-10-15. It replaces a hand-rolled driver (`infra/run_aoi.py` + `infra/k8s/phase-job.yaml`, since removed) that ran one k8s Indexed Job per phase. Proven end to end on Honduras (1 tile) and Côte d'Ivoire (2 tiles), on our nonprod GKE cluster. Those runs predate the task layout described here, which arrived with the `orchestration` package (`b795c6f`). This note is written from the user's side: what you need, how to run a country, and what to expect. It is not a guide to operating Argo itself.
 
-> **This repo is public.** The cluster, project, bucket, image registry and node-pool names are deliberately absent from this note. They live in the deployed workflow file and its env files, which are kept outside the repo and shared within the team. [`orchestration/workflows/`](../../orchestration/workflows/) holds committed copies of the workflows with placeholders for those names.
+> **This repo is public.** The cluster, project, bucket, image registry and node-pool names are deliberately absent from this note. They live in the deployed workflow file and its env files, which are kept outside the repo and shared within the team. [`orchestration/workflows/`](../../orchestration/workflows/) and [`orchestration_ext/workflows/`](../../orchestration_ext/workflows/) hold committed copies of the workflows with placeholders for those names.
 
 ## Design choices
 
@@ -24,6 +24,8 @@ These are the decisions behind the shape below, kept here because the notes that
 
 What Argo did **not** change: `jdluc` runs unmodified inside the pods. Argo replaces only the driver: sequencing, fan-out, retries and visibility. Our own glue is the small `orchestration` package, one subcommand per workflow task, and it may not change a result: every cache-key argument goes straight through to `jdluc`.
 
+**Upstream's orchestration, and ours on top.** `orchestration/` is upstream's: plan, ingest-tile, compute and trace, and the `cornerstone` WorkflowTemplate that runs them. We never edit it, so merges from upstream don't conflict. What only this fork has (the per-tile exports, their mosaics, and the plan's export flags, which need our emit bands, `derive.py` and the COG/zarr exports) lives in `orchestration_ext/`. It reuses upstream's CLI through `orchestration.__main__.build_parser()`, adds the export flags to its `plan` and adds `export-tile` and `mosaic`; its plan is upstream's `get_task_to_items` plus the export lists. Our workflows define only plan, the exports and mosaic, run by `python -m orchestration_ext`, and call upstream's ingest-world, ingest-tile, compute and trace by `templateRef` from the `cornerstone` WorkflowTemplate. An import-linter contract keeps `jdluc` and `orchestration` from importing `orchestration_ext`.
+
 **Ingest is separate from compute.** They are different workloads:
 
 |                       | Ingest                            | Compute                   |
@@ -39,19 +41,19 @@ So only the ingest pods carry the keys, ingest can run on cheaper nodes, a flaky
 
 ## The pieces
 
-| Piece    | What it is                                                                             | Where it lives                                                              |
-| -------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| Image    | `Dockerfile`, built from a commit and tagged with its short SHA                        | the team's Artifact Registry                                                |
-| Workflow | one Argo `Workflow` YAML: the DAG below, pod sizes, node pools                         | outside the repo (team-shared); `orchestration/workflows/` has placeholders |
-| Config   | each pod's `.env`: `INGEST_ROOT`, `SCRATCH_ROOT`, `EXPORT_ROOT`, API keys              | two k8s Secrets, built from a cloud `.env`                                  |
-| Identity | the `argo-workflow` service account, bound to a GCP service account with bucket access | set up by the platform team                                                 |
-| Data     | ingest cache, scratch zarrs, exported deliverables                                     | one GCS bucket, set in the Secrets                                          |
+| Piece    | What it is                                                                                                                                | Where it lives                                                                                                  |
+| -------- | ----------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Image    | `Dockerfile`, built from a commit and tagged with its short SHA                                                                           | the team's Artifact Registry                                                                                    |
+| Workflow | our Argo `Workflow` YAML (the DAG below), plus upstream's `cornerstone` WorkflowTemplate it calls by `templateRef`; pod sizes, node pools | outside the repo (team-shared); `orchestration/workflows/` and `orchestration_ext/workflows/` have placeholders |
+| Config   | each pod's `.env`: `INGEST_ROOT`, `SCRATCH_ROOT`, `EXPORT_ROOT`, API keys                                                                 | two k8s Secrets, built from a cloud `.env`                                                                      |
+| Identity | the `argo-workflow` service account, bound to a GCP service account with bucket access                                                    | set up by the platform team                                                                                     |
+| Data     | ingest cache, scratch zarrs, exported deliverables                                                                                        | one GCS bucket, set in the Secrets                                                                              |
 
 The bucket is set **only** in the Secrets. To point a run at a different bucket, change the cloud `.env`, recreate the Secrets, and submit. Neither the image nor the workflow changes.
 
 ## The DAG
 
-This is the flat workflow, [`flat.example.yaml`](../../orchestration/workflows/flat.example.yaml): each stage is one fan-out over every tile. *The per-tile DAG* below is the alternative for when some tiles fail. Each run covers its `scope`: one country, or `world` for every country (see *Running every country*):
+This is the flat workflow, [`flat.example.yaml`](../../orchestration_ext/workflows/flat.example.yaml): each stage is one fan-out over every tile. *The per-tile DAG* below is the alternative for when some tiles fail. Each run covers its `scope`: one country, or `world` for every country (see *Running every country*):
 
 ```
 plan -+-> ingest-world[dataset] -------------------------+-> compute[tile] -+-> trace
@@ -61,17 +63,17 @@ plan -+-> ingest-world[dataset] -------------------------+-> compute[tile] -+-> 
 
 | Step                            | Pods                     | Does                                                                                                                            | Secret    |
 | ------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| `plan`                          | 1                        | `python -m orchestration plan ISO`: ingests the boundaries if absent, then writes the JSON lists every fan-out loops over       | no keys   |
+| `plan`                          | 1                        | `python -m orchestration_ext plan ISO`: ingests the boundaries if absent, then writes the JSON lists every fan-out loops over   | no keys   |
 | `ingest-world`                  | 1 per dataset            | `jdluc/ingest.py NAME --backfill`: climate zones, plus MAPSPAM and FAOSTAT (statistical) or NASS (jurisdictional direct)        | with keys |
 | `ingest-tiles`                  | 1 per dataset × tile     | `python -m orchestration ingest-tile --dataset=NAME --tile-id=T`: one dataset on one tile                                       | with keys |
 | `ingest-tiles-allowed-failures` | 1 per dataset × tile     | The same, for the datasets in `allow-failures`                                                                                  | with keys |
 | `compute`                       | 1 per tile               | `python -m orchestration compute`: harmonize (from the warm cache) → emit → attribute, for each country the tile touches        | no keys   |
 | `trace`                         | 1                        | `python -m orchestration trace`: `trace.workflow` over the country, the cross-tile merge, written as the emissions-factor table | no keys   |
-| `export-tiles-cog`              | 1 per deliverable × tile | `python -m orchestration export-tile`: writes one emit or derive deliverable as a COG, from emit's cache                        | no keys   |
+| `export-tiles-cog`              | 1 per deliverable × tile | `python -m orchestration_ext export-tile`: writes one emit or derive deliverable as a COG, from emit's cache                    | no keys   |
 | `export-tiles-zarr`             | 1 per deliverable × tile | The same, as a zarr                                                                                                             | no keys   |
-| `mosaic`                        | 1 per COG deliverable    | `python -m orchestration mosaic`: writes a VRT over the country's COGs of one deliverable                                       | no keys   |
+| `mosaic`                        | 1 per COG deliverable    | `python -m orchestration_ext mosaic`: writes a VRT over the country's COGs of one deliverable                                   | no keys   |
 
-Every step runs a CLI from the image directly, with no shell scripting around it.
+Every step runs a CLI from the image directly, with no shell scripting around it. Steps run by `python -m orchestration` are upstream's templates, called by `templateRef`.
 
 **Ingest runs one pod per dataset and tile, and fails loudly by default.** The tiles of a country run side by side, which a large country or a global run needs. A dataset behind one global download (GPW livestock, Liao) would fetch it once per pod; setting `SOURCE_CACHE_ROOT` in the Secrets shares those downloads between pods. Already-ingested tiles are skipped, so a warm rerun is quick. A failed tile fails its pod, and that fails the run: compute's `--ignore-missing-tiles` would otherwise turn a missing tile into an all-nodata band without complaint. The exception is the datasets in the `allow-failures` parameter, by default only `DESCALS_OIL_PALM`, which is published only where oil palm was found, so most tiles have none. They run as `ingest-tiles-allowed-failures`, and compute runs whether or not that step fails; its failed tiles show as failed pods in `argo get`. The dataset list is ours, not upstream's: see `orchestration/plan.py` for why, and add to it when upstream starts reading a new dataset.
 
@@ -81,11 +83,11 @@ Every step runs a CLI from the image directly, with no shell scripting around it
 
 **Exports are chosen per step, and run off to the side.** `emit-export` and `derive-export` each take `cog`, `zarr` or `none`. The step's format overrides each deliverable's own. `plan` turns them into one unit per (step, deliverable, tile), split by format, so a COG pod gets the disk it stages on and a zarr pod doesn't. A step with no export gets empty lists, and Argo skips a task with nothing to loop over, so the workflow needs no `when:` conditions. Every export reads only emit's cached output, so all start once `compute` finishes and run alongside `trace`. derive is lazy and never cached: it runs only as an export, so `derive-export=none` means derive doesn't run at all. emit's zarr in `SCRATCH_ROOT` is there whatever `emit-export` says, but scratch isn't kept. `trace` always writes its table: it is one small file, and the run's main result.
 
-**`export` and `derive` became `export-tiles-cog` and `export-tiles-zarr`**, both running `python -m orchestration export-tile`. Images from then on have no `export` subcommand, and run derive through orchestration rather than `jdluc/derive.py`.
+**`export` and `derive` became `export-tiles-cog` and `export-tiles-zarr`**, both running `python -m orchestration export-tile` (now `python -m orchestration_ext export-tile`). Images from then on have no `export` subcommand, and run derive through orchestration rather than `jdluc/derive.py`.
 
 ## The per-tile DAG
 
-In the flat DAG, `compute` waits on every tile's ingest, so one failed (dataset, tile) stops compute on every tile. [`per-tile.example.yaml`](../../orchestration/workflows/per-tile.example.yaml) gives each tile a DAG of its own, so a broken tile stops only itself. Use it to backfill the tiles that work while the broken ones are debugged.
+In the flat DAG, `compute` waits on every tile's ingest, so one failed (dataset, tile) stops compute on every tile. [`per-tile.example.yaml`](../../orchestration_ext/workflows/per-tile.example.yaml) gives each tile a DAG of its own, so a broken tile stops only itself. Use it to backfill the tiles that work while the broken ones are debugged.
 
 ```
 plan -+-> ingest-world[dataset] -+-> tile[tile] -+-> trace
@@ -127,7 +129,13 @@ kubectl --context "$KUBE_CONTEXT" -n argo create secret generic <secret-no-keys>
 
 The workflow names both Secrets. To change the config, delete and recreate them.
 
-**The image.** Build it from a clean commit and push it, as in the header of the `Dockerfile`. Then set the workflow's image to the new tag.
+**The image.** Build it from a clean commit and push it, as in the header of the `Dockerfile`. Then set the workflow's image to the new tag, in both our workflow and the `cornerstone` WorkflowTemplate, and update the template:
+
+```bash
+kubectl --context "$KUBE_CONTEXT" -n argo apply -f cornerstone.yaml
+```
+
+The template's tasks take their image, sizes and node pool from the template, not from our workflow, so compute's power-pool `nodeSelector` goes in the template's copy.
 
 **What a run leaves behind.** Pods and their autoscaled nodes go away by themselves. The Secrets, the images in the registry and the bucket's data stay until deleted. The data is the point of the run; before a continent-scale run, decide how long to keep `SCRATCH_ROOT` (see *Storage, not compute, is the first scale risk* under *Design choices*).
 
@@ -224,7 +232,7 @@ The volume is a generic ephemeral volume on GKE's built-in pd-ssd StorageClass (
 
 ### Pod sizing
 
-The sizes in `orchestration/workflows/`, with the reasons the old driver recorded for its own, similar sizes. "Light" is the shared 2 / 4 CPU and 24Gi memory shape.
+The sizes in `orchestration/workflows/` and `orchestration_ext/workflows/`, with the reasons the old driver recorded for its own, similar sizes. "Light" is the shared 2 / 4 CPU and 24Gi memory shape.
 
 | Task               | CPU req / limit | Memory | `/localtmp` | Deadline | Why                                                                                                                                                                     |
 | ------------------ | --------------- | ------ | ----------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

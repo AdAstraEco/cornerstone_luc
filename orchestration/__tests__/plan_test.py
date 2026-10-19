@@ -6,7 +6,7 @@ import types
 
 import pytest
 
-from jdluc import attribute, datasets, export, tiling, trace
+from jdluc import attribute, datasets, tiling, trace
 from jdluc.datasets import worldbank_jurisdictions
 from orchestration import __main__ as cli
 from orchestration import plan
@@ -52,16 +52,10 @@ def ingested(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
 def write_plan(
     tmp_path: pathlib.Path,
     allow_failures: tuple[str, ...],
-    derive_deliverables: tuple[str, ...] = (),
-    derive_export: export.Format | None = None,
-    emit_export: export.Format | None = None,
     scope: tuple[str, ...] = ("AAA",),
 ) -> dict:
     plan.write_plan(
         allow_failures=allow_failures,
-        derive_deliverables=derive_deliverables,
-        derive_export=derive_export,
-        emit_export=emit_export,
         methodology=attribute.Methodology.STATISTICAL,
         output_dir=str(tmp_path),
         scope=scope,
@@ -141,82 +135,6 @@ def test_a_failed_tile_fails_its_ingest(monkeypatch: pytest.MonkeyPatch) -> None
         )
 
 
-def test_no_export_plans_no_export(
-    ingested: list[tuple[str, str]], tmp_path: pathlib.Path
-) -> None:
-    task_to_items = write_plan(
-        tmp_path=tmp_path,
-        allow_failures=(),
-        derive_deliverables=("crop-class-emissions",),
-    )
-    assert task_to_items["export-tiles-cog"] == []
-    assert task_to_items["export-tiles-zarr"] == []
-    assert task_to_items["mosaics"] == []
-
-
-def test_each_steps_format_picks_its_list(
-    ingested: list[tuple[str, str]], tmp_path: pathlib.Path
-) -> None:
-    task_to_items = write_plan(
-        tmp_path=tmp_path,
-        allow_failures=(),
-        derive_deliverables=("crop-class-emissions", "perennial-debug"),
-        derive_export=export.Format.ZARR,
-        emit_export=export.Format.COG,
-    )
-    assert {
-        (u["step"], u["deliverable"], u["format"], u["tile_id"])
-        for u in task_to_items["export-tiles-cog"]
-    } == {("emit", "cie-emissions", "cog", tile_id) for tile_id in TILE_IDS}
-    # NB: the step's format overrides perennial-debug's own (zarr) and
-    # crop-class-emissions' (cog) alike
-    assert {
-        (u["step"], u["deliverable"], u["format"], u["tile_id"])
-        for u in task_to_items["export-tiles-zarr"]
-    } == {
-        ("derive", deliverable, "zarr", tile_id)
-        for deliverable in ("crop-class-emissions", "perennial-debug")
-        for tile_id in TILE_IDS
-    }
-    assert task_to_items["mosaics"] == ["cie-emissions"]
-
-
-def test_every_cog_deliverable_is_mosaicked(
-    ingested: list[tuple[str, str]], tmp_path: pathlib.Path
-) -> None:
-    task_to_items = write_plan(
-        tmp_path=tmp_path,
-        allow_failures=(),
-        derive_deliverables=("crop-class-emissions",),
-        derive_export=export.Format.COG,
-        emit_export=export.Format.COG,
-    )
-    assert task_to_items["mosaics"] == ["cie-emissions", "crop-class-emissions"]
-    assert task_to_items["export-tiles-zarr"] == []
-
-
-def test_an_unknown_derive_deliverable_fails(
-    ingested: list[tuple[str, str]], tmp_path: pathlib.Path
-) -> None:
-    with pytest.raises(AssertionError, match="crop-class-emisions"):
-        write_plan(
-            tmp_path=tmp_path,
-            allow_failures=(),
-            derive_deliverables=("crop-class-emisions",),
-            derive_export=export.Format.COG,
-        )
-    assert ingested == []
-
-
-def test_a_derive_export_with_no_deliverable_fails(
-    ingested: list[tuple[str, str]], tmp_path: pathlib.Path
-) -> None:
-    with pytest.raises(AssertionError, match="names no deliverable"):
-        write_plan(
-            tmp_path=tmp_path, allow_failures=(), derive_export=export.Format.ZARR
-        )
-
-
 def test_world_plans_every_gnw_tile(
     ingested: list[tuple[str, str]], tmp_path: pathlib.Path
 ) -> None:
@@ -242,24 +160,58 @@ def test_world_names_its_run_wide_outputs_world(
         calls.append(kwargs)
         return "uri"
 
-    monkeypatch.setattr(export, "mosaic_workflow", record)
     monkeypatch.setattr(trace, "export_workflow", record)
-    for argv in (
-        ["mosaic", "world", "--deliverable=cie-emissions"],
-        ["trace", "world", "--methodology=STATISTICAL"],
-    ):
-        monkeypatch.setattr(sys, "argv", ["orchestration", *argv])
-        assert cli.main() == 0
+    monkeypatch.setattr(
+        sys, "argv", ["orchestration", "trace", "world", "--methodology=STATISTICAL"]
+    )
+    assert cli.main() == 0
 
-    mosaic_kwargs, trace_kwargs = calls
-    assert mosaic_kwargs["name"] == "world"
-    assert mosaic_kwargs["tile_ids"] == list(WORLD_TILE_IDS)
+    (trace_kwargs,) = calls
     assert trace_kwargs["name"] == "world"
     assert trace_kwargs["iso_3166s"] == ("AAA", "BBB")
 
 
 def test_a_country_run_names_its_outputs_by_its_countries() -> None:
     assert plan.get_name(scope=("HND", "GTM")) == "GTM-HND"
+
+
+def test_get_task_to_items_ingests_nothing_and_matches_the_plan(
+    ingested: list[tuple[str, str]], tmp_path: pathlib.Path
+) -> None:
+    task_to_items = plan.get_task_to_items(
+        allow_failures=(),
+        methodology=attribute.Methodology.STATISTICAL,
+        scope=("AAA",),
+    )
+    assert ingested == []
+    assert task_to_items == write_plan(tmp_path=tmp_path, allow_failures=())
+
+
+def test_a_wrapper_adds_a_list_and_a_subcommand(
+    ingested: list[tuple[str, str]], tmp_path: pathlib.Path
+) -> None:
+    """The extension points a wrapper builds on: a list added to the plan, and a subcommand
+    added to the CLI, with no edit to this package."""
+    task_to_items = plan.get_task_to_items(
+        allow_failures=(),
+        methodology=attribute.Methodology.STATISTICAL,
+        scope=("AAA",),
+    )
+    task_to_items["extra-tiles"] = [u["tile_id"] for u in task_to_items["tiles"]]
+    plan.write_task_to_items(output_dir=str(tmp_path), task_to_items=task_to_items)
+    assert json.loads((tmp_path / "extra-tiles.json").read_text()) == sorted(TILE_IDS)
+
+    calls: list[dict] = []
+
+    def extra(scope: tuple[str, ...], tile_id: str) -> None:
+        calls.append({"scope": scope, "tile_id": tile_id})
+
+    parser, subparsers = cli.build_parser()
+    subparser = cli.add_subparser(subparsers, "extra", extra)
+    cli.add_scope(subparser)
+    cli.add_tile_id(subparser)
+    assert cli.run(parser, ["extra", "AAA", "--tile-id=10N_010W"]) == 0
+    assert calls == [{"scope": ("AAA",), "tile_id": "10N_010W"}]
 
 
 @pytest.mark.parametrize("scope", [("AAA",), (plan.WORLD,)])
@@ -269,9 +221,6 @@ def test_tile_units_hold_the_flat_lists_by_tile(
     task_to_items = write_plan(
         tmp_path=tmp_path,
         allow_failures=("DESCALS_OIL_PALM",),
-        derive_deliverables=("crop-class-emissions",),
-        derive_export=export.Format.ZARR,
-        emit_export=export.Format.COG,
         scope=scope,
     )
     tile_units = task_to_items["tile-units"]
@@ -285,14 +234,6 @@ def test_tile_units_hold_the_flat_lists_by_tile(
         assert sorted(
             (dataset, u["tile_id"]) for u in tile_units for dataset in u[key]
         ) == sorted((u["dataset"], u["tile_id"]) for u in task_to_items[task])
-    for format in export.Format:
-        assert [
-            {**unit, "tile_id": u["tile_id"]}
-            for u in tile_units
-            for unit in u[f"exports_{format!s}"]
-        ] == sorted(
-            task_to_items[f"export-tiles-{format!s}"], key=lambda u: u["tile_id"]
-        )
 
 
 def test_each_tile_lists_each_tiled_dataset_once(

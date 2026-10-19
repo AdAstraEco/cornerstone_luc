@@ -30,7 +30,7 @@ from jdluc.datasets import usda_nass_quickstats, worldbank_jurisdictions
 
 logger = logging.getLogger(__name__)
 
-# Named after upstream's published `emissions-factors.parquet`
+# Named after the published `emissions-factors.parquet`
 EMISSIONS_FACTORS = "emissions-factors"
 
 

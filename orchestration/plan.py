@@ -1,15 +1,15 @@
 """What a run consists of, as the JSON lists the workflow loops over.
 
-The dataset lists are a hand-kept claim about what jdluc reads: no upstream constant declares
-it all. Upstream ingests lazily, from inside harmonize, so it never needs them. We ingest up
-front, so that compute runs with ``skip_ingest`` and a missing dataset fails at ingest rather
-than surfacing as an all-nodata band (``ignore_missing_tiles``). In particular ``faostat.load``
-and ``usda_nass_quickstats.load`` read the ingest root directly and never ingest, so those
-tables appear here by name. When upstream starts reading a new dataset, add it here.
+The dataset lists are a hand-kept claim about what jdluc reads: no jdluc constant declares it
+all. A laptop run ingests lazily, from inside harmonize, so it never needs them. A workflow
+ingests up front instead, so that compute runs with ``skip_ingest`` and a missing dataset fails
+at ingest rather than surfacing as an all-nodata band (``ignore_missing_tiles``). In particular
+``faostat.load`` and ``usda_nass_quickstats.load`` read the ingest root directly and never
+ingest, so those tables appear here by name. When jdluc starts reading a new dataset, add it
+here.
 """
 
 import collections.abc
-import enum
 import json
 import logging
 import os
@@ -17,9 +17,6 @@ import os
 from jdluc import (
     attribute,
     config,
-    derive,
-    emit,
-    export,
     harmonize,
     jurisdictional_direct,
     statistical,
@@ -53,13 +50,6 @@ METHODOLOGY_TO_HARMONIZED_DATASET_NAMES = {
 # The scope of a run over every country and GNW tile, as jdluc's `--backfill`; also what its
 # run-wide outputs are named, in place of every country's code joined
 WORLD = "world"
-
-
-class Step(enum.StrEnum):
-    """A step whose per-tile output can be exported as deliverables."""
-
-    EMIT = "emit"
-    DERIVE = "derive"
 
 
 def get_dataset_names(
@@ -122,37 +112,6 @@ def get_tile_ids(scope: tuple[str, ...]) -> list[str]:
     )
 
 
-def get_exports(
-    derive_deliverables: tuple[str, ...],
-    derive_export: export.Format | None,
-    emit_export: export.Format | None,
-) -> list[tuple[Step, str, export.Format]]:
-    """Each (step, deliverable, format) the run exports; a step whose format is None exports
-    nothing.
-
-    emit exports every deliverable it has, derive those named. The step's format overrides
-    each deliverable's own.
-    """
-    unknown = sorted(set(derive_deliverables) - set(derive.NAME_TO_DELIVERABLE))
-    assert not unknown, (
-        f"{unknown} are not derive deliverables: {sorted(derive.NAME_TO_DELIVERABLE)}"
-    )
-    assert derive_export is None or derive_deliverables, (
-        f"derive exports as {derive_export!s}, but names no deliverable"
-    )
-    step_to_names = {
-        Step.EMIT: tuple(emit.NAME_TO_DELIVERABLE),
-        Step.DERIVE: derive_deliverables,
-    }
-    step_to_format = {Step.EMIT: emit_export, Step.DERIVE: derive_export}
-    return [
-        (step, name, format)
-        for step, format in step_to_format.items()
-        if format is not None
-        for name in step_to_names[step]
-    ]
-
-
 def ingest_boundaries() -> None:
     """The tile list is read off the boundaries, so the plan ingests them first.
 
@@ -166,45 +125,34 @@ def ingest_boundaries() -> None:
         )
 
 
-def write_plan(
-    allow_failures: tuple[str, ...],
-    derive_deliverables: tuple[str, ...],
-    derive_export: export.Format | None,
-    emit_export: export.Format | None,
-    methodology: attribute.Methodology,
-    output_dir: str,
-    scope: tuple[str, ...],
+def check_allow_failures(
+    allow_failures: tuple[str, ...], methodology: attribute.Methodology
 ) -> None:
-    """Write each list the workflow loops over to ``output_dir``, as ``<task>.json``.
-
-    The run covers ``scope``: one or more countries, or ``world`` for every country and GNW
-    tile.
-
-    ``allow_failures`` names ten-degree datasets whose failed tiles must not stop the run.
-    Their units go to their own list, so that the workflow can run them as a task that
-    compute does not wait to succeed.
-
-    ``emit_export`` and ``derive_export`` are each step's export format, or None for no
-    export. The per-tile export units are split by format, so the workflow can size each
-    format's pods apart: only a COG stages its bands on local disk. Each COG deliverable is
-    also mosaicked. A step with no export gets empty lists, which Argo skips.
-
-    The flat workflow loops over each stage's list across every tile. ``tile-units`` holds
-    the same units grouped by tile, for the per-tile workflow, which runs each tile's
-    ingest, compute and exports as a DAG of its own.
-    """
     tiled = get_dataset_names(
         methodology=methodology, partitioning=tiling.Partitioning.TEN_DEGREE_TILE
     )
     unknown = sorted(set(allow_failures) - {name.name for name in tiled})
     assert not unknown, f"{unknown} are not ten-degree datasets this run ingests"
-    exports = get_exports(
-        derive_deliverables=derive_deliverables,
-        derive_export=derive_export,
-        emit_export=emit_export,
-    )
 
-    ingest_boundaries()
+
+def get_task_to_items(
+    allow_failures: tuple[str, ...],
+    methodology: attribute.Methodology,
+    scope: tuple[str, ...],
+) -> dict[str, list]:
+    """Each list the workflow loops over, by task name. Writes nothing, so that a wrapper can
+    add lists of its own, or keys to each tile's unit, before `write_task_to_items`.
+
+    Reads the boundaries for the tile list: `ingest_boundaries` first, on a fresh ingest root.
+
+    The flat workflow loops over each stage's list across every tile. ``tile-units`` holds
+    the same units grouped by tile, for the per-tile workflow, which runs each tile's ingest
+    and compute as a DAG of its own.
+    """
+    check_allow_failures(allow_failures=allow_failures, methodology=methodology)
+    tiled = get_dataset_names(
+        methodology=methodology, partitioning=tiling.Partitioning.TEN_DEGREE_TILE
+    )
     tile_ids = get_tile_ids(scope=scope)
     # One flat list of (dataset, tile), so that the workflow needs no nested loop
     ingest_units = [
@@ -212,21 +160,7 @@ def write_plan(
         for name in tiled
         for tile_id in tile_ids
     ]
-    format_to_export_units = {
-        format: [
-            {
-                "deliverable": name,
-                "format": str(format),
-                "step": str(step),
-                "tile_id": tile_id,
-            }
-            for step, name, step_format in exports
-            if step_format == format
-            for tile_id in tile_ids
-        ]
-        for format in export.Format
-    }
-    task_to_items: dict[str, collections.abc.Sequence[object]] = {
+    return {
         "ingest-world": [
             name.name
             for name in get_dataset_names(
@@ -239,11 +173,6 @@ def write_plan(
             u for u in ingest_units if u["dataset"] in allow_failures
         ],
         "tiles": [{"tile_id": tile_id} for tile_id in tile_ids],
-        **{
-            f"export-tiles-{format!s}": units
-            for format, units in format_to_export_units.items()
-        },
-        "mosaics": [name for _, name, format in exports if format == export.Format.COG],
         "tile-units": [
             {
                 "tile_id": tile_id,
@@ -257,21 +186,45 @@ def write_plan(
                     for u in ingest_units
                     if u["tile_id"] == tile_id and u["dataset"] in allow_failures
                 ],
-                **{
-                    f"exports_{format!s}": [
-                        {k: v for k, v in u.items() if k != "tile_id"}
-                        for u in units
-                        if u["tile_id"] == tile_id
-                    ]
-                    for format, units in format_to_export_units.items()
-                },
             }
             for tile_id in tile_ids
         ],
     }
+
+
+def write_task_to_items(
+    output_dir: str, task_to_items: collections.abc.Mapping[str, list]
+) -> None:
+    """Write each list to ``output_dir``, as ``<task>.json``."""
     os.makedirs(output_dir, exist_ok=True)
     for task, items in task_to_items.items():
         path = os.path.join(output_dir, f"{task:s}.json")
         logger.info(f"Writing {len(items):d} items to {path=:s}")
         with open(path, "w") as fp:
             json.dump(items, fp)
+
+
+def write_plan(
+    allow_failures: tuple[str, ...],
+    methodology: attribute.Methodology,
+    output_dir: str,
+    scope: tuple[str, ...],
+) -> None:
+    """Write each list the workflow loops over to ``output_dir``, as ``<task>.json``.
+
+    The run covers ``scope``: one or more countries, or ``world`` for every country and GNW
+    tile.
+
+    ``allow_failures`` names ten-degree datasets whose failed tiles must not stop the run.
+    Their units go to their own list, so that the workflow can run them as a task that
+    compute does not wait to succeed.
+    """
+    # Before the boundaries' ingest, so that a typo fails fast
+    check_allow_failures(allow_failures=allow_failures, methodology=methodology)
+    ingest_boundaries()
+    write_task_to_items(
+        output_dir=output_dir,
+        task_to_items=get_task_to_items(
+            allow_failures=allow_failures, methodology=methodology, scope=scope
+        ),
+    )
