@@ -17,6 +17,6 @@ tile, as jdluc's `--backfill` covers.
 
 Whole-world ingest needs no wrapper: the workflow runs jdluc's own CLI for it. A tile's ingest
 has one, `ingest-tile`, so that its pod names the tile rather than the run's countries.
-`workflow.example.yaml` shows how the workflow calls each subcommand; the deployed copy,
-which names our cluster, is kept outside the repo. See docs/orbae/argo-workflows.md.
+The examples in `workflows/` show how a workflow calls each subcommand; the deployed copies,
+which name our cluster, are kept outside the repo. See docs/orbae/argo-workflows.md.
 """

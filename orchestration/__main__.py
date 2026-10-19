@@ -13,6 +13,7 @@ from jdluc import (
     ingest,
     jurisdictional_direct,
     statistical,
+    storage,
     tiling,
     trace,
 )
@@ -39,15 +40,59 @@ def ingest_tile(dataset: DatasetName, tile_id: str) -> None:
     logger.info(f"ingested {dataset.name:s} {tile_id=:s} to {path_or_exc:s}")
 
 
+def get_missing_ingests(
+    allow_failures: tuple[str, ...], methodology: attribute.Methodology, tile_id: str
+) -> list[str]:
+    """The URIs of the tile's inputs absent from the ingest root: its ten-degree datasets
+    other than ``allow_failures``, and every whole-world dataset."""
+    root = config.Config.from_dot_env().ingest_root
+    name_and_tile_ids = [
+        *(
+            (name, tile_id)
+            for name in plan.get_dataset_names(
+                methodology=methodology,
+                partitioning=tiling.Partitioning.TEN_DEGREE_TILE,
+            )
+            if name.name not in allow_failures
+        ),
+        *(
+            (name, tiling.WHOLE_WORLD_TILE_ID)
+            for name in plan.get_dataset_names(
+                methodology=methodology, partitioning=tiling.Partitioning.WHOLE_WORLD
+            )
+        ),
+    ]
+    uris = [
+        storage.join_uri(
+            prefix=NAME_TO_CLS[name].get_prefix(tile_id=tile_id), root=root
+        )
+        for name, tile_id in name_and_tile_ids
+    ]
+    return [uri for uri in uris if not storage.path_exists(uri=uri)]
+
+
 def compute(
-    methodology: attribute.Methodology, scope: tuple[str, ...], tile_id: str
+    allow_failures: tuple[str, ...],
+    check_ingests: bool,
+    methodology: attribute.Methodology,
+    scope: tuple[str, ...],
+    tile_id: str,
 ) -> None:
     """harmonize -> emit -> attribute for one tile, in one process.
 
     harmonize goes first with ``skip_ingest=True``: the later stages call it again with
     ``skip_ingest=False``, and the cache key ignores the flag, so warming it here is what
     keeps source credentials off compute pods.
+
+    With ``check_ingests``, raises first if any input other than ``allow_failures`` is
+    missing. harmonize would otherwise read it as an all-nodata band, and cache that.
     """
+    if check_ingests:
+        missing = get_missing_ingests(
+            allow_failures=allow_failures, methodology=methodology, tile_id=tile_id
+        )
+        if missing:
+            raise FileNotFoundError(f"{tile_id=:s} is missing ingests: {missing}")
     for stack in harmonize.Stack:
         logger.info(f"harmonize {stack.name:s} {tile_id=:s}")
         harmonize.workflow(
@@ -177,15 +222,18 @@ def main() -> int:
     def add_tile_id(subparser: argparse.ArgumentParser) -> None:
         subparser.add_argument("--tile-id", required=True)
 
+    def add_allow_failures(subparser: argparse.ArgumentParser) -> None:
+        subparser.add_argument(
+            "--allow-failures",
+            default=(),
+            help="comma-separated ten-degree datasets whose failed tiles must not stop the run",
+            type=lambda s: tuple(name for name in s.split(",") if name),
+        )
+
     subparser = add_subparser("plan", plan.write_plan)
     add_scope(subparser)
     add_methodology(subparser)
-    subparser.add_argument(
-        "--allow-failures",
-        default=(),
-        help="comma-separated ten-degree datasets whose failed tiles must not stop the run",
-        type=lambda s: tuple(name for name in s.split(",") if name),
-    )
+    add_allow_failures(subparser)
     subparser.add_argument(
         "--derive-deliverables",
         default=(),
@@ -211,6 +259,12 @@ def main() -> int:
     add_scope(subparser)
     add_methodology(subparser)
     add_tile_id(subparser)
+    add_allow_failures(subparser)
+    subparser.add_argument(
+        "--check-ingests",
+        action="store_true",
+        help="fail if an input other than --allow-failures is missing from the ingest root",
+    )
 
     subparser = add_subparser("trace", trace_countries)
     add_scope(subparser)

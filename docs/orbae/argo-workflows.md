@@ -2,7 +2,7 @@
 
 **Status:** our preferred way to run the pipeline in the cloud, as of 2026-10-15. It replaces a hand-rolled driver (`infra/run_aoi.py` + `infra/k8s/phase-job.yaml`, since removed) that ran one k8s Indexed Job per phase. Proven end to end on Honduras (1 tile) and Côte d'Ivoire (2 tiles), on our nonprod GKE cluster. Those runs predate the task layout described here, which arrived with the `orchestration` package (`b795c6f`). This note is written from the user's side: what you need, how to run a country, and what to expect. It is not a guide to operating Argo itself.
 
-> **This repo is public.** The cluster, project, bucket, image registry and node-pool names are deliberately absent from this note. They live in the deployed workflow file and its env files, which are kept outside the repo and shared within the team. [`orchestration/workflow.example.yaml`](../../orchestration/workflow.example.yaml) is a committed copy of the workflow with placeholders for those names.
+> **This repo is public.** The cluster, project, bucket, image registry and node-pool names are deliberately absent from this note. They live in the deployed workflow file and its env files, which are kept outside the repo and shared within the team. [`orchestration/workflows/`](../../orchestration/workflows/) holds committed copies of the workflows with placeholders for those names.
 
 ## Design choices
 
@@ -39,19 +39,19 @@ So only the ingest pods carry the keys, ingest can run on cheaper nodes, a flaky
 
 ## The pieces
 
-| Piece    | What it is                                                                             | Where it lives                                                                         |
-| -------- | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| Image    | `Dockerfile`, built from a commit and tagged with its short SHA                        | the team's Artifact Registry                                                           |
-| Workflow | one Argo `Workflow` YAML: the DAG below, pod sizes, node pools                         | outside the repo (team-shared); `orchestration/workflow.example.yaml` has placeholders |
-| Config   | each pod's `.env`: `INGEST_ROOT`, `SCRATCH_ROOT`, `EXPORT_ROOT`, API keys              | two k8s Secrets, built from a cloud `.env`                                             |
-| Identity | the `argo-workflow` service account, bound to a GCP service account with bucket access | set up by the platform team                                                            |
-| Data     | ingest cache, scratch zarrs, exported deliverables                                     | one GCS bucket, set in the Secrets                                                     |
+| Piece    | What it is                                                                             | Where it lives                                                              |
+| -------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Image    | `Dockerfile`, built from a commit and tagged with its short SHA                        | the team's Artifact Registry                                                |
+| Workflow | one Argo `Workflow` YAML: the DAG below, pod sizes, node pools                         | outside the repo (team-shared); `orchestration/workflows/` has placeholders |
+| Config   | each pod's `.env`: `INGEST_ROOT`, `SCRATCH_ROOT`, `EXPORT_ROOT`, API keys              | two k8s Secrets, built from a cloud `.env`                                  |
+| Identity | the `argo-workflow` service account, bound to a GCP service account with bucket access | set up by the platform team                                                 |
+| Data     | ingest cache, scratch zarrs, exported deliverables                                     | one GCS bucket, set in the Secrets                                          |
 
 The bucket is set **only** in the Secrets. To point a run at a different bucket, change the cloud `.env`, recreate the Secrets, and submit. Neither the image nor the workflow changes.
 
 ## The DAG
 
-Each run covers its `scope`: one country, or `world` for every country (see *Running every country*):
+This is the flat workflow, [`flat.example.yaml`](../../orchestration/workflows/flat.example.yaml): each stage is one fan-out over every tile. *The per-tile DAG* below is the alternative for when some tiles fail. Each run covers its `scope`: one country, or `world` for every country (see *Running every country*):
 
 ```
 plan -+-> ingest-world[dataset] -------------------------+-> compute[tile] -+-> trace
@@ -82,6 +82,25 @@ Every step runs a CLI from the image directly, with no shell scripting around it
 **Exports are chosen per step, and run off to the side.** `emit-export` and `derive-export` each take `cog`, `zarr` or `none`. The step's format overrides each deliverable's own. `plan` turns them into one unit per (step, deliverable, tile), split by format, so a COG pod gets the disk it stages on and a zarr pod doesn't. A step with no export gets empty lists, and Argo skips a task with nothing to loop over, so the workflow needs no `when:` conditions. Every export reads only emit's cached output, so all start once `compute` finishes and run alongside `trace`. derive is lazy and never cached: it runs only as an export, so `derive-export=none` means derive doesn't run at all. emit's zarr in `SCRATCH_ROOT` is there whatever `emit-export` says, but scratch isn't kept. `trace` always writes its table: it is one small file, and the run's main result.
 
 **`export` and `derive` became `export-tiles-cog` and `export-tiles-zarr`**, both running `python -m orchestration export-tile`. Images from then on have no `export` subcommand, and run derive through orchestration rather than `jdluc/derive.py`.
+
+## The per-tile DAG
+
+In the flat DAG, `compute` waits on every tile's ingest, so one failed (dataset, tile) stops compute on every tile. [`per-tile.example.yaml`](../../orchestration/workflows/per-tile.example.yaml) gives each tile a DAG of its own, so a broken tile stops only itself. Use it to backfill the tiles that work while the broken ones are debugged.
+
+```
+plan -+-> ingest-world[dataset] -+-> tile[tile] -+-> trace
+      +--------------------------+               +-> mosaic[deliverable]
+
+tile:  ingest[dataset] -------------------+-> compute -+-> export-cog[step, deliverable]
+       ingest-allowed-failures[dataset] --+            +-> export-zarr[step, deliverable]
+```
+
+The steps are the same pods as in the flat DAG, grouped differently. `plan` writes `tile-units`, one item per tile with its ingests and exports, from the same units as the flat lists.
+
+- **A failed tile fails only itself.** Within a tile, compute waits for its ingests, with `allow-failures` as in the flat DAG. A failed required ingest leaves the tile's compute unscheduled, and the other tiles carry on.
+- **`compute` checks its inputs.** It runs with `--check-ingests`, and raises before harmonize if a required ingest is missing from the ingest root. The DAG already rules that out; the check is a second line of defence, as harmonize would cache a missing tile as nodata.
+- **`trace` and `mosaic` need every tile.** A table or mosaic missing tiles would pass for a whole one, so with any tile failed neither runs, and the run ends Failed. `argo get` lists the failed tiles. Once they're fixed, `argo retry` reruns them, then trace and mosaic.
+- **Tiles wait for `ingest-world`.** A tile's DAG can't depend on one task of the outer DAG, so every tile starts once all of `ingest-world` is in. That's minutes once the whole-world datasets are cached, and up to 1.5h cold. In return, each tile's compute starts as soon as its own ingests finish, not after every ingest in the run.
 
 ## One-off setup
 
@@ -205,7 +224,7 @@ The volume is a generic ephemeral volume on GKE's built-in pd-ssd StorageClass (
 
 ### Pod sizing
 
-The sizes in `orchestration/workflow.example.yaml`, with the reasons the old driver recorded for its own, similar sizes. "Light" is the shared 2 / 4 CPU and 24Gi memory shape.
+The sizes in `orchestration/workflows/`, with the reasons the old driver recorded for its own, similar sizes. "Light" is the shared 2 / 4 CPU and 24Gi memory shape.
 
 | Task               | CPU req / limit | Memory | `/localtmp` | Deadline | Why                                                                                                                                                                     |
 | ------------------ | --------------- | ------ | ----------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

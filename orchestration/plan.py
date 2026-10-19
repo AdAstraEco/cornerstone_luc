@@ -8,6 +8,7 @@ and ``usda_nass_quickstats.load`` read the ingest root directly and never ingest
 tables appear here by name. When upstream starts reading a new dataset, add it here.
 """
 
+import collections.abc
 import enum
 import json
 import logging
@@ -187,6 +188,10 @@ def write_plan(
     export. The per-tile export units are split by format, so the workflow can size each
     format's pods apart: only a COG stages its bands on local disk. Each COG deliverable is
     also mosaicked. A step with no export gets empty lists, which Argo skips.
+
+    The flat workflow loops over each stage's list across every tile. ``tile-units`` holds
+    the same units grouped by tile, for the per-tile workflow, which runs each tile's
+    ingest, compute and exports as a DAG of its own.
     """
     tiled = get_dataset_names(
         methodology=methodology, partitioning=tiling.Partitioning.TEN_DEGREE_TILE
@@ -207,7 +212,21 @@ def write_plan(
         for name in tiled
         for tile_id in tile_ids
     ]
-    task_to_items: dict[str, list[object]] = {
+    format_to_export_units = {
+        format: [
+            {
+                "deliverable": name,
+                "format": str(format),
+                "step": str(step),
+                "tile_id": tile_id,
+            }
+            for step, name, step_format in exports
+            if step_format == format
+            for tile_id in tile_ids
+        ]
+        for format in export.Format
+    }
+    task_to_items: dict[str, collections.abc.Sequence[object]] = {
         "ingest-world": [
             name.name
             for name in get_dataset_names(
@@ -221,20 +240,34 @@ def write_plan(
         ],
         "tiles": [{"tile_id": tile_id} for tile_id in tile_ids],
         **{
-            f"export-tiles-{format!s}": [
-                {
-                    "deliverable": name,
-                    "format": str(format),
-                    "step": str(step),
-                    "tile_id": tile_id,
-                }
-                for step, name, step_format in exports
-                if step_format == format
-                for tile_id in tile_ids
-            ]
-            for format in export.Format
+            f"export-tiles-{format!s}": units
+            for format, units in format_to_export_units.items()
         },
         "mosaics": [name for _, name, format in exports if format == export.Format.COG],
+        "tile-units": [
+            {
+                "tile_id": tile_id,
+                "ingests": [
+                    u["dataset"]
+                    for u in ingest_units
+                    if u["tile_id"] == tile_id and u["dataset"] not in allow_failures
+                ],
+                "ingests_allowed_failures": [
+                    u["dataset"]
+                    for u in ingest_units
+                    if u["tile_id"] == tile_id and u["dataset"] in allow_failures
+                ],
+                **{
+                    f"exports_{format!s}": [
+                        {k: v for k, v in u.items() if k != "tile_id"}
+                        for u in units
+                        if u["tile_id"] == tile_id
+                    ]
+                    for format, units in format_to_export_units.items()
+                },
+            }
+            for tile_id in tile_ids
+        ],
     }
     os.makedirs(output_dir, exist_ok=True)
     for task, items in task_to_items.items():
