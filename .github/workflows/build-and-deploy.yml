@@ -1,14 +1,17 @@
 name: Build and deploy
 
-# On every push to main: build the image, push it to jester's Artifact Registry tagged
-# with the commit SHA, then notify jester's CI (repository_dispatch) to submit the
-# cornerstone-pipeline Argo WorkflowTemplate with that tag. The WorkflowTemplate itself
-# lives in jester (private repo, real cluster/registry values) — see
-# orchestration/workflow.example.yaml in this repo for the placeholder-laden template it
-# was derived from, and jester's docs/ARCHITECTURE.md for the full end-to-end design.
+# On every push to dev -- the actual active integration branch (main is a stale,
+# pre-rename branch 82 commits behind with no Dockerfile/orchestration package at all;
+# GitHub's "default branch" setting just hasn't been updated to match): build the image,
+# push it to jester's Artifact Registry tagged with the commit SHA, then notify jester's
+# CI (repository_dispatch) to submit the cornerstone-pipeline Argo WorkflowTemplate with
+# that tag. The WorkflowTemplate itself lives in jester (private repo, real
+# cluster/registry values) — see orchestration/workflow.example.yaml in this repo for the
+# placeholder-laden template it was derived from, and jester's docs/ARCHITECTURE.md for
+# the full end-to-end design.
 on:
   push:
-    branches: [main]
+    branches: [dev]
   workflow_dispatch: {}
 
 permissions:
