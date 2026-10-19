@@ -82,11 +82,11 @@ def test_get_tile_output_uri_puts_a_version_above_the_name(
     assert uri == str(tmp_path / "run-1" / "example" / f"{TILE_ID:s}.tif")
 
 
-def test_get_table_output_uri_puts_a_version_above_the_deliverable(
+def test_get_table_output_uri_puts_a_version_above_the_product(
     tmp_path: pathlib.Path,
 ) -> None:
     uri = export.get_table_output_uri(
-        deliverable_name="factors",
+        product_name="factors",
         name="BRA",
         output_root=str(tmp_path),
         version="run-1",

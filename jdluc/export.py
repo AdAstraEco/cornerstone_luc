@@ -26,8 +26,8 @@ For example:
         tile_id=tile_id,
     )
 
-A tabular deliverable (see `trace.export_workflow`) is one parquet per set of countries,
-written by `write_table` to `{EXPORT_ROOT}/{deliverable}/{name}.parquet`.
+A tabular product (see `trace.export_workflow`) is one parquet per set of countries,
+written by `write_table` to `{EXPORT_ROOT}/{product}/{name}.parquet`.
 
 Either may be given a `version`, such as a run id or a release label, which puts the whole
 export under `{EXPORT_ROOT}/{version}/` and stamps it in the metadata. The default, blank,
@@ -211,40 +211,40 @@ def write_tile(
 
 
 def get_table_output_uri(
-    deliverable_name: str,
+    product_name: str,
     name: str,
     output_root: str | None = None,
     version: str = "",
 ) -> str:
-    """`{output_root}[/{version}]/{deliverable}/{name}.parquet`; see `get_export_root`."""
+    """`{output_root}[/{version}]/{product}/{name}.parquet`; see `get_export_root`."""
     return storage.join_uri(
         root=get_export_root(output_root=output_root, version=version),
-        prefix=f"{deliverable_name:s}/{name:s}.parquet",
+        prefix=f"{product_name:s}/{name:s}.parquet",
     )
 
 
 def write_table(
     df: pandas.DataFrame,
-    deliverable_name: str,
+    product_name: str,
     name: str,
     source_name: str,
     output_root: str | None = None,
     version: str = "",
 ) -> str:
-    """Write a tabular deliverable as one parquet, provenance in its `attrs`; return the URI."""
+    """Write a tabular product as one parquet, provenance in its `attrs`; return the URI."""
     uri = get_table_output_uri(
-        deliverable_name=deliverable_name,
+        product_name=product_name,
         name=name,
         output_root=output_root,
         version=version,
     )
     df = df.copy()
     df.attrs |= get_metadata(
-        product_name=deliverable_name, source_name=source_name, version=version
+        product_name=product_name, source_name=source_name, version=version
     )
     with tempfile.TemporaryDirectory() as tmpdir:
         local_path = os.path.join(tmpdir, os.path.basename(uri))
         df.to_parquet(path=local_path)
         storage.put_file(local_path=local_path, uri=uri)
-    logger.info(f"Wrote {deliverable_name=:s} ({len(df):d} rows) to {uri=:s}")
+    logger.info(f"Wrote {product_name=:s} ({len(df):d} rows) to {uri=:s}")
     return uri
