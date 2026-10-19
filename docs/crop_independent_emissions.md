@@ -57,6 +57,18 @@ Here `f` is the cropland soil loss fraction, 1 − retention (IPCC 2019, Vol 4, 
 
 The vegetation, soil and year identities are unit-tested in `jdluc/__tests__/emit_test.py` (`test_cie_*`), and `test_derive_from_cie_reproduces_every_band_it_replaces` checks every existing band against `derive_from_cie` on a grid covering each event, destination and soil case. `tools/compare-emit-layers.py` checks the vegetation and year identities on a real tile, and the largest difference between each existing band and its derived counterpart. It also totals the old and new pools by source, and by whether a conversion fired, which shows how much carbon the CIE bands carry that the existing bands leave uncharged.
 
+## The crop-class layer
+
+`jdluc/derive.py` is a second derivation, without a destination gate: for every pixel and each crop class (annual, perennial, paddy rice, pasture) it answers *what if this crop class occupied this pixel?* It applies the three things CIE leaves out:
+
+- **Mineral soil.** `cie-mineral-soil-carbon-at-risk` × (1 − F_LU), with F_LU by crop class and climate zone (IPCC 2019 Refinement Vol 4 Table 5.5 for cropland, Table 6.2 for grassland), capped at 1. Annual crops take `emit`'s cropland retention fractions, so the two agree.
+- **Peat occupation.** An annual emission factor by crop class and peat climate regime (IPCC 2013 Wetlands Supplement, Ch 2), in place of the single `cie-peat-occupation-emissions` value.
+- **Discounting.** A weight by conversion year over the 20-year window: `linear` (the year-by-year form of `emit`'s span weights), `equal`, or `five-year-spans` (`emit`'s own).
+
+Its fields carry a `crop_class` dimension where they depend on a factor and a `discounting` dimension where they are discounted. Nothing is stored: a *product* names the fields, crop classes and discountings to write, and `export.write_tile` writes them per tile from `emit`'s cached output, computing only those.
+
+With five-year-span discounting, annual crops reproduce `emit`'s cropland bands, and pasture its pasture bands, wherever the destination matches, except for peat occupation; the tests in `jdluc/__tests__/derive_test.py` check both.
+
 ## Encoding
 
 - Every band is float32 with NaN as no-data, including the enum and bitmask bands (`geo.unify_dtype_and_no_data`).

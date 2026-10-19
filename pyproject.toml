@@ -88,6 +88,7 @@ layers = [
     "jdluc.trace",
     "jdluc.attribute",
     "jdluc.jurisdictional_direct | jdluc.statistical",
+    "jdluc.derive",
     "jdluc.emit",
     "jdluc.harmonize",
     "jdluc.ingest",
@@ -106,6 +107,7 @@ source_modules = [
 ]
 forbidden_modules = [
     "jdluc.attribute",
+    "jdluc.derive",
     "jdluc.emit",
     "jdluc.harmonize",
     "jdluc.ingest",
@@ -123,6 +125,7 @@ source_modules = [
 ]
 forbidden_modules = [
     "jdluc.attribute",
+    "jdluc.derive",
     "jdluc.emit",
     "jdluc.harmonize",
     "jdluc.ingest",
