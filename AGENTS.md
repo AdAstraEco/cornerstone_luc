@@ -20,6 +20,8 @@ When you don't know which applies, ask.
 
 ## Issues
 
+To create an issue, follow the `create-issue` skill: [.agents/skills/create-issue/SKILL.md](.agents/skills/create-issue/SKILL.md). Read it even if your tool doesn't load skills automatically.
+
 - Create issues through the templates in `.github/ISSUE_TEMPLATE/` (**Feature / improvement** or **Bug report**); blank issues are disabled.
 - Search existing issues before creating one.
 - **Done when** must contain checkable criteria under **Must have** and, optionally, **Nice to have**. Write each item so a reviewer can verify it without asking.
