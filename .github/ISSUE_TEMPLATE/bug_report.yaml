@@ -53,7 +53,7 @@ body:
         - [ ] Regression test added
 
         **Nice to have**
-        - [ ] 
+        - [ ]
     validations:
       required: true
   - type: textarea

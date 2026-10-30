@@ -28,10 +28,10 @@ body:
       description: The criteria for closing this issue. Must haves block closing; nice to haves can move to a follow-up issue.
       value: |
         **Must have**
-        - [ ] 
+        - [ ]
 
         **Nice to have**
-        - [ ] 
+        - [ ]
     validations:
       required: true
   - type: textarea
