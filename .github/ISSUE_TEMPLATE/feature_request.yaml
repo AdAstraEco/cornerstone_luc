@@ -24,34 +24,28 @@ body:
       required: false
   - type: textarea
     attributes:
-      label: Done when — must have
-      description: The criteria that must all be met before this issue can be closed.
+      label: Done when
+      description: The criteria for closing this issue. Must haves block closing; nice to haves can move to a follow-up issue.
       value: |
+        **Must have**
+        - [ ] 
+
+        **Nice to have**
         - [ ] 
     validations:
       required: true
   - type: textarea
     attributes:
-      label: Done when — nice to have
-      description: Welcome but not blocking; can be split into a follow-up issue.
-      value: |
-        - [ ] 
-    validations:
-      required: false
-  - type: textarea
-    attributes:
-      label: External dependencies
-      description: |
-        Anything outside the team this depends on (data provider, another team, a decision, …).
-        If any, add the `external-dependency` label.
-    validations:
-      required: false
-  - type: textarea
-    attributes:
       label: Anything else?
       description: |
         Links? References? Alternatives considered?
-
-        Tip: You can attach images or log files by clicking this area to highlight it and then dragging files in.
     validations:
       required: false
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        **Tips**
+        - Write each *Done when* item so anyone can check it without asking you.
+        - Keep *Must have* short; anything that can wait goes under *Nice to have* or a follow-up issue.
+        - Attach images or log files by dragging them into any text field.
